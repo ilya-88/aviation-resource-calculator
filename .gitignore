@@ -1,0 +1,6 @@
+artifacts/*
+!artifacts/.gitkeep
+releases/*.zip
+.tmp/
+Thumbs.db
+.DS_Store

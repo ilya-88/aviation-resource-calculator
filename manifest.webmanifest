@@ -1,0 +1,18 @@
+{
+  "name": "Авиаресурс",
+  "short_name": "Авиаресурс",
+  "description": "Персональный учёт ресурсов авиационной техники",
+  "lang": "ru",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f3f6f8",
+  "theme_color": "#12263a",
+  "icons": [
+    {
+      "src": "media/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

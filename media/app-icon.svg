@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Авиаресурс">
+  <rect width="512" height="512" rx="112" fill="#12263a"/>
+  <path d="M92 281l128-41 39-131c5-17 28-17 33 0l17 106 102-32c18-6 30 17 15 29l-102 79-5 109c-1 18-25 23-34 7l-57-91-113 19c-18 3-27-20-10-30l-13-24z" fill="#f4f8fb"/>
+  <circle cx="273" cy="268" r="38" fill="#1976d2"/>
+</svg>
