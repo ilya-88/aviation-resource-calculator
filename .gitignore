@@ -2,5 +2,9 @@ artifacts/*
 !artifacts/.gitkeep
 releases/*.zip
 .tmp/
+android/.gradle/
+android/local.properties
+android/build/
+android/app/build/
 Thumbs.db
 .DS_Store

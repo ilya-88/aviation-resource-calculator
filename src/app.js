@@ -19,6 +19,7 @@
         totalFlightMinutes: 742 * 60 + 18,
         actualLandings: 386,
         equivalentLandings: 421.6,
+        shifts: [],
         blocks: [
           { id: "airframe", kind: "airframe", name: "Формуляр самолёта", caption: "Планер и общая наработка", status: "ok" },
           { id: "engine-left", kind: "engine", name: "Левый двигатель", caption: "АЛ-31Ф · № 904118", status: "warning", sneMinutes: 22640, pprMinutes: 7460 },
@@ -38,6 +39,10 @@
   };
 
   let state = loadState();
+
+  state.aircraft.forEach((aircraft) => {
+    if (!Array.isArray(aircraft.shifts)) aircraft.shifts = [];
+  });
 
   function loadState() {
     try {
@@ -160,6 +165,12 @@
         <span>${icon("chevron")}</span>
       </button>`).join("");
 
+    const recentShifts = aircraft.shifts.slice(-3).reverse().map((shift) => `
+      <article class="history-row">
+        <div><strong>${formatDate(shift.date)}</strong><span>${calc.formatDuration(shift.flightMinutes)} полёта · ${shift.actualLandings} посадок</span></div>
+        <div class="history-row__value">+${calc.formatDuration(shift.leftEngineMinutes)}</div>
+      </article>`).join("");
+
     app.innerHTML = shell(`
       <section class="aircraft-heading">
         <div>
@@ -177,6 +188,8 @@
       <div class="section-heading"><div><h2>Формуляры и агрегаты</h2><p>Состав и названия блоков можно настраивать.</p></div><button class="text-button" data-action="edit-blocks">Изменить</button></div>
       <section class="equipment-list">${blocks}</section>
       <button class="add-block-button" data-action="add-block">${icon("plus")} Добавить блок</button>
+      <div class="section-heading history-heading"><div><h2>Последние смены</h2><p>Сохранённые начисления по выбранному борту.</p></div></div>
+      <section class="history-list">${recentShifts || `<div class="empty-state compact-empty"><p>Смен пока нет. Добавьте первую запись.</p></div>`}</section>
       <button class="floating-action" data-view="shift">${icon("log")} Внести лётную смену</button>
     `, { title: `${aircraft.type} · ${aircraft.boardNumber}`, subtitle: "Карточка самолёта", back: true });
   }
@@ -278,8 +291,56 @@
     form.addEventListener("input", update);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      update();
-      showToast("Смена рассчитана. В прототипе данные сохранены локально.");
+      const data = new FormData(form);
+      const aircraft = selectedAircraft();
+      const flight = Number(data.get("flightHours")) * 60 + Number(data.get("flightMinutes"));
+      const left = calc.calculateEngineIncrement(flight, Number(data.get("leftGround")));
+      const right = calc.calculateEngineIncrement(flight, Number(data.get("rightGround")));
+      const landings = {
+        runway: Number(data.get("runway")),
+        carrier: Number(data.get("carrier")),
+        touch: Number(data.get("touch")),
+        circuit: Number(data.get("circuit")),
+      };
+      const actualLandings = Object.values(landings).reduce((sum, value) => sum + value, 0);
+      const equivalent = calc.calculateEquivalentLandings(landings, { runway: 1, carrier: 2, touch: 0.6, circuit: 0.6 });
+
+      aircraft.totalFlightMinutes += flight;
+      aircraft.actualLandings += actualLandings;
+      aircraft.equivalentLandings = Math.round((aircraft.equivalentLandings + equivalent) * 10) / 10;
+      const leftBlock = aircraft.blocks.find((block) => block.id === "engine-left");
+      const rightBlock = aircraft.blocks.find((block) => block.id === "engine-right");
+      if (leftBlock) {
+        leftBlock.sneMinutes = (leftBlock.sneMinutes || 0) + left.totalMinutes;
+        leftBlock.pprMinutes = (leftBlock.pprMinutes || 0) + left.totalMinutes;
+      }
+      if (rightBlock) {
+        rightBlock.sneMinutes = (rightBlock.sneMinutes || 0) + right.totalMinutes;
+        rightBlock.pprMinutes = (rightBlock.pprMinutes || 0) + right.totalMinutes;
+      }
+      aircraft.resources.forEach((resource) => {
+        if (resource.unit !== "ч") return;
+        const spent = resource.object === "Левый двигатель"
+          ? left.totalMinutes / 60
+          : resource.object === "Правый двигатель"
+            ? right.totalMinutes / 60
+            : flight / 60;
+        resource.remaining = Math.max(0, Math.round((resource.remaining - spent) * 10) / 10);
+        resource.status = resource.remaining <= 5 ? "danger" : resource.remaining <= 20 ? "warning" : "ok";
+      });
+      aircraft.shifts.push({
+        id: `shift-${Date.now()}`,
+        date: String(data.get("date")),
+        flightMinutes: flight,
+        leftEngineMinutes: left.totalMinutes,
+        rightEngineMinutes: right.totalMinutes,
+        actualLandings,
+        equivalentLandings: equivalent,
+      });
+      saveState();
+      state.view = "aircraft";
+      render();
+      showToast(`Смена сохранена: левый ${calc.formatDuration(left.totalMinutes)}, правый ${calc.formatDuration(right.totalMinutes)}.`);
     });
     update();
   }
@@ -292,13 +353,18 @@
         <label class="setting-row"><span><strong>Все уведомления</strong><small>Главный переключатель имеет высший приоритет</small></span><input id="global-notifications" type="checkbox" ${state.globalNotifications ? "checked" : ""}></label>
         <label class="setting-row"><span><strong>${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</strong><small>Работы и ресурсы этого самолёта</small></span><input id="aircraft-notifications" type="checkbox" ${aircraft.notifications ? "checked" : ""} ${!state.globalNotifications ? "disabled" : ""}></label>
         <button class="setting-row" data-action="calendar-settings"><span><strong>Календарь и напоминания</strong><small>Добавление, поиск и удаление событий приложения</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <button class="setting-row" data-action="storage-mode"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></button>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · прототип 0.1.0</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.0</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Настройки", subtitle: "Приложение и выбранный самолёт", back: true });
 
     document.getElementById("global-notifications").addEventListener("change", (event) => {
+      if (!event.target.checked && !window.confirm("Отключить уведомления приложения и сбросить настройки всех самолётов?")) {
+        event.target.checked = true;
+        return;
+      }
       state.globalNotifications = event.target.checked;
       if (!state.globalNotifications) state.aircraft.forEach((item) => { item.notifications = false; });
       saveState();
@@ -327,8 +393,105 @@
     const back = document.querySelector("[data-action='back']");
     if (back) back.addEventListener("click", () => { state.view = state.view === "aircraft" ? "home" : "aircraft"; render(); });
 
-    document.querySelectorAll("[data-action='add-aircraft'],[data-action='add-block'],[data-action='edit-blocks']").forEach((button) => button.addEventListener("click", () => showToast("Действие обозначено в первом прототипе и будет реализовано следующим этапом.")));
-    document.querySelectorAll("[data-action='calendar-settings'],[data-action='storage-mode'],[data-action='about'],[data-block-id]").forEach((button) => button.addEventListener("click", () => showToast("Раздел включён в структуру прототипа. Детализацию добавим после согласования первого макета.")));
+    const addAircraft = document.querySelector("[data-action='add-aircraft']");
+    if (addAircraft) addAircraft.addEventListener("click", createAircraft);
+    const addBlock = document.querySelector("[data-action='add-block']");
+    if (addBlock) addBlock.addEventListener("click", createBlock);
+    const editBlocks = document.querySelector("[data-action='edit-blocks']");
+    if (editBlocks) editBlocks.addEventListener("click", renameBlock);
+    const calendar = document.querySelector("[data-action='calendar-settings']");
+    if (calendar) calendar.addEventListener("click", addNearestWorkToCalendar);
+    const notificationTest = document.querySelector("[data-action='notification-test']");
+    if (notificationTest) notificationTest.addEventListener("click", testAndroidNotification);
+    document.querySelectorAll("[data-action='storage-mode'],[data-action='about'],[data-block-id]").forEach((button) => button.addEventListener("click", () => showToast("Раздел включён в структуру. Подробные поля будут добавляться по мере согласования формуляров.")));
+  }
+
+  function createAircraft() {
+    const type = window.prompt("Тип самолёта", "Су-33");
+    if (!type) return;
+    const boardNumber = window.prompt("Бортовой номер", "");
+    if (!boardNumber) return;
+    const serialNumber = window.prompt("Заводской номер", "Не указан") || "Не указан";
+    const id = `aircraft-${Date.now()}`;
+    state.aircraft.push({
+      id,
+      type: type.trim(),
+      boardNumber: boardNumber.trim(),
+      serialNumber: serialNumber.trim(),
+      notifications: state.globalNotifications,
+      totalFlightMinutes: 0,
+      actualLandings: 0,
+      equivalentLandings: 0,
+      shifts: [],
+      blocks: [
+        { id: `airframe-${Date.now()}`, kind: "airframe", name: "Формуляр самолёта", caption: "Планер и общая наработка", status: "ok" },
+      ],
+      resources: [],
+    });
+    state.selectedAircraftId = id;
+    state.view = "aircraft";
+    saveState();
+    render();
+    showToast("Самолёт добавлен");
+  }
+
+  function createBlock() {
+    const aircraft = selectedAircraft();
+    const name = window.prompt("Название блока или агрегата", "Новый агрегат");
+    if (!name) return;
+    const caption = window.prompt("Краткое описание", "Формуляр и ресурсные показатели") || "Формуляр и ресурсные показатели";
+    aircraft.blocks.push({
+      id: `unit-${Date.now()}`,
+      kind: "unit",
+      name: name.trim(),
+      caption: caption.trim(),
+      status: "ok",
+    });
+    saveState();
+    render();
+    showToast("Блок добавлен");
+  }
+
+  function renameBlock() {
+    const aircraft = selectedAircraft();
+    const numbered = aircraft.blocks.map((block, index) => `${index + 1}. ${block.name}`).join("\n");
+    const selected = Number(window.prompt(`Какой блок переименовать?\n${numbered}`, "1"));
+    if (!Number.isInteger(selected) || selected < 1 || selected > aircraft.blocks.length) return;
+    const block = aircraft.blocks[selected - 1];
+    const name = window.prompt("Новое название", block.name);
+    if (!name) return;
+    block.name = name.trim();
+    saveState();
+    render();
+    showToast("Название блока сохранено");
+  }
+
+  function addNearestWorkToCalendar() {
+    const aircraft = selectedAircraft();
+    const nearest = [...aircraft.resources]
+      .filter((resource) => resource.unit === "дн.")
+      .sort((a, b) => a.remaining - b.remaining)[0];
+    if (!nearest) {
+      showToast("Для самолёта пока нет календарных работ");
+      return;
+    }
+    const start = Date.now() + nearest.remaining * 24 * 60 * 60 * 1000;
+    const title = `${nearest.name} · ${aircraft.type}, борт ${aircraft.boardNumber}`;
+    const description = `${nearest.object}. Событие подготовлено приложением «Авиаресурс».`;
+    if (window.AndroidBridge?.openCalendarEvent) {
+      window.AndroidBridge.openCalendarEvent(title, description, start);
+    } else {
+      showToast(`В Android откроется календарь: ${title}`);
+    }
+  }
+
+  function testAndroidNotification() {
+    const aircraft = selectedAircraft();
+    if (window.AndroidBridge?.showNotification) {
+      window.AndroidBridge.showNotification("Авиаресурс", `${aircraft.type}, борт ${aircraft.boardNumber}: ближайшая работа через 3 дня`);
+    } else {
+      showToast("Тестовое Android-уведомление доступно в APK");
+    }
   }
 
   function showToast(message) {
@@ -352,6 +515,13 @@
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js").catch(() => {}));
   }
+
+  window.handleAndroidBack = function () {
+    if (state.view === "home") return false;
+    state.view = state.view === "aircraft" ? "home" : "aircraft";
+    render();
+    return true;
+  };
 
   render();
 })();
