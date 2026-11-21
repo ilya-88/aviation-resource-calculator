@@ -4,7 +4,7 @@
 
 Рабочая версия: <https://ilya-88.github.io/aviation-resource-calculator/>
 
-Android APK 0.2.0: <https://github.com/ilya-88/aviation-resource-calculator/releases/download/v0.2.0/aviation-resource-0.2.0-prototype.apk>
+Android APK 0.2.1: <https://github.com/ilya-88/aviation-resource-calculator/releases/download/v0.2.1/aviation-resource-0.2.1-prototype.apk>
 
 ## Запуск
 
@@ -43,7 +43,7 @@ cd android
 .\gradlew.bat assembleRelease
 ```
 
-Версия 0.2.0 подписана отладочным Android-сертификатом и предназначена только для прототипирования. Для магазинной публикации будет создан отдельный постоянный ключ выпуска.
+Версия 0.2.1 подписана отладочным Android-сертификатом и предназначена только для прототипирования. Для магазинной публикации будет создан отдельный постоянный ключ выпуска.
 
 ## Проверка расчётов
 
@@ -53,4 +53,4 @@ node --test tests/calculations.test.js
 
 ## Важно
 
-Версия `0.2.0` — проектный прототип. Она не заменяет эксплуатационную документацию и пока не предназначена для ведения реальных формуляров.
+Версия `0.2.1` — проектный прототип. Она не заменяет эксплуатационную документацию и пока не предназначена для ведения реальных формуляров.

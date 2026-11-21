@@ -109,12 +109,7 @@
           <button class="icon-button" data-action="settings" aria-label="Настройки">${icon("settings")}</button>
         </div>
       </header>
-      <main class="content">${content}</main>
-      <nav class="bottom-nav" aria-label="Основная навигация">
-        <button class="bottom-nav__item ${state.view === "home" ? "is-active" : ""}" data-view="home">${icon("plane")}<span>Самолёты</span></button>
-        <button class="bottom-nav__item ${state.view === "shift" ? "is-active" : ""}" data-view="shift">${icon("log")}<span>Смена</span></button>
-        <button class="bottom-nav__item ${state.view === "resources" ? "is-active" : ""}" data-view="resources">${icon("resource")}<span>Ресурсы</span></button>
-      </nav>`;
+      <main class="content">${content}</main>`;
   }
 
   function renderHome() {
@@ -139,9 +134,8 @@
     app.innerHTML = shell(`
       <section class="hero">
         <div>
-          <p class="eyebrow">Главный экран</p>
-          <h1>Мои самолёты</h1>
-          <p>Выберите борт или добавьте новый экземпляр.</p>
+          <h1>Самолёты</h1>
+          <p>Выберите борт или добавьте самолёт.</p>
         </div>
         <button class="primary-button" data-action="add-aircraft">${icon("plus")} Добавить самолёт</button>
       </section>
@@ -152,7 +146,7 @@
         ${icon("bell")}
         <div><strong>Ближайшая работа через 3 дня</strong><span>ГТДЭ / ВСУ · работа 60 дней · Су-33, борт 85</span></div>
       </section>
-    `);
+    `, { title: "Самолёты", subtitle: "Авиаресурс" });
   }
 
   function renderAircraft() {
@@ -347,15 +341,21 @@
 
   function renderSettings() {
     const aircraft = selectedAircraft();
+    const aircraftNotificationRows = state.aircraft.map((item) => `
+      <label class="setting-row">
+        <span><strong>${escapeHtml(item.type)} · борт ${escapeHtml(item.boardNumber)}</strong><small>Работы и ресурсы этого самолёта</small></span>
+        <input data-aircraft-notification-id="${item.id}" type="checkbox" ${item.notifications ? "checked" : ""} ${!state.globalNotifications ? "disabled" : ""}>
+      </label>`).join("");
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Приложение</p><h1>Настройки</h1></div></section>
       <section class="settings-list">
         <label class="setting-row"><span><strong>Все уведомления</strong><small>Главный переключатель имеет высший приоритет</small></span><input id="global-notifications" type="checkbox" ${state.globalNotifications ? "checked" : ""}></label>
-        <label class="setting-row"><span><strong>${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</strong><small>Работы и ресурсы этого самолёта</small></span><input id="aircraft-notifications" type="checkbox" ${aircraft.notifications ? "checked" : ""} ${!state.globalNotifications ? "disabled" : ""}></label>
+        <div class="settings-subheading">Уведомления по самолётам</div>
+        ${aircraftNotificationRows}
         <button class="setting-row" data-action="calendar-settings"><span><strong>Календарь и напоминания</strong><small>Добавление, поиск и удаление событий приложения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <button class="setting-row" data-action="storage-mode"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></button>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.0</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.1</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Настройки", subtitle: "Приложение и выбранный самолёт", back: true });
@@ -371,10 +371,14 @@
       renderSettings();
       showToast(state.globalNotifications ? "Общие уведомления включены" : "Уведомления всех самолётов выключены");
     });
-    document.getElementById("aircraft-notifications").addEventListener("change", (event) => {
-      aircraft.notifications = event.target.checked;
-      saveState();
-      showToast("Настройки самолёта сохранены");
+    document.querySelectorAll("[data-aircraft-notification-id]").forEach((toggle) => {
+      toggle.addEventListener("change", (event) => {
+        const targetAircraft = state.aircraft.find((item) => item.id === event.target.dataset.aircraftNotificationId);
+        if (!targetAircraft) return;
+        targetAircraft.notifications = event.target.checked;
+        saveState();
+        showToast(`${targetAircraft.type}, борт ${targetAircraft.boardNumber}: уведомления ${targetAircraft.notifications ? "включены" : "выключены"}`);
+      });
     });
   }
 
