@@ -844,6 +844,139 @@ async function main() {
     assert.deepEqual(reportIntegrity, { preview: true, totals: [0, 0, 60], reportEntry: true, mapZoom: true, returnToReport: true });
     results.reportIntegrity = "ok";
 
+    await evaluate(`(() => {
+      window.handleAndroidBack();
+      document.querySelector('[data-action="add-resource"][data-work="true"]').click();
+      const form = document.querySelector('#resource-form');
+      form.elements.object.value = 'Самолёт';
+      form.elements.name.value = 'Работа для проверки размеров';
+      form.elements.limit.value = '10';
+      form.elements.remaining.value = '7';
+      form.requestSubmit();
+      window.handleAndroidBack();
+    })()`);
+    const tileAudit = {};
+    for (const tab of ["works", "aggregates", "least-reliable"]) {
+      tileAudit[tab] = await evaluate(`(async () => {
+        const tab = ${JSON.stringify(tab)};
+        const grid = () => document.querySelector('#counter-preview .counter-tiles');
+        const all = () => [...grid().querySelectorAll(':scope > .counter-tile')];
+        const active = () => grid().querySelector('.counter-tile-active');
+        const byKey = key => all().find(tile => tile.dataset.tileKey === key);
+        const close = (a, b) => Math.abs(a - b) <= 1.1;
+        const fail = (key, issue) => { throw new Error(tab + ' / ' + key + ': ' + issue); };
+        const touch = (element, type, x, y, identifier, ending = false) => {
+          const point = new Touch({ target: element, identifier, clientX: x, clientY: y });
+          element.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true,
+            touches: ending ? [] : [point], changedTouches: ending ? [point] : [] }));
+        };
+        const hold = async key => {
+          const tile = byKey(key);
+          tile.scrollIntoView({ block: 'center' });
+          const rect = tile.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + 10;
+          touch(tile, 'touchstart', x, y, 80);
+          await new Promise(resolve => setTimeout(resolve, 760));
+          touch(tile, 'touchend', x, y, 80, true);
+          if (active()?.dataset.tileKey !== key) fail(key, 'удержание не открыло нужную плитку');
+        };
+        const gesture = (dx, dy, end = 'touchend') => {
+          const tile = active();
+          const rect = tile.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + 20;
+          touch(tile, 'touchstart', x, y, 81);
+          touch(tile, 'touchmove', x + dx, y + dy, 81);
+          const live = active().getBoundingClientRect();
+          touch(tile, end, x + dx, y + dy, 81, true);
+          return live;
+        };
+        document.querySelector('[data-aircraft-tab="' + tab + '"]').click();
+        const keys = all().map(tile => tile.dataset.tileKey);
+        for (const key of keys) {
+          await hold(key);
+          document.querySelector('[data-gesture="font"]').click();
+          const font = () => parseFloat(getComputedStyle(active().querySelector('.counter-value')).fontSize);
+          const oldFont = font();
+          gesture(0, -30);
+          if (font() <= oldFont) fail(key, 'размер текста не изменился');
+          document.querySelector('#counter-font-reset').click();
+          if (!close(font(), oldFont)) fail(key, 'сброс текста не вернул исходный размер');
+          document.querySelector('[data-gesture="resize"]').click();
+          const start = active().getBoundingClientRect();
+          const initialFont = parseFloat(getComputedStyle(active().querySelector('.counter-value')).fontSize);
+          const narrow = gesture(-Math.round(grid().clientWidth * 0.28), 0);
+          if (!(narrow.width < start.width - 10)) fail(key, 'сужение не изменило ширину');
+          if (!close(narrow.left, start.left)) fail(key, 'при сужении сместился левый край');
+          if (!close(narrow.width, active().getBoundingClientRect().width)) fail(key, 'ширина изменилась после отпускания');
+          const narrowFont = parseFloat(getComputedStyle(active().querySelector('.counter-value')).fontSize);
+          if (!(narrowFont < initialFont)) fail(key, 'при сужении текст не подстроился');
+          const expanded = gesture(14, 0);
+          if (!(expanded.width > narrow.width + 3)) fail(key, 'не расширяется после сужения');
+          const gridRect = grid().getBoundingClientRect();
+          if (expanded.left < gridRect.left - 1 || expanded.right > gridRect.right + 1) fail(key, 'плитка выходит за границы сетки');
+          const full = gesture(grid().clientWidth, 0, 'touchcancel');
+          if (full.width < gridRect.width - 8 || full.left < gridRect.left - 1 || full.right > gridRect.right + 1 ||
+              !close(expanded.width, active().getBoundingClientRect().width)) fail(key, 'расширение до краёв или отмена ширины не сработали');
+          const base = active().getBoundingClientRect();
+          const taller = gesture(0, 25);
+          if (!(taller.height > base.height + 5)) fail(key, 'не увеличивается высота');
+          const shorter = gesture(0, -40);
+          if (!close(shorter.height, base.height)) fail(key, 'после уменьшения остаётся пустая высота');
+          const cancelled = gesture(0, 18, 'touchcancel');
+          if (cancelled.height <= shorter.height || !close(active().getBoundingClientRect().height, shorter.height)) fail(key, 'отменённый жест изменил размер');
+          const final = gesture(0, 12);
+          document.querySelector('#layout-save').click();
+          const rendered = byKey(key).getBoundingClientRect();
+          if (!close(rendered.width, final.width) || !close(rendered.height, final.height)) fail(key, 'после сохранения размер отличается от редактора');
+          if (byKey(key).querySelector('.counter-group, .board-navigation-group').scrollWidth >
+              byKey(key).querySelector('.counter-group, .board-navigation-group').clientWidth + 2) fail(key, 'содержимое выступает по ширине');
+        }
+        const saved = new Map(all().map(tile => [tile.dataset.tileKey, tile.getBoundingClientRect()]));
+        window.handleAndroidBack();
+        const board = [...document.querySelectorAll('[data-aircraft-id]')].find(item => item.textContent.includes('борт 42'));
+        board.click();
+        document.querySelector('[data-aircraft-tab="' + tab + '"]').click();
+        for (const [key, rect] of saved) {
+          const reopened = byKey(key)?.getBoundingClientRect();
+          if (!reopened || !close(rect.width, reopened.width) || !close(rect.height, reopened.height)) fail(key, 'размер потерян после повторного открытия борта');
+        }
+        const [first, second] = all().filter(tile => !tile.dataset.tileKey.startsWith('widget:board-') &&
+          tile.querySelectorAll('.counter-value').length === 1).map(tile => tile.dataset.tileKey);
+        const closeDialog = async (choice) => {
+          const dialog = document.querySelector('dialog[open]');
+          if (!dialog) fail(first, 'не открылось окно выбора');
+          await new Promise(resolve => {
+            dialog.addEventListener('close', resolve, { once: true });
+            dialog.querySelector('button[value="' + choice + '"]').click();
+          });
+        };
+        await hold(first);
+        document.querySelector('.counter-tile-active [data-layout-action="edit"]').click();
+        document.querySelector('dialog[open] input').value = 'Проверка подписи';
+        await closeDialog('save');
+        if (!active().textContent.includes('Проверка подписи')) fail(first, 'подпись не применилась');
+        const previousCount = all().length;
+        const secondIndex = byKey(second).dataset.counterIndex;
+        document.querySelector('#layout-group').click();
+        await closeDialog(secondIndex);
+        if (all().length !== previousCount - 1 || active().querySelectorAll('.counter-value').length !== 2) fail(first, 'группировка не сработала');
+        document.querySelector('#layout-group').click();
+        if (all().length !== previousCount) fail(first, 'разделение не сработало');
+        document.querySelector('#layout-default').click();
+        await closeDialog('reset');
+        if (byKey(first).style.getPropertyValue('--tile-height') !== '0px') fail(first, 'сброс размера не убрал высоту');
+        window.handleAndroidBack();
+        await closeDialog('discard');
+        if (byKey(first).textContent.includes('Проверка подписи') ||
+            !close(byKey(first).getBoundingClientRect().height, saved.get(first).height) ||
+            !close(byKey(second).getBoundingClientRect().width, saved.get(second).width)) fail(first, 'выход без сохранения изменил раскладку');
+        return keys.length;
+      })()`);
+    }
+    results.tileResizeAudit = tileAudit;
+
     process.stdout.write(`${JSON.stringify(results)}\n`);
   } finally {
     await command("Browser.close").catch(() => {});

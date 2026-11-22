@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.29";
+  const APP_VERSION = "0.2.30";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -679,6 +679,14 @@
     dialog.showModal();
   }
 
+  function tileSpan(tile) {
+    return Math.max(20, Math.min(120, Math.round((tile.span ?? (tile.wide ? 12 : 6)) * 10)));
+  }
+
+  function tileDensity(span) {
+    return span >= 60 ? 1 + (span - 60) / 1000 : 0.75 + (span - 20) / 160;
+  }
+
   function counterTiles(aircraft, layout, editing = false, catalog = new Map()) {
     const name = escapeHtml(usageRule("flight").label);
     const values = {
@@ -688,7 +696,7 @@
       landingPpr: ["Посадки ППР", aircraft.pprLandings ?? "Не задано"],
     };
     return `<section class="counter-tiles" aria-label="Наработка борта">${layout.map((tile, index) => `
-      <article class="counter-tile ${editing && activeCounterIndex === index ? "counter-tile-active" : ""}" data-counter-index="${index}" data-tile-key="${escapeHtml(tile.keys[0])}" style="--tile-start:${tile.columnStart ?? "auto"};--tile-span:${Math.round((tile.span ?? (tile.wide ? 12 : 6)) * 10)};--tile-height:${tile.height ?? 0}px;--tile-font:${tile.font ?? 1}rem">
+      <article class="counter-tile ${editing && activeCounterIndex === index ? "counter-tile-active" : ""}" data-counter-index="${index}" data-tile-key="${escapeHtml(tile.keys[0])}" style="--tile-start:${tile.columnStart == null ? "auto" : Math.max(1, Math.min(tile.columnStart, 121 - tileSpan(tile)))};--tile-span:${tileSpan(tile)};--tile-height:${tile.height ?? 0}px;--tile-font:${tile.font ?? 1}rem;--tile-density:${tileDensity(tileSpan(tile))}">
         ${editing && activeCounterIndex === index ? `<div class="counter-gesture-toolbar">
           <button type="button" class="counter-toolbar-handle" aria-label="Передвинуть панель">⠿</button>
           <button type="button" data-gesture="move" aria-label="Переместить" aria-pressed="${counterGesture === "move"}">✥</button>
@@ -887,10 +895,16 @@
         const grid = card.parentElement;
         const gridLeft = grid.getBoundingClientRect().left;
         const cardLeft = card.getBoundingClientRect().left - parseFloat(getComputedStyle(card).marginLeft);
-        const columnStart = Math.max(1, Math.min(101, Math.round((cardLeft - gridLeft) / (grid.clientWidth / 120)) + 1));
+        const span = tileSpan(tile);
+        const column = grid.clientWidth / 120;
+        const columnStart = Math.max(1, Math.min(121 - span, Math.round((cardLeft - gridLeft) / column) + 1));
+        const style = getComputedStyle(card);
+        const content = card.querySelector(".counter-group, .board-navigation-group");
+        const verticalInsets = ["paddingTop", "paddingBottom", "borderTopWidth", "borderBottomWidth"]
+          .reduce((sum, property) => sum + parseFloat(style[property]), 0);
         resize = { card, index, finger: finger.identifier, x: finger.clientX, y: finger.clientY,
-          width: tile.span ?? (tile.wide ? 12 : 6), height: card.offsetHeight,
-          column: grid.clientWidth / 12, columnStart, axis: counterGesture === "font" ? "font" : null,
+          width: span, height: card.offsetHeight, minHeight: Math.ceil(content.getBoundingClientRect().height + verticalInsets),
+          original: structuredClone(tile), column, columnStart, axis: counterGesture === "font" ? "font" : null,
           font: tile.font ?? 1, lastFeedback: -Infinity };
         resize.feedbackWidth = resize.width;
         resize.feedbackHeight = resize.height;
@@ -920,7 +934,7 @@
         const { card, index } = resize;
         const dx = finger.clientX - resize.x;
         const dy = finger.clientY - resize.y;
-        if (!resize.axis && Math.hypot(dx, dy) < 8) return;
+        if (!resize.axis && Math.hypot(dx, dy) < 4) return;
         resize.axis ??= Math.abs(dx) >= Math.abs(dy) ? "width" : "height";
         const tile = draft[index];
         if (resize.axis === "font") {
@@ -931,22 +945,32 @@
           return;
         }
         if (resize.axis === "width") {
-          tile.span = Math.min((121 - resize.columnStart) / 10, Math.max(2, Math.round((resize.width + dx / resize.column) * 10) / 10));
-          if (tile.span === resize.width && tile.columnStart == null) return;
-          tile.columnStart = resize.columnStart;
-          card.style.setProperty("--tile-start", tile.columnStart);
-          card.style.setProperty("--tile-span", Math.round(tile.span * 10));
+          const span = Math.max(20, Math.min(120, resize.width + Math.round(dx / resize.column)));
+          if (span === resize.width) {
+            if (resize.original.span == null) delete tile.span;
+            else tile.span = resize.original.span;
+            if (resize.original.columnStart == null) delete tile.columnStart;
+            else tile.columnStart = resize.original.columnStart;
+          } else {
+            tile.span = span / 10;
+            tile.columnStart = Math.min(resize.columnStart, 121 - span);
+          }
+          card.style.setProperty("--tile-start", tile.columnStart ?? "auto");
+          card.style.setProperty("--tile-span", span);
+          card.style.setProperty("--tile-density", tileDensity(span));
         } else {
-          tile.height = Math.min(260, Math.max(0, Math.round(resize.height + dy)));
-          card.style.setProperty("--tile-height", `${tile.height}px`);
+          const height = Math.min(resize.minHeight + innerHeight, Math.max(resize.minHeight, Math.round(resize.height + dy)));
+          if (height === resize.minHeight) delete tile.height;
+          else tile.height = height;
+          card.style.setProperty("--tile-height", `${tile.height ?? 0}px`);
         }
         placeToolbar();
         const now = performance.now();
         if (now - resize.lastFeedback >= 120 &&
-            (resize.axis === "width" ? tile.span !== resize.feedbackWidth : Math.abs(tile.height - resize.feedbackHeight) >= 8)) {
+            (resize.axis === "width" ? tileSpan(tile) !== resize.feedbackWidth : Math.abs((tile.height ?? resize.minHeight) - resize.feedbackHeight) >= 8)) {
           resize.lastFeedback = now;
-          resize.feedbackWidth = tile.span;
-          resize.feedbackHeight = tile.height ?? resize.height;
+          resize.feedbackWidth = tileSpan(tile);
+          resize.feedbackHeight = tile.height ?? resize.minHeight;
           try { navigator.vibrate?.(9); } catch (_) {}
         }
         return;
@@ -976,7 +1000,7 @@
       cancelHold();
     });
     surface.addEventListener("touchcancel", () => {
-      if (resize) { resize = null; paint(); }
+      if (resize) { draft[resize.index] = resize.original; resize = null; paint(); }
       if (hold && drag?.touch === hold.id) clearDrag();
       cancelHold();
     });
@@ -2399,10 +2423,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.29</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.30</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.29", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.30", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -2990,7 +3014,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.29</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.30</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
