@@ -26,6 +26,35 @@ import android.widget.FrameLayout;
 import android.widget.Toast;
 
 public class MainActivity extends Activity {
+    private static final String DIAGNOSTIC_PREFS = "touch_diagnostics";
+    private static final String TOUCH_LOG = "events";
+
+    @Override
+    public boolean dispatchTouchEvent(android.view.MotionEvent event) {
+        String action;
+        switch (event.getActionMasked()) {
+            case android.view.MotionEvent.ACTION_DOWN: action = "down"; break;
+            case android.view.MotionEvent.ACTION_UP: action = "up"; break;
+            case android.view.MotionEvent.ACTION_CANCEL: action = "cancel"; break;
+            case android.view.MotionEvent.ACTION_POINTER_DOWN: action = "pointer-down"; break;
+            case android.view.MotionEvent.ACTION_POINTER_UP: action = "pointer-up"; break;
+            default: return super.dispatchTouchEvent(event);
+        }
+        boolean handled = super.dispatchTouchEvent(event);
+        android.content.SharedPreferences prefs = getSharedPreferences(DIAGNOSTIC_PREFS, MODE_PRIVATE);
+        String entry = java.time.Instant.now() + " android.touch." + action
+                + " fingers=" + event.getPointerCount()
+                + " duration=" + (event.getEventTime() - event.getDownTime()) + "ms"
+                + " handled=" + handled;
+        String[] lines = (prefs.getString(TOUCH_LOG, "") + entry + "\n").split("\n");
+        StringBuilder log = new StringBuilder();
+        for (int i = Math.max(0, lines.length - 100); i < lines.length; i++) {
+            log.append(lines[i]).append('\n');
+        }
+        prefs.edit().putString(TOUCH_LOG, log.toString()).apply();
+        return handled;
+    }
+
     private static final String CHANNEL_ID = "resource_reminders";
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1001;
     private WebView webView;
@@ -139,6 +168,16 @@ public class MainActivity extends Activity {
     }
 
     public class AndroidBridge {
+        @JavascriptInterface
+        public String getTouchDiagnostics() {
+            return getSharedPreferences(DIAGNOSTIC_PREFS, MODE_PRIVATE).getString(TOUCH_LOG, "");
+        }
+
+        @JavascriptInterface
+        public void clearTouchDiagnostics() {
+            getSharedPreferences(DIAGNOSTIC_PREFS, MODE_PRIVATE).edit().remove(TOUCH_LOG).apply();
+        }
+
         @JavascriptInterface
         public String getDiagnosticEnvironment() {
             return Build.MODEL + " | Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")";
