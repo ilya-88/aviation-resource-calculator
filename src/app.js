@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.36";
+  const APP_VERSION = "0.2.37";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -45,6 +45,7 @@
   const OPTIONAL_USAGE_TYPES = ["runway", "carrier", "touch", "circuit", "arresterHooks"];
   const BOARD_USAGE_TYPES = ["flight", ...OPTIONAL_USAGE_TYPES];
   const CORE_USAGE_TYPES = ["flight", "runway"];
+  const USAGE_INHERITANCE_VERSION = 1;
   const TIME_USAGE_TYPES = new Set(["flight", "ground", "maximum"]);
   const defaultUsageSources = () => Object.fromEntries(BOARD_USAGE_TYPES.map((key) => [key, CORE_USAGE_TYPES.includes(key)]));
   const DEFAULT_OPERATION_TYPES = ["Лётная смена", "КОД", "Руление"].map((label, index) => ({ id: String(index), label }));
@@ -199,6 +200,8 @@
 
   function renderBoardUsage() {
     const aircraft = selectedAircraft();
+    const typeKeys = new Set([...BOARD_USAGE_TYPES, ...(usageTypeOverride(aircraft)?.customSources || []).map(({ key }) => key)]);
+    const hasOverrides = Object.keys(aircraft.enabledUsageSources || {}).some((key) => typeKeys.has(key));
     app.innerHTML = shell(`<form id="board-usage-form" class="shift-form">
       <fieldset><legend>Поля записи работы</legend>
         ${sourceCheckboxes(aircraft)}
@@ -207,6 +210,7 @@
         </details>
       </fieldset>
       <button class="primary-button">Сохранить показатели</button>
+      ${hasOverrides ? `<button type="button" class="secondary-button" id="inherit-type-usage">Использовать набор типа</button>` : ""}
     </form>`, { title: "Показатели работы", back: true, settings: false });
     const form = document.getElementById("board-usage-form");
     const readSource = bindSourceDefinition(document.getElementById("board-add-source"), form.elements.newSource, null,
@@ -229,6 +233,12 @@
       aircraft.enabledUsageSources = usageSourceOverrides(aircraft, enabled);
       if (saveState()) render();
       else { [aircraft.enabledUsageSources, aircraft.customUsageSources, aircraft.usageFactors] = previous; showToast("Не удалось сохранить показатели"); }
+    });
+    document.getElementById("inherit-type-usage")?.addEventListener("click", () => {
+      const previous = aircraft.enabledUsageSources;
+      aircraft.enabledUsageSources = Object.fromEntries(Object.entries(previous).filter(([key]) => !typeKeys.has(key)));
+      if (saveState()) { render(); showToast("Восстановлен набор показателей типа"); }
+      else { aircraft.enabledUsageSources = previous; showToast("Не удалось сохранить показатели"); }
     });
   }
 
@@ -339,10 +349,11 @@
     const profile = usageTypeOverride(aircraft);
     const custom = key.startsWith("custom-") && (aircraft?.customUsageSources?.find((source) => source.key === key) ??
       profile?.customSources?.find((source) => source.key === key));
+    const enabledByDefault = profile?.enabled && BOARD_USAGE_TYPES.includes(key) ? CORE_USAGE_TYPES.includes(key) : defaults.enabled;
     return {
       label: profile?.labels?.[key] ?? custom?.label ?? defaults.label,
       factor: aircraft?.usageFactors?.[key] ?? profile?.factors?.[key] ?? custom?.factor ?? defaults.factor,
-      enabled: profile?.enabled?.[key] ?? defaults.enabled,
+      enabled: profile?.enabled?.[key] ?? enabledByDefault,
     };
   }
 
@@ -419,6 +430,7 @@
         archivedAircraftTypes: state.archivedAircraftTypes,
         removedAircraftTypes: state.removedAircraftTypes,
         usageRules: state.usageRules,
+        usageInheritanceVersion: USAGE_INHERITANCE_VERSION,
         sharedGround: state.sharedGround,
         usageTypeOverrides: state.usageTypeOverrides,
         aircraft: state.aircraft,
@@ -470,6 +482,7 @@
     if (!normalized.aircraft.some((item) => item.id === normalized.selectedAircraftId)) {
       normalized.selectedAircraftId = normalized.aircraft[0]?.id || null;
     }
+    if (raw?.usageInheritanceVersion !== USAGE_INHERITANCE_VERSION) migrateUsageSourceInheritance(normalized);
     const types = new Map();
     for (const value of [
       ...(Array.isArray(raw?.aircraftTypes) ? raw.aircraftTypes : []),
@@ -486,19 +499,29 @@
       const profile = normalized.usageTypeOverrides.find((entry) => entry.type === key);
       if (profile?.enabled) continue;
       const enabled = defaultUsageSources();
-      for (const aircraft of normalized.aircraft.filter((item) => item.type.trim().toLowerCase() === key)) {
-        const overrides = { ...aircraft.enabledUsageSources };
-        for (const source of BOARD_USAGE_TYPES) {
-          if (Object.hasOwn(overrides, source)) continue;
-          const wasEnabled = normalized.usageRules?.[source]?.enabled !== false;
-          if (wasEnabled !== enabled[source]) overrides[source] = wasEnabled;
-        }
-        aircraft.enabledUsageSources = overrides;
-      }
       const migrated = { ...profile, type: key, enabled };
       normalized.usageTypeOverrides = normalized.usageTypeOverrides.filter((entry) => entry.type !== key).concat(migrated);
     }
     return normalized;
+  }
+
+  function migrateUsageSourceInheritance(data) {
+    const defaults = defaultUsageSources();
+    const old = Object.fromEntries(BOARD_USAGE_TYPES.map((key) => [key, data.usageRules?.[key]?.enabled !== false]));
+    const migrationKeys = BOARD_USAGE_TYPES.filter((key) => old[key] !== defaults[key]);
+    for (const aircraft of data.aircraft) {
+      const overrides = aircraft.enabledUsageSources;
+      if (!overrides) continue;
+      const type = aircraft.type.trim().toLowerCase();
+      const profile = data.usageTypeOverrides.find((item) => item.type === type);
+      const copiedFullList = BOARD_USAGE_TYPES.every((key) => Object.hasOwn(overrides, key));
+      // Older versions copied enabled defaults into every existing board when introducing type settings.
+      const copiedOptional = migrationKeys.length > 1 && migrationKeys.every((key) =>
+        overrides[key] === old[key] || (!Object.hasOwn(overrides, key) && profile?.enabled?.[key] === old[key]));
+      const copiedKeys = copiedFullList ? BOARD_USAGE_TYPES : copiedOptional ? migrationKeys : [];
+      aircraft.enabledUsageSources = Object.fromEntries(Object.entries(overrides).filter(([key, enabled]) =>
+        !copiedKeys.includes(key) || old[key] !== enabled));
+    }
   }
 
   function selectedAircraft() {
@@ -1476,7 +1499,10 @@
       return;
     }
     const typeRule = usageTypeOverride(aircraft);
-    const ruleSource = typeRule ? "Правила типа" : state.sharedGround ? "Общие правила" : "Настройки борта";
+    const ruleSource = Object.keys(aircraft.enabledUsageSources || {}).length ? "Правила типа и настройки борта" :
+      typeRule ? "Правила типа" : state.sharedGround ? "Общие правила" : "Настройки борта";
+    const landingKeys = OPTIONAL_USAGE_TYPES.filter((key) => key !== "arresterHooks" && sourceEnabled(aircraft, key));
+    const showHooks = sourceEnabled(aircraft, "arresterHooks");
     const today = new Date();
     const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     app.innerHTML = shell(`
@@ -1491,12 +1517,12 @@
             <label><span>${escapeHtml(usageRule("flight").label)}, минуты</span><input name="flightMinutes" type="number" min="0" max="59" value="0" step="1"></label>
           </div>` : ""}
         </fieldset>
-        <fieldset><legend>Посадки</legend>
-          <div class="landing-grid">
-            ${OPTIONAL_USAGE_TYPES.filter((key) => key !== "arresterHooks" && sourceEnabled(aircraft, key)).map((key) => `<label><span>${escapeHtml(usageRule(key).label)}</span><input name="${key}" type="number" min="0" value="0"></label>`).join("")}
-          </div>
-          ${sourceEnabled(aircraft, "arresterHooks") ? `<label><span>${escapeHtml(usageRule("arresterHooks").label)}</span><input name="arresterHooks" type="number" min="0" value="0"></label>` : ""}
-        </fieldset>
+        ${landingKeys.length || showHooks ? `<fieldset><legend>${showHooks ? (landingKeys.length ? "Посадки и зацепы" : "Зацепы") : "Посадки"}</legend>
+          ${landingKeys.length ? `<div class="landing-grid">
+            ${landingKeys.map((key) => `<label><span>${escapeHtml(usageRule(key).label)}</span><input name="${key}" type="number" min="0" value="0"></label>`).join("")}
+          </div>` : ""}
+          ${showHooks ? `<label><span>${escapeHtml(usageRule("arresterHooks").label)}</span><input name="arresterHooks" type="number" min="0" value="0"></label>` : ""}
+        </fieldset>` : ""}
         ${customSources(aircraft).some(({ key }) => sourceEnabled(aircraft, key)) ? `<fieldset><legend>Другие показатели</legend>${customSources(aircraft)
           .filter(({ key }) => sourceEnabled(aircraft, key)).map(customWorkInput).join("")}</fieldset>` : ""}
         <div id="operation-picker"></div>
@@ -2598,10 +2624,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.36</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.37</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.36", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.37", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -3205,7 +3231,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.36</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.37</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });

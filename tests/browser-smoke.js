@@ -1331,6 +1331,86 @@ async function main() {
     assert.deepEqual(typeDeletionAfterReload, { omitted: true, retained: true, saved: true });
     results.typeDeletion = "ok";
 
+    await evaluate(`(() => {
+      const storage = 'aviation-resource-prototype-v1';
+      const previous = JSON.parse(localStorage.getItem(storage));
+      delete previous.usageInheritanceVersion;
+      previous.removedAircraftTypes = [];
+      previous.aircraftTypes.unshift('Су-33');
+      const board = previous.aircraft.find(item => item.boardNumber === '85');
+      board.enabledUsageSources = {carrier:true,touch:true,circuit:true,arresterHooks:true};
+      const legacy = structuredClone(board);
+      legacy.id = 'legacy-board';
+      legacy.boardNumber = '86';
+      legacy.enabledUsageSources = {flight:true,runway:true,carrier:true,touch:true,circuit:true,arresterHooks:true};
+      previous.aircraft.push(legacy);
+      const custom = previous.aircraft.find(item => item.boardNumber === '42');
+      custom.enabledUsageSources = {arresterHooks:true,circuit:true};
+      const type = previous.usageTypeOverrides.find(row => row.type === 'су-33');
+      type.enabled = {flight:true,runway:true,arresterHooks:true};
+      localStorage.setItem(storage, JSON.stringify(previous));
+    })()`);
+    await command("Page.reload");
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (await evaluate("document.querySelector('[data-aircraft-id=legacy-board]') !== null").catch(() => false)) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const inheritance = await evaluate(`(() => {
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
+      const click = selector => document.querySelector(selector).click();
+      const home = () => window.handleAndroidBack();
+      const open = number => {
+        const id = read().aircraft.find(row => row.boardNumber === number).id;
+        click('[data-aircraft-id="' + id + '"]');
+      };
+      const fields = () => [...document.querySelectorAll('#shift-form input')].map(input => input.name)
+        .filter(name => ['flightHours','runway','carrier','touch','circuit','arresterHooks'].includes(name));
+      const readWork = number => {
+        open(number);
+        click('[data-view="shift"]');
+        const result = fields();
+        home();
+        home();
+        return result;
+      };
+      const migrated = readWork('85');
+      const legacy = readWork('86');
+      open('42');
+      click('[data-view="shift"]');
+      const independent = fields().includes('circuit') && fields().includes('arresterHooks');
+      home();
+      click('[data-action="settings"]');
+      click('[data-view="board-usage"]');
+      click('#inherit-type-usage');
+      const restored = Boolean(document.querySelector('#board-usage-form')) && !document.querySelector('#inherit-type-usage');
+      home();
+      home();
+      click('[data-view="shift"]');
+      const followsType = !fields().includes('circuit') && !fields().includes('arresterHooks');
+      home();
+      home();
+      click('[data-action="settings"]');
+      click('[data-view="usage-settings"]');
+      const type = document.querySelector('#usage-aircraft-type');
+      type.value = 'Су-33';
+      type.dispatchEvent(new Event('change'));
+      const rules = document.querySelector('#usage-settings-form');
+      rules.elements.existingSource.value = 'touch';
+      click('#type-add-source-button');
+      rules.requestSubmit();
+      home();
+      home();
+      const afterChange = readWork('85');
+      const saved = read().usageInheritanceVersion === 1;
+      return { migrated, legacy, independent, restored, followsType, afterChange, saved };
+    })()`);
+    assert.deepEqual(inheritance, {
+      migrated: ["flightHours", "runway", "arresterHooks"], legacy: ["flightHours", "runway", "arresterHooks"],
+      independent: true, restored: true, followsType: true,
+      afterChange: ["flightHours", "runway", "touch", "arresterHooks"], saved: true,
+    });
+    results.usageInheritance = "ok";
+
     process.stdout.write(`${JSON.stringify(results)}\n`);
   } finally {
     await command("Browser.close").catch(() => {});
