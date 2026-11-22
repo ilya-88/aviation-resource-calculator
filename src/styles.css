@@ -218,16 +218,11 @@ button.setting-row { cursor: pointer; }
 .setting-row input[type="checkbox"] { width: 46px; height: 25px; accent-color: var(--blue); }
 .prototype-badge { padding: 6px 9px; border-radius: 999px; color: var(--ink-soft); background: #edf2f5; font-size: 12px; }
 .settings-form { margin-top: 18px; }
-#usage-settings-form [hidden] { display: none; }
-.usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.usage-hidden-button { min-width: 46px; min-height: 46px; padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--navy); font-size: 19px; cursor: pointer; }
-.usage-hidden-button[aria-expanded="true"] { background: var(--blue-soft); }
-.usage-hidden-panel, .usage-group { display: grid; gap: 10px; }
-.usage-hidden-panel { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
-@media (prefers-reduced-motion: no-preference) {
-  .usage-hidden-panel:not([hidden]) { animation: usage-panel-in 150ms ease-out; }
-  @keyframes usage-panel-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-}
+.type-usage details, #creation-usage details { padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.type-usage details > :not(summary), #creation-usage details > :not(summary) { margin-top: 10px; }
+.type-usage summary, #creation-usage summary { padding: 7px 0; cursor: pointer; }
+.type-usage-pair { grid-template-columns: minmax(0, 3fr) minmax(92px, 1fr); align-items: end; }
+#aircraft-type-form label { width: 100%; }
 .settings-section-heading { margin-top: 28px; }
 .compact-metrics { margin: 4px 0 0; }
 .block-setting-row { align-items: flex-start; }

@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.31";
+  const APP_VERSION = "0.2.32";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -43,22 +43,32 @@
     circuit: "Конвейер", arresterHooks: "Зацепы за аэрофинишер",
   };
   const OPTIONAL_USAGE_TYPES = ["runway", "carrier", "touch", "circuit", "arresterHooks"];
+  const BOARD_USAGE_TYPES = ["flight", ...OPTIONAL_USAGE_TYPES];
+  const CORE_USAGE_TYPES = ["flight", "runway"];
+  const defaultUsageSources = () => Object.fromEntries(BOARD_USAGE_TYPES.map((key) => [key, CORE_USAGE_TYPES.includes(key)]));
   const DEFAULT_OPERATION_TYPES = ["Лётная смена", "КОД", "Руление"].map((label, index) => ({ id: String(index), label }));
   const id = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const ENGINE_SOURCES = { engineMinutes: "Общая наработка двигателя, ч", starts: "Запуски", maximum: "Максимал, с", afterburner: "Форсаж, с", or: "ОР, с", combat: "Б, с", combined: "Б + УБ, с" };
 
+  function customSources(aircraft) {
+    const sources = [...(usageTypeOverride(aircraft)?.customSources || []), ...(aircraft.customUsageSources || [])];
+    return [...new Map(sources.map((source) => [source.key, source])).values()].map((source) => ({
+      ...source, label: usageRule(source.key, aircraft).label ?? source.label,
+    }));
+  }
+
   function usageSources(aircraft, owner) {
     const sources = [
-      { key: "flight", label: `${usageRule("flight").label}, ч` },
-      ...OPTIONAL_USAGE_TYPES.map((key) => ({ key, label: usageRule(key).label })),
-      ...(aircraft.customUsageSources || []),
+      { key: "flight", label: `${usageRule("flight", aircraft).label}, ч` },
+      ...OPTIONAL_USAGE_TYPES.map((key) => ({ key, label: usageRule(key, aircraft).label })),
+      ...customSources(aircraft),
     ];
     if (owner?.kind === "engine") sources.push(...Object.entries(ENGINE_SOURCES).map(([key, label]) => ({ key, label })));
     return sources;
   }
 
   function sourceEnabled(aircraft, key) {
-    return aircraft.enabledUsageSources?.[key] ?? (usageRule(key).enabled !== false);
+    return aircraft.enabledUsageSources?.[key] ?? (usageRule(key, aircraft).enabled !== false);
   }
 
   function sourceCheckboxes(aircraft = {}) {
@@ -77,7 +87,7 @@
     app.innerHTML = shell(`<form id="board-usage-form" class="shift-form">
       <fieldset><legend>Поля записи работы</legend>
         ${sourceCheckboxes(aircraft)}
-        <label>Новый показатель<input name="newSource" maxlength="80"></label>
+        <label>Новый показатель<input name="newSource" type="text" maxlength="80"></label>
       </fieldset>
       <button class="primary-button">Сохранить показатели</button>
     </form>`, { title: "Показатели работы", back: true, settings: false });
@@ -85,7 +95,7 @@
       event.preventDefault();
       const data = new FormData(event.currentTarget);
       const previous = [aircraft.enabledUsageSources, aircraft.customUsageSources];
-      aircraft.enabledUsageSources = enabledSourcesFromForm(aircraft, data);
+      aircraft.enabledUsageSources = usageSourceOverrides(aircraft, enabledSourcesFromForm(aircraft, data));
       const label = data.get("newSource").trim();
       if (label) aircraft.customUsageSources = [...(aircraft.customUsageSources || []), { key: `custom-${id()}`, label }];
       if (saveState()) render();
@@ -104,6 +114,10 @@
     if (resource.unit === "ч") return { [owner?.kind === "engine" ? "engineMinutes" : "flight"]: 1 };
     if (resource.unit === "зап." && owner?.kind === "engine") return { starts: 1 };
     return {};
+  }
+
+  function resourceSourceFactor(aircraft, key, factor) {
+    return key.startsWith("custom-") ? factor * usageRule(key, aircraft).factor : factor;
   }
 
   function blockInstalledOn(block, date) {
@@ -137,7 +151,8 @@
         engineMinutes: engine.minutes / 60, starts: engine.starts, maximum: engine.maximumSeconds,
         afterburner: engine.afterburnerSeconds, ...engine.modes,
       });
-      const inputs = Object.entries(resourceInputs(resource, owner)).filter(([key, factor]) => factor > 0 && values[key] != null)
+      const inputs = Object.entries(resourceInputs(resource, owner)).map(([key, factor]) => [key, resourceSourceFactor(aircraft, key, factor)])
+        .filter(([key, factor]) => factor > 0 && values[key] != null)
         .map(([key, factor]) => ({ key, input: values[key], factor, amount: values[key] * factor }));
       const amount = inputs.reduce((sum, item) => sum + item.amount, 0);
       if (!amount) return [];
@@ -177,15 +192,26 @@
       JSON.stringify(shift.afterUsage) === JSON.stringify(usageSnapshot(aircraft)));
   }
 
-  function usageRule(key) {
-    return state.usageRules?.[key] ?? {
+  function usageRule(key, aircraft = selectedAircraft()) {
+    const defaults = state.usageRules?.[key] ?? {
       label: USAGE_TYPES[key],
-      factor: DEFAULT_AIRCRAFT_SETTINGS.landingCoefficients[key] ?? 1,
+      factor: aircraft?.settings?.landingCoefficients?.[key] ?? DEFAULT_AIRCRAFT_SETTINGS.landingCoefficients[key] ?? 1,
+    };
+    const profile = usageTypeOverride(aircraft);
+    return {
+      label: profile?.labels?.[key] ?? defaults.label,
+      factor: profile?.factors?.[key] ?? defaults.factor,
+      enabled: profile?.enabled?.[key] ?? defaults.enabled,
     };
   }
 
   function usageTypeOverride(aircraft) {
-    return state.usageTypeOverrides?.find((entry) => entry.type === aircraft.type.trim().toLowerCase());
+    const key = aircraft?.type?.trim().toLowerCase();
+    return state.usageTypeOverrides?.find((entry) => entry.type === key);
+  }
+
+  function usageSourceOverrides(aircraft, enabled) {
+    return Object.fromEntries(Object.entries(enabled).filter(([key, value]) => value !== (usageRule(key, aircraft).enabled !== false)));
   }
   const DEFAULT_NOTIFICATION_CONFIG = {
     mode: "all",
@@ -249,6 +275,7 @@
         selectedAircraftId: state.selectedAircraftId,
         typeSettings: state.typeSettings,
         aircraftTypes: state.aircraftTypes,
+        archivedAircraftTypes: state.archivedAircraftTypes,
         usageRules: state.usageRules,
         sharedGround: state.sharedGround,
         usageTypeOverrides: state.usageTypeOverrides,
@@ -264,6 +291,8 @@
   function normalizeState(raw) {
     const normalized = Object.assign({}, structuredClone(seedState), raw || {}, { view: "home" });
     normalized.typeSettings = Array.isArray(raw?.typeSettings) ? raw.typeSettings : [];
+    normalized.usageTypeOverrides = Array.isArray(raw?.usageTypeOverrides) ? raw.usageTypeOverrides : [];
+    normalized.archivedAircraftTypes = Array.isArray(raw?.archivedAircraftTypes) ? raw.archivedAircraftTypes : [];
     if (!Array.isArray(normalized.aircraft)) normalized.aircraft = [];
     normalized.aircraft = normalized.aircraft.map((aircraft) => ({
       ...aircraft,
@@ -310,6 +339,22 @@
       if (!types.has(key)) types.set(key, name);
     }
     normalized.aircraftTypes = [...types.values()];
+    for (const key of types.keys()) {
+      const profile = normalized.usageTypeOverrides.find((entry) => entry.type === key);
+      if (profile?.enabled) continue;
+      const enabled = defaultUsageSources();
+      for (const aircraft of normalized.aircraft.filter((item) => item.type.trim().toLowerCase() === key)) {
+        const overrides = { ...aircraft.enabledUsageSources };
+        for (const source of BOARD_USAGE_TYPES) {
+          if (Object.hasOwn(overrides, source)) continue;
+          const wasEnabled = normalized.usageRules?.[source]?.enabled !== false;
+          if (wasEnabled !== enabled[source]) overrides[source] = wasEnabled;
+        }
+        aircraft.enabledUsageSources = overrides;
+      }
+      const migrated = { ...profile, type: key, enabled };
+      normalized.usageTypeOverrides = normalized.usageTypeOverrides.filter((entry) => entry.type !== key).concat(migrated);
+    }
     return normalized;
   }
 
@@ -324,10 +369,8 @@
   }
 
   let leaveUsageSettings;
-  let leaveTypeUsageSettings;
   function navigateBack() {
     if (state.view === "usage-settings" && leaveUsageSettings?.()) return;
-    if (state.view === "type-usage-settings" && leaveTypeUsageSettings?.()) return;
     if (state.view === "aircraft-layout" && leaveAircraftLayout?.()) return;
     finishBackNavigation();
   }
@@ -380,10 +423,8 @@
     else if (state.view === "correct-shift") renderShift(true);
     else if (state.view === "reports") renderReports();
     else if (state.view === "settings") renderSettings();
-    else if (state.view === "aircraft-types") renderAircraftTypes();
     else if (state.view === "diagnostics") renderDiagnostics();
     else if (state.view === "usage-settings") renderUsageSettings();
-    else if (state.view === "type-usage-settings") renderTypeUsageSettings();
     else if (state.view === "aircraft-layout") renderAircraftLayout();
     else if (state.view === "about") renderAbout();
     else renderHome();
@@ -423,7 +464,7 @@
             <span class="aircraft-card__title">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</span>
             <span class="aircraft-card__meta">Зав. № ${escapeHtml(aircraft.serialNumber)}</span>
             <span class="aircraft-card__metrics">
-              <span><b>${calc.formatDuration(aircraft.totalFlightMinutes)}</b> ${escapeHtml(usageRule("flight").label)}</span>
+              <span><b>${calc.formatDuration(aircraft.totalFlightMinutes)}</b> ${escapeHtml(usageRule("flight", aircraft).label)}</span>
               <span><b>${aircraft.actualLandings}</b> посадок</span>
             </span>
           </span>
@@ -1309,7 +1350,7 @@
           </div>
           ${sourceEnabled(aircraft, "arresterHooks") ? `<label><span>${escapeHtml(usageRule("arresterHooks").label)}</span><input name="arresterHooks" type="number" min="0" value="0"></label>` : ""}
         </fieldset>
-        ${(aircraft.customUsageSources || []).length ? `<fieldset><legend>Другие показатели</legend>${aircraft.customUsageSources
+        ${customSources(aircraft).some(({ key }) => sourceEnabled(aircraft, key)) ? `<fieldset><legend>Другие показатели</legend>${customSources(aircraft)
           .filter(({ key }) => sourceEnabled(aircraft, key)).map(({ key, label }) => `<label>${escapeHtml(label)}<input name="${key}" type="number" min="0" step="any"></label>`).join("")}</fieldset>` : ""}
         <div id="operation-picker"></div>
         <fieldset><legend>${escapeHtml(usageRule("ground").label)}</legend>
@@ -1370,7 +1411,7 @@
     const rightBlock = aircraft.blocks.find((block) => block.id === "engine-right");
     const override = usageTypeOverride(aircraft);
     const ground = override?.ground ?? state.sharedGround ?? aircraft.settings;
-    const factor = (key) => override?.factors[key] ?? usageRule(key).factor;
+    const factor = (key) => usageRule(key, aircraft).factor;
     const groundOptions = {
       stepMinutes: ground.groundRoundingMinutes,
       direction: ground.groundRoundingDirection,
@@ -1595,7 +1636,6 @@
           <button type="button" class="small-button danger-button" data-remove-block-id="${block.id}">Удалить</button>
         </span>
       </div>`).join("");
-    const coefficients = aircraft.settings.landingCoefficients;
     const notificationConfig = aircraft.notificationConfig;
     const notificationRows = aircraft.resources.map((resource) => `
       <div class="setting-row notification-work-row" data-notification-work="${escapeHtml(`${resource.object} ${resource.name}`.toLowerCase())}">
@@ -1623,17 +1663,6 @@
       <div class="section-heading settings-section-heading"><div><h2>Конкретные работы</h2><p>Независимые каналы приложения и штатного календаря.</p></div></div>
       <label class="search-field notification-search">${icon("search")}<input id="notification-work-search" type="search" placeholder="Поиск по работам и объектам"></label>
       <section class="settings-list notification-work-list">${notificationRows || `<div class="empty-state compact-empty"><p>Ресурсных работ пока нет.</p></div>`}</section>
-      <form id="aircraft-rules-form" class="shift-form settings-form">
-        <fieldset><legend>Коэффициенты приведённых посадок</legend>
-          <div class="landing-grid">
-            <label><span>БВПП</span><input name="runway" type="number" min="0" step="0.1" value="${coefficients.runway}" required></label>
-            <label><span>Корабль</span><input name="carrier" type="number" min="0" step="0.1" value="${coefficients.carrier}" required></label>
-            <label><span>Касание</span><input name="touch" type="number" min="0" step="0.1" value="${coefficients.touch}" required></label>
-            <label><span>Конвейер</span><input name="circuit" type="number" min="0" step="0.1" value="${coefficients.circuit}" required></label>
-          </div>
-        </fieldset>
-        <button type="submit" class="primary-button wide">Сохранить расчётные настройки</button>
-      </form>
       <div class="section-heading settings-section-heading"><div><h2>Формуляры и агрегаты</h2><p>Добавление, переименование и удаление блоков.</p></div></div>
       <section class="settings-list">${blockRows || `<div class="empty-state compact-empty"><p>Блоков пока нет.</p></div>`}</section>
       <button class="add-block-button" data-action="add-block">${icon("plus")} Добавить блок</button>
@@ -1673,55 +1702,23 @@
       else resource.notifyCalendar = event.target.checked;
       saveState();
     }));
-    document.getElementById("aircraft-rules-form").addEventListener("submit", (event) => {
-      event.preventDefault();
-      const data = new FormData(event.currentTarget);
-      aircraft.settings.landingCoefficients = {
-        runway: Number(data.get("runway")),
-        carrier: Number(data.get("carrier")),
-        touch: Number(data.get("touch")),
-        circuit: Number(data.get("circuit")),
-      };
-      const key = aircraft.type.trim().toLowerCase();
-      state.typeSettings = state.typeSettings.filter((entry) => entry.type.toLowerCase() !== key);
-      state.typeSettings.push({ type: aircraft.type, settings: structuredClone(aircraft.settings) });
-      saveState();
-      showToast("Настройки сохранены для борта и новых самолётов этого типа");
-    });
     document.querySelectorAll("[data-rename-block-id]").forEach((button) => button.addEventListener("click", () => renameBlockById(button.dataset.renameBlockId)));
     document.querySelectorAll("[data-remove-block-id]").forEach((button) => button.addEventListener("click", () => removeBlock(button.dataset.removeBlockId)));
   }
 
-  function aircraftTypeSelect(selected = "") {
-    return `<select name="type" required><option value="">Выбрать тип</option>${state.aircraftTypes.map((name) =>
-      `<option value="${escapeHtml(name)}" ${name.toLowerCase() === selected.trim().toLowerCase() ? "selected" : ""}>${escapeHtml(name)}</option>`
-    ).join("")}</select>`;
+  function isArchivedType(name) {
+    return state.archivedAircraftTypes.includes(name.trim().toLowerCase());
   }
 
-  function renderAircraftTypes() {
-    app.innerHTML = shell(`
-      <section class="settings-list">${state.aircraftTypes.map((name) => `<div class="setting-row"><strong>${escapeHtml(name)}</strong></div>`).join("")}</section>
-      <form id="aircraft-type-form" class="shift-form settings-form">
-        <label>Название нового типа<input name="type" required></label>
-        <p id="aircraft-type-status" role="status"></p>
-        <button class="primary-button" type="submit">Добавить тип</button>
-      </form>`, { title: "Типы самолётов", back: true, settings: false });
-    document.getElementById("aircraft-type-form").addEventListener("submit", (event) => {
-      event.preventDefault();
-      const name = event.currentTarget.elements.type.value.trim();
-      const status = document.getElementById("aircraft-type-status");
-      if (!name) { status.textContent = "Укажи название типа."; return; }
-      if (state.aircraftTypes.some((type) => type.toLowerCase() === name.toLowerCase())) {
-        status.textContent = "Такой тип уже есть.";
-        return;
-      }
-      state.aircraftTypes.push(name);
-      if (saveState()) render();
-      else {
-        state.aircraftTypes.pop();
-        status.textContent = "Не удалось сохранить тип.";
-      }
-    });
+  function activeAircraftTypes() {
+    return state.aircraftTypes.filter((name) => !isArchivedType(name));
+  }
+
+  function aircraftTypeSelect(selected = "") {
+    const types = state.aircraftTypes.filter((name) => !isArchivedType(name) || name.toLowerCase() === selected.trim().toLowerCase());
+    return `<select name="type" required><option value="">Выбрать тип</option>${types.map((name) =>
+      `<option value="${escapeHtml(name)}" ${name.toLowerCase() === selected.trim().toLowerCase() ? "selected" : ""}>${escapeHtml(name)}</option>`
+    ).join("")}</select>`;
   }
 
   function renderBoardDetails() {
@@ -2219,7 +2216,7 @@
       const owner = resourceOwner(aircraft, resource);
       if (!owner && resource.object !== "Самолёт") return [];
       return Object.entries(resourceInputs(resource, owner)).filter(([, factor]) => factor > 0).map(([key, factor]) => ({
-        key, factor, target: owner?.kind === "airframe" || !owner ? boardNode : owner.id,
+        key, factor: resourceSourceFactor(aircraft, key, factor), target: owner?.kind === "airframe" || !owner ? boardNode : owner.id,
         name: resource.name, enabled: sourceEnabled(aircraft, key), installed: !owner || blockInstalledOn(owner, todayIso()), installedDate: resource.installed,
       }));
     });
@@ -2435,10 +2432,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.31</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.32</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.31", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.32", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -2708,260 +2705,181 @@
     });
   }
 
-  function usageScopeTabs(active) {
-    return `<nav class="filter-row" aria-label="Область применения коэффициентов">
-      <button type="button" class="filter-chip ${active === "usage-settings" ? "is-active" : ""}" data-usage-scope="usage-settings" aria-pressed="${active === "usage-settings"}">Для всех</button>
-      <button type="button" class="filter-chip ${active === "type-usage-settings" ? "is-active" : ""}" data-usage-scope="type-usage-settings" aria-pressed="${active === "type-usage-settings"}">По типу самолёта</button>
-    </nav>`;
-  }
-
-  function bindUsageScope(active, confirmDraft) {
-    app.querySelectorAll("[data-usage-scope]").forEach((button) => button.addEventListener("click", () => {
-      const target = button.dataset.usageScope;
-      if (target === active) return;
-      const go = () => { state.view = target; render(); };
-      if (!confirmDraft(go)) go();
-    }));
-  }
-
-  function renderTypeUsageSettings() {
-    const aircraftTypes = new Map(state.aircraftTypes.map((type) => {
-      const key = type.toLowerCase();
-      return [key, state.aircraft.find((aircraft) => aircraft.type.trim().toLowerCase() === key) ||
-        { type, settings: DEFAULT_AIRCRAFT_SETTINGS }];
-    }));
-    app.innerHTML = shell(`
-      ${usageScopeTabs("type-usage-settings")}
-      <form id="type-usage-form" class="shift-form settings-form">
-        <label>Тип самолёта<select name="type" required>
-          <option value="">Выбрать тип</option>
-          ${[...aircraftTypes].map(([key, aircraft]) => `<option value="${escapeHtml(key)}">${escapeHtml(aircraft.type)}${usageTypeOverride(aircraft) ? " · свои правила" : ""}</option>`).join("")}
-        </select></label>
-        <p class="field-help">Настройки типа применяются ко всем его бортам. Общие правила действуют для остальных типов.</p>
-        <p id="type-usage-source" class="field-help" role="status"></p>
-        <div id="type-usage-fields"></div>
-      </form>`, { title: "Виды наработки", subtitle: "", back: true, settings: false });
-    const form = document.getElementById("type-usage-form");
-    const fields = document.getElementById("type-usage-fields");
-    const snapshot = () => JSON.stringify([...new FormData(form)].filter(([name]) => name !== "type"));
-    let activeType = "";
-    let savedSnapshot = snapshot();
-    let afterSave;
-    function showFields() {
-      activeType = form.elements.type.value;
-      state.lastUsageType = activeType;
-      const aircraft = aircraftTypes.get(form.elements.type.value);
-      const source = form.querySelector("#type-usage-source");
-      source.textContent = "";
-      if (!aircraft) { fields.innerHTML = ""; savedSnapshot = snapshot(); return; }
-      const rule = usageTypeOverride(aircraft);
-      source.textContent = rule ? "Для этого типа сохранены отдельные правила." :
-        state.sharedGround ? "Этот тип использует общие правила." : "Для этого типа действуют исходные настройки борта.";
-      fields.innerHTML = `<fieldset><legend>Коэффициенты наработки</legend>
-        ${Object.keys(USAGE_TYPES).map((key) => `<label>${escapeHtml(usageRule(key).label)}<input name="${key}" type="number" min="0" step="any" value="${rule?.factors[key] ?? (state.usageRules ? usageRule(key).factor : aircraft.settings.landingCoefficients[key] ?? 1)}" required></label>`).join("")}
-        <button class="primary-button" type="submit">Сохранить для типа</button>
-        ${rule ? `<button class="secondary-button" type="button" id="remove-type-rule">Вернуть общие правила</button>` : ""}
-      </fieldset>`;
-      savedSnapshot = snapshot();
-    }
-    function saveRules(next) {
-      const previous = state.usageTypeOverrides;
-      state.usageTypeOverrides = next;
-      if (!saveState()) {
-        state.usageTypeOverrides = previous;
-        showToast("Не удалось сохранить настройки");
-        return;
-      }
-      showFields();
-      const aircraft = aircraftTypes.get(activeType);
-      form.elements.type.selectedOptions[0].textContent = aircraft.type + (usageTypeOverride(aircraft) ? " · свои правила" : "");
-      showToast("Настройки сохранены");
-      afterSave?.();
-    }
-    function confirmDraft(next) {
-      if (snapshot() === savedSnapshot) return false;
-      chooseLayoutAction("Сохранить изменения коэффициентов?", [["save","Сохранить"],["discard","Продолжить без сохранения"],["cancel","Остаться"]], (action) => {
-        if (action === "discard") next();
-        if (action === "save") {
-          afterSave = next;
-          try { form.requestSubmit(); } finally { afterSave = undefined; }
-        }
-      });
-      return true;
-    }
-    leaveTypeUsageSettings = () => confirmDraft(finishBackNavigation);
-    bindUsageScope("type-usage-settings", confirmDraft);
-    form.elements.type.addEventListener("change", () => {
-      const selected = form.elements.type.value;
-      form.elements.type.value = activeType;
-      const switchType = () => { form.elements.type.value = selected; showFields(); };
-      if (!confirmDraft(switchType)) switchType();
-    });
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const data = new FormData(form);
-      const type = String(data.get("type"));
-      if (!aircraftTypes.has(type)) return;
-      const next = (state.usageTypeOverrides ?? []).filter((entry) => entry.type !== type);
-      next.push({ type, factors: Object.fromEntries(Object.keys(USAGE_TYPES).map((key) => [key, Number(data.get(key))])),
-        ground: state.usageTypeOverrides.find((entry) => entry.type === type)?.ground });
-      saveRules(next);
-    });
-    fields.addEventListener("click", (event) => {
-      if (event.target.id !== "remove-type-rule") return;
-      const type = form.elements.type.value;
-      chooseLayoutAction("Вернуть общие правила для этого типа?", [["reset","Вернуть"],["cancel","Отмена"]], (action) => {
-        if (action === "reset") saveRules(state.usageTypeOverrides.filter((entry) => entry.type !== type));
-      });
-    });
-    form.elements.type.value = aircraftTypes.has(state.lastUsageType) ? state.lastUsageType : "";
-    showFields();
-  }
-
   function renderUsageSettings() {
-    const groups = [
-      ["Наработка", ["flight", "ground", "maximum"]],
-      ["Посадки и зацепы", OPTIONAL_USAGE_TYPES],
+    const types = activeAircraftTypes();
+    const archived = state.aircraftTypes.filter(isArchivedType);
+    const type = types.includes(state.lastUsageType) ? state.lastUsageType : types[0];
+    const aircraft = state.aircraft.find((item) => item.type === type) || { type };
+    const profile = usageTypeOverride(aircraft);
+    const draft = structuredClone({
+      labels: profile?.labels || {},
+      factors: profile?.factors || {},
+      enabled: profile?.enabled || {},
+      customSources: profile?.customSources || [],
+    });
+    const initial = JSON.stringify(draft);
+    const fields = () => [
+      ...BOARD_USAGE_TYPES.map((key) => ({ key, label: usageRule(key, aircraft).label })),
+      ...draft.customSources,
     ];
-    const usageRows = (keys) => keys.map((key) => {
-      const rule = usageRule(key);
-      return `<fieldset data-usage-row="${key}" ${rule.enabled === false ? "hidden" : ""}><legend data-usage-title="${key}">${escapeHtml(rule.label)}</legend><div class="field-pair">
-        <label>Наименование<input type="text" name="${key}Label" value="${escapeHtml(rule.label)}" required></label>
-        <label>Коэффициент<input type="number" name="${key}Factor" value="${rule.factor}" min="0" step="any" required></label>
-      </div>
-      ${OPTIONAL_USAGE_TYPES.includes(key) ? `<input type="hidden" name="${key}Enabled" value="${rule.enabled !== false}"><button type="button" class="secondary-button" data-usage-toggle="${key}" data-enable="false">Скрыть вид</button>` : ""}
-      <p class="field-help" data-usage-example="${key}"></p></fieldset>`;
-    }).join("");
+    const enabled = (key) => draft.enabled[key] ?? sourceEnabled({ type }, key);
+    const selector = (items) => items.map((name) =>
+      `<option value="${escapeHtml(name)}" ${name === type ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
     app.innerHTML = shell(`
-      ${usageScopeTabs("usage-settings")}
-      <form id="usage-settings-form" class="shift-form settings-form">
-        <div class="usage-heading"><h1>Виды наработки</h1>
-          <button type="button" class="usage-hidden-button" aria-label="Скрытые виды" title="Скрытые виды" aria-controls="hidden-usage" aria-expanded="false">♲</button>
-        </div>
-        <section id="hidden-usage" class="usage-hidden-panel" hidden aria-label="Скрытые виды">
-          <h2>Скрытые виды</h2><p id="hidden-usage-empty">Скрытых видов нет.</p>
-          ${OPTIONAL_USAGE_TYPES.map((key) => `<div data-usage-restore="${key}" ${usageRule(key).enabled !== false ? "hidden" : ""}><button type="button" class="secondary-button" data-usage-toggle="${key}" data-enable="true">Вернуть «${escapeHtml(usageRule(key).label)}»</button></div>`).join("")}
-        </section>
-        <p class="field-help">Общие коэффициенты служат настройками по умолчанию. Если для типа сохранены свои правила, применяются они.</p>
-        <p class="field-help" id="usage-save-status" role="status"></p>
-        ${groups.map(([label, keys]) => `<section class="usage-group"><h2>${label}</h2>${usageRows(keys)}</section>`).join("")}
-        <p class="field-help">Процент и округление земной наработки задаются в формуляре двигателя.</p>
-        <button class="primary-button" type="submit">Сохранить</button>
-        <button class="secondary-button" type="button" id="usage-default">Восстановить по умолчанию</button>
-      </form>`, { title: "Виды наработки", subtitle: "", back: true, settings: false });
+      <h1>Виды наработки</h1>
+      <section class="section-stack type-usage">
+        ${type ? `<label>Тип самолёта<select id="usage-aircraft-type">${selector(types)}</select></label>` : `<p>Добавь тип самолёта, чтобы настроить виды наработки.</p>`}
+        <details ${type ? "" : "open"}><summary>Добавить тип самолёта</summary>
+          <form id="aircraft-type-form" class="shift-form settings-form">
+            <label>Название нового типа<input name="type" type="text" maxlength="80" required></label>
+            <button type="submit" class="secondary-button">Добавить тип</button>
+          </form>
+        </details>
+        ${type ? `<form id="usage-settings-form" class="shift-form">
+          <div id="type-usage-fields" class="section-stack"></div>
+          <button type="submit" class="primary-button">Сохранить для типа</button>
+          <button type="button" class="secondary-button" id="archive-aircraft-type">В корзину</button>
+        </form>` : ""}
+        <details id="aircraft-type-trash" ${type ? "" : "open"}><summary>Корзина (${archived.length})</summary>
+          ${archived.map((name, index) => `<div class="setting-row"><strong>${escapeHtml(name)}</strong><button class="small-button" type="button" data-restore-type="${index}">Восстановить</button></div>`).join("") || "<p>Корзина пуста.</p>"}
+        </details>
+      </section>`, { title: "Виды наработки", back: true, settings: false });
     const form = document.getElementById("usage-settings-form");
-    const formSnapshot = () => JSON.stringify([...new FormData(form)]);
-    let initialSnapshot = formSnapshot();
-    let afterUsageSave;
-    function confirmDraft(next) {
-      if (formSnapshot() === initialSnapshot) return false;
-      if (app.querySelector("dialog[open]")) return true;
-      const dialog = document.createElement("dialog");
-      dialog.className = "confirm-dialog";
-      dialog.innerHTML = `<form method="dialog">
-        <h2>Сохранить изменения?</h2>
-        <p>Настройки видов наработки ещё не сохранены.</p>
-        <button class="primary-button" value="save">Сохранить</button>
-        <button class="secondary-button" value="discard">Выйти без сохранения</button>
-        <button class="secondary-button" value="cancel" autofocus>Остаться</button>
-      </form>`;
-      app.append(dialog);
-      dialog.addEventListener("close", () => {
-        const action = dialog.returnValue;
-        dialog.remove();
-        if (action === "save") {
-          afterUsageSave = next;
-          try { form.requestSubmit(); } finally { afterUsageSave = undefined; }
-        }
-        if (action === "discard") next();
-      }, { once: true });
-      dialog.showModal();
-      return true;
+    const collection = document.getElementById("type-usage-fields");
+    const currentLabel = ({ key, label }) => draft.labels[key] || label;
+    function drawFields() {
+      if (!collection) return;
+      const current = fields();
+      const available = current.filter(({ key }) => !enabled(key));
+      collection.innerHTML = current.filter(({ key }) => enabled(key)).map((item) => {
+        const { key } = item;
+        const factor = draft.factors[key] ?? usageRule(key, aircraft).factor;
+        return `<fieldset><legend>${escapeHtml(currentLabel(item))}</legend>
+          <div class="field-pair type-usage-pair">
+            <label>Название<input name="${key}Label" type="text" value="${escapeHtml(currentLabel(item))}" maxlength="80" required></label>
+            <label>Коэффициент<input name="${key}Factor" type="number" min="0" step="any" value="${factor}" required></label>
+          </div>
+          <small class="field-help">Пример: 1 × ${formatNumber(factor)} = ${formatNumber(factor)}</small>
+          <button type="button" class="small-button" data-disable-source="${key}">Убрать показатель</button>
+        </fieldset>`;
+      }).join("") + `<details id="type-add-source"><summary>Добавить показатель</summary>
+          ${available.length ? `<label>Из списка<select name="existingSource"><option value="">Выбрать</option>${available.map((item) =>
+            `<option value="${item.key}">${escapeHtml(currentLabel(item))}</option>`).join("")}</select></label>` : ""}
+          <label>Или свой показатель<input name="newSource" type="text" maxlength="80"></label>
+          <button type="button" class="secondary-button" id="type-add-source-button">Добавить показатель</button>
+        </details>`;
     }
-    leaveUsageSettings = () => confirmDraft(finishBackNavigation);
-    bindUsageScope("usage-settings", confirmDraft);
-    const hiddenPanel = form.querySelector("#hidden-usage");
-    const hiddenButton = form.querySelector(".usage-hidden-button");
-    function updateHiddenCount() {
-      const count = hiddenPanel.querySelectorAll("[data-usage-restore]:not([hidden])").length;
-      form.querySelector("#hidden-usage-empty").hidden = count > 0;
-      hiddenButton.textContent = count ? `♲ ${count}` : "♲";
-    }
-    hiddenButton.addEventListener("click", () => {
-      hiddenPanel.hidden = !hiddenPanel.hidden;
-      hiddenButton.setAttribute("aria-expanded", String(!hiddenPanel.hidden));
-    });
-    updateHiddenCount();
-    form.querySelectorAll("[data-usage-toggle]").forEach((button) => button.addEventListener("click", () => {
-      const { usageToggle: key, enable } = button.dataset;
-      form.elements.namedItem(`${key}Enabled`).value = enable;
-      const row = form.querySelector(`[data-usage-row="${key}"]`);
-      if (enable === "false") {
-        const rule = usageRule(key);
-        const label = form.elements.namedItem(`${key}Label`);
-        const factor = form.elements.namedItem(`${key}Factor`);
-        if (!label.validity.valid) label.value = rule.label;
-        if (!factor.validity.valid) factor.value = rule.factor;
-      }
-      row.hidden = enable === "false";
-      form.querySelector(`[data-usage-restore="${key}"]`).hidden = enable === "true";
-      updateHiddenCount();
-    }));
-    function updateExamples() {
-      for (const output of form.querySelectorAll("[data-usage-example]")) {
-        const key = output.dataset.usageExample;
+    function readDraft() {
+      if (!form) return;
+      for (const item of fields().filter(({ key }) => enabled(key))) {
+        const { key } = item;
+        const label = form.elements.namedItem(`${key}Label`).value.trim();
         const factor = form.elements.namedItem(`${key}Factor`).valueAsNumber;
-        const input = key === "flight" ? 60 : key === "ground" ? 13 : key === "maximum" ? 30 : key === "arresterHooks" ? 2 : 1;
-        const unit = key === "flight" || key === "ground" ? " мин" : key === "maximum" ? " с" : "";
-        output.textContent = Number.isFinite(factor) && factor >= 0
-          ? `Ввод: ${input}${unit} → после коэффициента: ${formatNumber(input * factor)}${unit}`
-          : "";
-        if (key === "ground" && output.textContent) output.textContent += " (пример только для коэффициента)";
+        if (label !== currentLabel(item)) draft.labels[key] = label;
+        if (factor !== (draft.factors[key] ?? usageRule(key, aircraft).factor)) draft.factors[key] = factor;
       }
     }
-    form.addEventListener("input", updateExamples);
-    form.querySelector("#usage-default").addEventListener("click", () => {
-      chooseLayoutAction("Восстановить стандартные виды и коэффициенты?", [["reset","Восстановить"],["cancel","Отмена"]], (action) => {
-        if (action !== "reset") return;
-        for (const [key, title] of Object.entries(USAGE_TYPES)) {
-          const label = form.elements.namedItem(`${key}Label`);
-          label.value = title;
-          form.elements.namedItem(`${key}Factor`).value = DEFAULT_AIRCRAFT_SETTINGS.landingCoefficients[key] ?? 1;
-          label.dispatchEvent(new Event("input", { bubbles: true }));
-          if (OPTIONAL_USAGE_TYPES.includes(key)) form.querySelector(`[data-usage-toggle="${key}"][data-enable="true"]`).click();
-        }
-        updateExamples();
+    function save() {
+      if (!form.reportValidity()) return false;
+      readDraft();
+      if (fields().some(({ key }) => enabled(key) && !form.elements.namedItem(`${key}Label`).value.trim())) {
+        showToast("Введи название показателя");
+        return false;
+      }
+      const previous = state.usageTypeOverrides;
+      const key = type.toLowerCase();
+      state.usageTypeOverrides = [...previous.filter((item) => item.type !== key), { ...profile, ...draft, type: key }];
+      if (saveState()) return true;
+      state.usageTypeOverrides = previous;
+      showToast("Не удалось сохранить настройки типа");
+      return false;
+    }
+    function afterDraft(next) {
+      readDraft();
+      if (JSON.stringify(draft) === initial) { next(); return; }
+      if (app.querySelector("dialog[open]")) return;
+      chooseLayoutAction("Сохранить изменения наработки?", [["save", "Сохранить"], ["discard", "Выйти без сохранения"], ["cancel", "Остаться"]], (action) => {
+        if (action === "discard" || (action === "save" && save())) next();
       });
+    }
+    leaveUsageSettings = () => { afterDraft(finishBackNavigation); return true; };
+    drawFields();
+    document.getElementById("usage-aircraft-type")?.addEventListener("change", (event) => {
+      const selected = event.target.value;
+      event.target.value = type;
+      afterDraft(() => { state.lastUsageType = selected; render(); });
     });
-    form.addEventListener("input", (event) => {
-      const row = event.target.closest("[data-usage-row]");
-      if (!row || event.target.name !== `${row.dataset.usageRow}Label`) return;
-      const key = row.dataset.usageRow;
-      const label = event.target.value.trim() || USAGE_TYPES[key];
-      row.querySelector("[data-usage-title]").textContent = label;
-      const restore = hiddenPanel.querySelector(`[data-usage-toggle="${key}"]`);
-      if (restore) restore.textContent = `Вернуть «${label}»`;
-    });
-    updateExamples();
-    form.addEventListener("submit", (event) => {
+    form?.addEventListener("submit", (event) => {
       event.preventDefault();
-      const data = new FormData(event.currentTarget);
-      const previousRules = state.usageRules;
-      state.usageRules = Object.fromEntries(Object.keys(USAGE_TYPES).map((key) => [key, {
-        label: String(data.get(`${key}Label`)).trim() || USAGE_TYPES[key],
-        factor: Number(data.get(`${key}Factor`)),
-        enabled: !OPTIONAL_USAGE_TYPES.includes(key) || data.get(`${key}Enabled`) === "true",
-      }]));
-      if (!saveState()) {
-        state.usageRules = previousRules;
-        showToast("Не удалось сохранить настройки на устройстве. Изменения остались в форме.");
+      if (save()) { render(); showToast("Настройки типа сохранены"); }
+    });
+    collection?.addEventListener("click", (event) => {
+      const disable = event.target.closest("[data-disable-source]");
+      if (disable) {
+        readDraft();
+        draft.enabled[disable.dataset.disableSource] = false;
+        drawFields();
         return;
       }
-      initialSnapshot = formSnapshot();
-      if (afterUsageSave) afterUsageSave();
-      else form.querySelector("#usage-save-status").textContent = "Общие настройки сохранены.";
-      showToast("Общие виды наработки сохранены");
+      if (event.target.id !== "type-add-source-button") return;
+      const label = form.elements.newSource.value.trim();
+      const key = form.elements.existingSource?.value;
+      if (!label && !key) { showToast("Выбери показатель или введи название"); return; }
+      readDraft();
+      if (label && fields().some((item) => currentLabel(item).toLowerCase() === label.toLowerCase())) {
+        showToast("Показатель с таким названием уже есть");
+        return;
+      }
+      if (label) {
+        const custom = `custom-${id()}`;
+        draft.customSources.push({ key: custom, label });
+        draft.enabled[custom] = true;
+      } else draft.enabled[key] = true;
+      drawFields();
     });
+    collection?.addEventListener("input", (event) => {
+      const field = event.target;
+      const row = field.closest("fieldset");
+      if (!row) return;
+      if (field.name.endsWith("Label")) row.querySelector("legend").textContent = field.value;
+      if (field.name.endsWith("Factor")) {
+        const value = field.valueAsNumber;
+        row.querySelector("small").textContent = Number.isFinite(value) && value >= 0 ? `Пример: 1 × ${formatNumber(value)} = ${formatNumber(value)}` : "";
+      }
+    });
+    document.getElementById("aircraft-type-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const name = event.currentTarget.elements.type.value.trim();
+      const key = name.toLowerCase();
+      if (!name) { showToast("Введи название типа"); return; }
+      if (state.aircraftTypes.some((item) => item.toLowerCase() === key)) {
+        showToast(isArchivedType(name) ? "Тип уже в корзине. Его можно восстановить" : "Такой тип уже есть");
+        return;
+      }
+      afterDraft(() => {
+        state.aircraftTypes.push(name);
+        state.usageTypeOverrides.push({
+          type: key, labels: { flight: USAGE_TYPES.flight, runway: "Посадки" },
+          enabled: defaultUsageSources(),
+        });
+        if (saveState()) { state.lastUsageType = name; render(); }
+        else { state.aircraftTypes.pop(); state.usageTypeOverrides.pop(); showToast("Не удалось сохранить тип"); }
+      });
+    });
+    function changeArchive(name, archivedNow) {
+      const previous = state.archivedAircraftTypes;
+      const key = name.toLowerCase();
+      state.archivedAircraftTypes = archivedNow ? [...previous, key] : previous.filter((item) => item !== key);
+      if (saveState()) { state.lastUsageType = archivedNow ? null : name; render(); }
+      else { state.archivedAircraftTypes = previous; showToast("Не удалось обновить корзину"); }
+    }
+    document.getElementById("archive-aircraft-type")?.addEventListener("click", () => {
+      afterDraft(() => chooseLayoutAction("Переместить тип в корзину? Существующие борта сохранят его.",
+        [["archive", "В корзину"], ["cancel", "Отмена"]], (action) => { if (action === "archive") changeArchive(type, true); }));
+    });
+    app.querySelectorAll("[data-restore-type]").forEach((button) => button.addEventListener("click", () => {
+      afterDraft(() => changeArchive(archived[Number(button.dataset.restoreType)], false));
+    }));
   }
 
   function renderDiagnostics() {
@@ -3018,7 +2936,6 @@
       <section class="page-heading compact"><div><p class="eyebrow">Приложение</p><h1>Настройки</h1></div></section>
       <section class="settings-list">
         <button class="setting-row" data-view="usage-settings"><strong>Виды наработки</strong>${icon("chevron")}</button>
-        <button class="setting-row" data-view="aircraft-types"><strong>Типы самолётов</strong>${icon("chevron")}</button>
         <button class="setting-row" data-view="diagnostics"><strong>Диагностика</strong>${icon("chevron")}</button>
         <label class="setting-row"><span><strong>Все уведомления</strong><small>Главный переключатель имеет высший приоритет</small></span><input id="global-notifications" type="checkbox" ${state.globalNotifications ? "checked" : ""}></label>
         <div class="settings-subheading">Уведомления по самолётам</div>
@@ -3026,7 +2943,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.31</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.32</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -3141,7 +3058,7 @@
           <label>Бортовой номер<input name="boardNumber" type="text" required></label>
           <label>Заводской номер<input name="serialNumber" type="text"></label>
           <label>RF<input name="rfNumber" type="text" placeholder="Например, 33738"></label>
-          <fieldset><legend>Показатели записи работы</legend>${sourceCheckboxes()}</fieldset>` : `
+          <div id="creation-usage"></div>` : `
           <label>Название<input name="name" type="text" required></label>
           <label>Тип карточки<select name="kind"><option value="unit">Агрегат</option><option value="engine">Двигатель</option><option value="airframe">Планер</option></select></label>
           <label>Номер агрегата<input name="serialNumber" type="text"></label>
@@ -3149,19 +3066,75 @@
         <p id="creation-error" role="alert"></p>
         <button class="primary-button" type="submit">${title}</button>
       </form>`, { title, back: true, settings: false });
-    document.getElementById("creation-form").addEventListener("submit", (event) => {
+    const form = document.getElementById("creation-form");
+    const usage = aircraftForm ? bindCreationUsage(form) : null;
+    form.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = Object.fromEntries([...new FormData(event.currentTarget)].map(([key, value]) => [key, value.trim()]));
-      if (aircraftForm ? !state.aircraftTypes.includes(data.type) || !data.boardNumber : !data.name) {
+      if (aircraftForm ? !activeAircraftTypes().includes(data.type) || !data.boardNumber : !data.name) {
         document.getElementById("creation-error").textContent = "Заполни обязательные поля.";
         return;
       }
-      if (aircraftForm) createAircraft({ ...data, enabledUsageSources: enabledSourcesFromForm({}, new FormData(event.currentTarget)) });
+      if (aircraftForm) createAircraft({ ...data, ...usage.read() });
       else createBlock(data);
     });
   }
 
-  function createAircraft({ type, boardNumber, serialNumber, rfNumber, enabledUsageSources }) {
+  function bindCreationUsage(form) {
+    const root = document.getElementById("creation-usage");
+    const drafts = new Map();
+    const current = () => {
+      const { value: type } = form.elements.type;
+      if (!drafts.has(type)) drafts.set(type, { type, enabledUsageSources: {}, customUsageSources: [] });
+      return drafts.get(type);
+    };
+    function draw() {
+      const draft = current();
+      if (!draft.type) { root.innerHTML = ""; return; }
+      const sources = usageSources(draft);
+      const available = sources.filter(({ key }) => !sourceEnabled(draft, key));
+      root.innerHTML = `<fieldset><legend>Виды наработки этого борта</legend>
+        ${sources.filter(({ key }) => sourceEnabled(draft, key)).map(({ key, label }) => `
+          <div class="setting-row"><strong>${escapeHtml(label)}</strong><button type="button" class="small-button" data-creation-hide-source="${key}">Убрать</button></div>`).join("")}
+        <details ${available.length === sources.length ? "open" : ""}><summary>Добавить показатель</summary>
+          ${available.length ? `<label>Из списка<select name="existingSource"><option value="">Выбрать</option>${available.map(({ key, label }) =>
+            `<option value="${key}">${escapeHtml(label)}</option>`).join("")}</select></label>` : ""}
+          <label>Или свой показатель<input name="newSource" type="text" maxlength="80"></label>
+          <button type="button" class="secondary-button" id="creation-add-source">Добавить показатель</button>
+        </details></fieldset>`;
+    }
+    form.elements.type.addEventListener("change", draw);
+    root.addEventListener("click", (event) => {
+      const draft = current();
+      const hide = event.target.closest("[data-creation-hide-source]");
+      if (hide) {
+        draft.enabledUsageSources[hide.dataset.creationHideSource] = false;
+        draw();
+        return;
+      }
+      if (event.target.id !== "creation-add-source") return;
+      const label = form.elements.newSource.value.trim();
+      const choice = form.elements.existingSource?.value;
+      if (!label && !choice) { showToast("Выбери показатель или введи название"); return; }
+      if (label) {
+        if (usageSources(draft).some((item) => item.label.toLowerCase() === label.toLowerCase())) {
+          showToast("Показатель с таким названием уже есть");
+          return;
+        }
+        draft.customUsageSources.push({ key: `custom-${id()}`, label });
+      } else draft.enabledUsageSources[choice] = true;
+      draw();
+    });
+    draw();
+    return {
+      read() {
+        const draft = current();
+        return { enabledUsageSources: usageSourceOverrides(draft, draft.enabledUsageSources), customUsageSources: draft.customUsageSources };
+      },
+    };
+  }
+
+  function createAircraft({ type, boardNumber, serialNumber, rfNumber, enabledUsageSources, customUsageSources }) {
     const template = state.typeSettings.find((entry) => entry.type.toLowerCase() === type.toLowerCase());
     const sameType = state.aircraft.find((item) => item.type.toLowerCase() === type.toLowerCase());
     const id = `aircraft-${Date.now()}`;
@@ -3170,6 +3143,7 @@
       type: type.trim(),
       boardNumber: boardNumber.trim(),
       enabledUsageSources,
+      customUsageSources,
       serialNumber: serialNumber || "Не указан",
       rfNumber: (rfNumber || "").replace(/^RF[\s-]*/i, ""),
       notifications: state.globalNotifications,

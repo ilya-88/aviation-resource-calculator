@@ -102,15 +102,28 @@ async function main() {
         throw new Error('Системный возврат из общих настроек должен открыть главный экран');
       }
       document.querySelector('[data-action="settings"]').click();
-      document.querySelector('[data-view="aircraft-types"]').click();
+      document.querySelector('[data-view="usage-settings"]').click();
       const typeForm = document.querySelector('#aircraft-type-form');
+      typeForm.closest('details').open = true;
+      const box = typeForm.elements.type.getBoundingClientRect();
+      const fullWidth = box.width >= typeForm.getBoundingClientRect().width - 1;
       typeForm.elements.type.value = "МиГ-29";
       typeForm.requestSubmit();
+      const onlyMain = [...document.querySelectorAll('[data-disable-source]')].map(button => button.dataset.disableSource).join(',') === 'flight,runway';
       window.handleAndroidBack();
       window.handleAndroidBack();
       document.querySelector('[data-action="add-aircraft"]').click();
       const form = document.querySelector('#creation-form');
       form.elements.type.value = "МиГ-29";
+      form.elements.type.dispatchEvent(new Event('change'));
+      form.elements.existingSource.value = 'arresterHooks';
+      document.querySelector('#creation-add-source').click();
+      form.elements.newSource.value = 'Циклы борта';
+      document.querySelector('#creation-add-source').click();
+      document.querySelector('[data-creation-hide-source="flight"]').click();
+      const canHideFlight = !document.querySelector('[data-creation-hide-source="flight"]');
+      form.elements.existingSource.value = 'flight';
+      document.querySelector('#creation-add-source').click();
       form.elements.boardNumber.value = "42";
       form.elements.serialNumber.value = "SN-42";
       form.requestSubmit();
@@ -120,6 +133,9 @@ async function main() {
         h1: document.querySelector("h1")?.textContent,
         count: saved.aircraft.length,
         notifications: created?.notifications,
+        fullWidth, onlyMain, canHideFlight,
+        localSources: created.customUsageSources.map(source => source.label),
+        localHooks: created.enabledUsageSources.arresterHooks,
         tabs: [...document.querySelectorAll('[data-aircraft-tab]')].map((item) => item.textContent.trim()),
         activeTab: document.querySelector('[data-aircraft-tab][aria-selected="true"]')?.dataset.aircraftTab
       };
@@ -127,6 +143,8 @@ async function main() {
     assert.equal(newAircraft.h1, "МиГ-29 · Борт 42");
     assert.equal(newAircraft.count, 2);
     assert.equal(newAircraft.notifications, false);
+    assert.ok(newAircraft.fullWidth && newAircraft.onlyMain && newAircraft.canHideFlight && newAircraft.localHooks);
+    assert.deepEqual(newAircraft.localSources, ["Циклы борта"]);
     assert.equal(newAircraft.activeTab, "aggregates");
     assert.deepEqual(newAircraft.tabs, ["Работы", "Агрегаты", "Агрегаты с наименее надёжным ресурсом"]);
     results.newAircraftInheritsMasterOff = "ok";
@@ -354,25 +372,58 @@ async function main() {
     })()`);
     assert.equal(masterOn, true);
     results.masterOn = "ok";
-    const typeSettings = await evaluate(`(() => {
+    const typeSettings = await evaluate(`(async () => {
       document.querySelector('[data-action="back"]').click();
-      [...document.querySelectorAll('[data-aircraft-id]')].find(item => item.textContent.includes('борт 42')).click();
       document.querySelector('[data-action="settings"]').click();
-      const rules = document.querySelector('#aircraft-rules-form');
-      rules.elements.runway.value = '2.5';
+      document.querySelector('[data-view="usage-settings"]').click();
+      const rules = document.querySelector('#usage-settings-form');
+      rules.elements.runwayFactor.value = '2.5';
+      rules.elements.existingSource.value = 'touch';
+      document.querySelector('#type-add-source-button').click();
+      document.querySelector('[data-disable-source="touch"]').click();
+      const hidesOptional = !rules.elements.touchFactor;
+      rules.elements.existingSource.value = 'touch';
+      document.querySelector('#type-add-source-button').click();
+      rules.elements.newSource.value = 'Осмотры';
+      document.querySelector('#type-add-source-button').click();
       rules.requestSubmit();
+      document.querySelector('#archive-aircraft-type').click();
+      const dialog = document.querySelector('dialog[open]');
+      await new Promise(resolve => {
+        dialog.addEventListener('close', resolve, { once: true });
+        dialog.querySelector('[value="archive"]').click();
+      });
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
+      const archived = read().archivedAircraftTypes.includes('миг-29') && read().aircraft.find(item => item.boardNumber === '42').type === 'МиГ-29';
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      document.querySelector('[data-action="add-aircraft"]').click();
+      const omitted = ![...document.querySelector('#creation-form select[name="type"]').options].some(option => option.value === 'МиГ-29');
+      document.querySelector('[data-action="back"]').click();
+      document.querySelector('[data-action="settings"]').click();
+      document.querySelector('[data-view="usage-settings"]').click();
+      const restore = document.querySelector('[data-restore-type]');
+      restore.click();
       document.querySelector('[data-action="back"]').click();
       document.querySelector('[data-action="back"]').click();
       document.querySelector('[data-action="add-aircraft"]').click();
       const form = document.querySelector('#creation-form');
       form.elements.type.value = 'МиГ-29';
+      form.elements.type.dispatchEvent(new Event('change'));
+      const inherited = document.querySelector('#creation-usage').textContent.includes('Осмотры') &&
+        Boolean(document.querySelector('[data-creation-hide-source="touch"]')) && !document.querySelector('[data-creation-hide-source="arresterHooks"]');
       form.elements.boardNumber.value = '43';
       form.requestSubmit();
-      const saved = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
-      return { template: saved.typeSettings.find(entry => entry.type === 'МиГ-29').settings.landingCoefficients.runway,
-        newAircraft: saved.aircraft.find(item => item.boardNumber === '43').settings.landingCoefficients.runway };
+      document.querySelector('[data-view="shift"]').click();
+      const runway = document.querySelector('#shift-form [name="runway"]');
+      runway.value = '2';
+      runway.dispatchEvent(new Event('input', { bubbles: true }));
+      const applies = document.querySelector('#shift-summary').textContent.includes('Зачёт посадок: 5');
+      window.handleAndroidBack();
+      return { archived, omitted, inherited, applies, hidesOptional, template: read().usageTypeOverrides.find(entry => entry.type === 'миг-29').factors.runway,
+        restored: !read().archivedAircraftTypes.includes('миг-29'), newAircraft: read().aircraft.find(item => item.boardNumber === '43').type };
     })()`);
-    assert.deepEqual(typeSettings, { template: 2.5, newAircraft: 2.5 });
+    assert.deepEqual(typeSettings, { archived: true, omitted: true, inherited: true, applies: true, hidesOptional: true, template: 2.5, restored: true, newAircraft: "МиГ-29" });
     results.typeSettings = "ok";
     const savedUsageName = await evaluate(`(async () => {
       document.querySelector('[data-action="back"]').click();
