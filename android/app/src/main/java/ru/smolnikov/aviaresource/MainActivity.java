@@ -64,7 +64,7 @@ public class MainActivity extends Activity {
             // Веб-контент должен занимать прямоугольник МЕЖДУ системными панелями,
             // а не получать padding внутри полноэкранного WebView.
             getWindow().setDecorFitsSystemWindows(false);
-            WindowInsetsController controller = getWindow().getInsetsController();
+            WindowInsetsController controller = getWindow().getDecorView().getWindowInsetsController();
             if (controller != null) {
                 controller.setSystemBarsAppearance(
                         WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
