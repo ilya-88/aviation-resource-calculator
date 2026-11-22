@@ -126,6 +126,9 @@ async function main() {
       form.elements.newSource.value = 'Зацепы за аэрофинишер';
       document.querySelector('#creation-add-source').click();
       form.elements.newSource.value = 'Циклы борта';
+      const localFactor = form.querySelector('[data-source-factor]');
+      localFactor.value = '2';
+      localFactor.dispatchEvent(new Event('input'));
       document.querySelector('#creation-add-source').click();
       document.querySelector('[data-creation-hide-source="flight"]').click();
       const canHideFlight = !document.querySelector('[data-creation-hide-source="flight"]');
@@ -142,6 +145,7 @@ async function main() {
         notifications: created?.notifications,
         fullWidth, onlyMain, canHideFlight, noUsageInCatalog, firstByDefault, noCatalogInUsage,
         localSources: created.customUsageSources.map(source => source.label),
+        localDefinition: created.customUsageSources.map(({kind, factor}) => [kind, factor]),
         localHooks: created.enabledUsageSources.arresterHooks,
         tabs: [...document.querySelectorAll('[data-aircraft-tab]')].map((item) => item.textContent.trim()),
         activeTab: document.querySelector('[data-aircraft-tab][aria-selected="true"]')?.dataset.aircraftTab
@@ -153,6 +157,7 @@ async function main() {
     assert.ok(newAircraft.fullWidth && newAircraft.onlyMain && newAircraft.canHideFlight && newAircraft.localHooks);
     assert.ok(newAircraft.noUsageInCatalog && newAircraft.firstByDefault && newAircraft.noCatalogInUsage);
     assert.deepEqual(newAircraft.localSources, ["Циклы борта"]);
+    assert.deepEqual(newAircraft.localDefinition, [["count", 2]]);
     assert.equal(newAircraft.activeTab, "aggregates");
     assert.deepEqual(newAircraft.tabs, ["Работы", "Агрегаты", "Агрегаты с наименее надёжным ресурсом"]);
     results.newAircraftInheritsMasterOff = "ok";
@@ -394,8 +399,22 @@ async function main() {
       document.querySelector('[data-disable-source="touch"]').click();
       const hidesOptional = !rules.elements.touchFactor;
       rules.elements.existingSource.value = 'touch';
+      rules.elements.existingSource.dispatchEvent(new Event('change'));
+      const fixedCategory = rules.querySelector('[data-source-kind]').disabled &&
+        rules.querySelector('[data-source-kind]').value === 'count';
+      const touchFactor = rules.querySelector('[data-source-factor]');
+      touchFactor.value = '0.75';
+      touchFactor.dispatchEvent(new Event('input'));
       document.querySelector('#type-add-source-button').click();
       rules.elements.newSource.value = 'Осмотры';
+      document.querySelector('#type-add-source-button').click();
+      rules.elements.newSource.value = 'Проверка времени';
+      const kind = rules.querySelector('[data-source-kind]');
+      kind.value = 'time';
+      kind.dispatchEvent(new Event('change'));
+      const timeFactor = rules.querySelector('[data-source-factor]');
+      timeFactor.value = '0.5';
+      timeFactor.dispatchEvent(new Event('input'));
       document.querySelector('#type-add-source-button').click();
       rules.requestSubmit();
       window.handleAndroidBack();
@@ -441,13 +460,14 @@ async function main() {
       document.querySelector('[data-view="shift"]').click();
       const runway = document.querySelector('#shift-form [name="runway"]');
       runway.value = '2';
+      runway.form.elements.touch.value = '1';
       runway.dispatchEvent(new Event('input', { bubbles: true }));
-      const applies = Boolean(runway.form.elements.touch) && document.querySelector('#shift-summary').textContent.includes('Зачёт посадок: 5');
+      const applies = document.querySelector('#shift-summary').textContent.includes('Зачёт посадок: 5,75');
       window.handleAndroidBack();
-      return { archived, omitted, inherited, applies, hidesOptional, emptyState, template: read().usageTypeOverrides.find(entry => entry.type === 'миг-29').factors.runway,
+      return { archived, omitted, inherited, applies, hidesOptional, emptyState, fixedCategory, template: read().usageTypeOverrides.find(entry => entry.type === 'миг-29').factors.runway,
         restored: !read().archivedAircraftTypes.includes('миг-29'), newAircraft: read().aircraft.find(item => item.boardNumber === '43').type };
     })()`);
-    assert.deepEqual(typeSettings, { archived: true, omitted: true, inherited: true, applies: true, hidesOptional: true, emptyState: true,
+    assert.deepEqual(typeSettings, { archived: true, omitted: true, inherited: true, applies: true, hidesOptional: true, emptyState: true, fixedCategory: true,
       template: 2.5, restored: true, newAircraft: "МиГ-29" });
     results.typeSettings = "ok";
     const savedUsageName = await evaluate(`(async () => {
@@ -955,6 +975,65 @@ async function main() {
     })()`);
     assert.deepEqual(reportIntegrity, { preview: true, totals: [0, 0, 60], reportEntry: true, mapZoom: true, returnToReport: true });
     results.reportIntegrity = "ok";
+
+    const usageMeasures = await evaluate(`(() => {
+      const click = selector => document.querySelector(selector).click();
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
+      const board = () => read().aircraft.find(item => item.boardNumber === '42');
+      const typeTime = read().usageTypeOverrides.find(row => row.type === 'миг-29').customSources.find(row => row.label === 'Проверка времени');
+      window.handleAndroidBack();
+      click('[data-aircraft-tab="aggregates"]');
+      click('[data-block-id="vka"]');
+      click('[data-action="add-resource"]');
+      const resource = document.querySelector('#resource-form');
+      resource.elements.name.value = 'Ресурс по времени';
+      resource.elements.limit.value = '10';
+      resource.elements.remaining.value = '10';
+      document.querySelector('#resource-source-name').value = 'Время в секундах';
+      const kind = resource.querySelector('[data-source-kind]');
+      kind.value = 'time';
+      kind.dispatchEvent(new Event('change'));
+      resource.querySelector('[data-duration-format] select').value = 'seconds';
+      const factor = resource.querySelector('[data-source-factor]');
+      factor.value = '0.25';
+      factor.dispatchEvent(new Event('input'));
+      click('#resource-source-add');
+      const secondTime = board().customUsageSources.find(row => row.label === 'Время в секундах');
+      document.querySelector('[data-source="flight"]').value = '';
+      document.querySelector('[data-source="' + typeTime.key + '"]').value = '2';
+      document.querySelector('[data-source="' + secondTime.key + '"]').value = '1';
+      resource.requestSubmit();
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      click('[data-view="shift"]');
+      const form = document.querySelector('#shift-form');
+      const count = board().customUsageSources.find(row => row.label === 'Циклы борта');
+      form.elements[typeTime.key + 'Major'].value = '1';
+      form.elements[typeTime.key + 'Minor'].value = '30';
+      form.elements[secondTime.key + 'Major'].value = '1';
+      form.elements[secondTime.key + 'Minor'].value = '30';
+      form.elements[count.key].value = '1.5';
+      const onlyWhole = form.elements[count.key].validity.stepMismatch;
+      form.elements[count.key].value = '3';
+      form.elements[count.key].dispatchEvent(new Event('input', { bubbles: true }));
+      const preview = document.querySelector('#shift-summary').textContent.includes('Расход 1,50625 ч');
+      form.requestSubmit();
+      const saved = board().shifts.at(-1);
+      click('[data-aircraft-tab="works"]');
+      click('[data-shift-id="' + saved.id + '"]');
+      const work = document.querySelector('main').textContent;
+      const history = work.includes('1 ч 30 мин') && work.includes('1 мин 30 с');
+      window.handleAndroidBack();
+      click('[data-view="reports"]');
+      return { typeFactor: typeTime.factor, boardFactor: secondTime.factor, onlyWhole, preview, history,
+        seconds: saved.customUsage.find(row => row.key === secondTime.key).seconds,
+        hours: saved.customUsage.find(row => row.key === typeTime.key).value,
+        amount: saved.accruals.find(row => row.name === 'Ресурс по времени').amount,
+      };
+    })()`);
+    assert.deepEqual(usageMeasures, { typeFactor: 0.5, boardFactor: 0.25, onlyWhole: true, preview: true,
+      history: true, seconds: 90, hours: 1.5, amount: 1.50625 });
+    results.usageMeasures = "ok";
 
     await evaluate(`(() => {
       window.handleAndroidBack();

@@ -222,6 +222,7 @@ button.setting-row { cursor: pointer; }
 .type-usage details > :not(summary), #creation-usage details > :not(summary) { margin-top: 10px; }
 .type-usage summary, #creation-usage summary { padding: 7px 0; cursor: pointer; }
 .type-usage-pair { grid-template-columns: minmax(0, 3fr) minmax(92px, 1fr); align-items: end; }
+.source-definition [hidden] { display: none; }
 #aircraft-type-form label { width: 100%; }
 .settings-section-heading { margin-top: 28px; }
 .compact-metrics { margin: 4px 0 0; }

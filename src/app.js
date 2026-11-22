@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.34";
+  const APP_VERSION = "0.2.35";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -45,6 +45,7 @@
   const OPTIONAL_USAGE_TYPES = ["runway", "carrier", "touch", "circuit", "arresterHooks"];
   const BOARD_USAGE_TYPES = ["flight", ...OPTIONAL_USAGE_TYPES];
   const CORE_USAGE_TYPES = ["flight", "runway"];
+  const TIME_USAGE_TYPES = new Set(["flight", "ground", "maximum"]);
   const defaultUsageSources = () => Object.fromEntries(BOARD_USAGE_TYPES.map((key) => [key, CORE_USAGE_TYPES.includes(key)]));
   const DEFAULT_OPERATION_TYPES = ["Лётная смена", "КОД", "Руление"].map((label, index) => ({ id: String(index), label }));
   const id = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -78,6 +79,80 @@
       sources.find(({ key }) => (USAGE_TYPES[key] && normalize(USAGE_TYPES[key]) === name) || (key === "touch" && name === "касание"));
   }
 
+  function sourceKind(source) {
+    return source?.kind ?? (TIME_USAGE_TYPES.has(source?.key) ? "time" : "count");
+  }
+
+  function sourceDefinitionFields() {
+    return `<div class="field-pair source-definition">
+      <label>Тип значения<select data-source-kind><option value="count">Количество</option><option value="time">Время</option></select></label>
+      <label>Коэффициент<input data-source-factor type="number" min="0" step="any" value="1" required></label>
+      <label data-duration-format hidden>Формат ввода<select><option value="hours">Часы и минуты</option><option value="seconds">Минуты и секунды</option></select></label>
+    </div>`;
+  }
+
+  function bindSourceDefinition(root, name, choice, resolve, getFactor) {
+    const kind = root.querySelector("[data-source-kind]");
+    const factor = root.querySelector("[data-source-factor]");
+    const format = root.querySelector("[data-duration-format]");
+    const readSelection = () => ({
+      label: name.value.trim(),
+      source: resolve(name.value.trim(), choice?.value),
+    });
+    const toggleFormat = () => { format.hidden = kind.value !== "time" || kind.disabled; };
+    const update = () => {
+      const { source } = readSelection();
+      kind.disabled = Boolean(source);
+      if (source) kind.value = sourceKind(source);
+      if (!factor.dataset.edited) factor.value = source ? getFactor(source) : 1;
+      toggleFormat();
+    };
+    name.addEventListener("input", update);
+    choice?.addEventListener("change", update);
+    kind.addEventListener("change", toggleFormat);
+    factor.addEventListener("input", () => { factor.dataset.edited = "true"; });
+    update();
+    return () => {
+      const { label, source } = readSelection();
+      if (!label && !source) return null;
+      if (factor.dataset.edited && !factor.reportValidity()) return false;
+      const value = factor.dataset.edited ? factor.valueAsNumber : source ? getFactor(source) : 1;
+      return { label, source, factor: value, kind: source ? sourceKind(source) : kind.value, format: format.querySelector("select").value };
+    };
+  }
+
+  function newUsageSource({ label, kind, format, factor }) {
+    return { key: `custom-${id()}`, label, kind, ...(kind === "time" && { format }), factor };
+  }
+
+  function calculationSourceLabel(source) {
+    return source.kind === "time" ? `${source.label}, ч` : source.label;
+  }
+
+  function customWorkInput(source) {
+    const { key, label, kind, format } = source;
+    if (kind !== "time") return `<label>${escapeHtml(label)}<input name="${key}" type="number" min="0" step="${kind === "count" ? "1" : "any"}"></label>`;
+    const [major, minor] = format === "seconds" ? ["Минуты", "Секунды"] : ["Часы", "Минуты"];
+    return `<fieldset><legend>${escapeHtml(label)}</legend><div class="field-pair">
+      <label>${major}<input name="${key}Major" type="number" min="0" step="1"></label>
+      <label>${minor}<input name="${key}Minor" type="number" min="0" max="59" step="1"></label>
+    </div></fieldset>`;
+  }
+
+  function readCustomWork(aircraft, data) {
+    return customSources(aircraft).filter(({ key }) => sourceEnabled(aircraft, key)).flatMap(({ key, label, kind, format }) => {
+      if (kind !== "time") {
+        const value = data.get(key);
+        return value != null && value !== "" ? [{ key, label, value: Number(value) }] : [];
+      }
+      const major = data.get(`${key}Major`);
+      const minor = data.get(`${key}Minor`);
+      if (!major && !minor) return [];
+      const seconds = (Number(major) * 60 + Number(minor)) * (format === "seconds" ? 1 : 60);
+      return [{ key, label, value: seconds / 3600, seconds, format }];
+    });
+  }
+
   function sourceCheckboxes(aircraft = {}) {
     return usageSources(aircraft).map(({ key, label }) => `
       <label class="checkbox-row"><input type="checkbox" name="usageSource" value="${key}" ${sourceEnabled(aircraft, key) ? "checked" : ""}><span>${escapeHtml(label)}</span></label>`
@@ -94,24 +169,34 @@
     app.innerHTML = shell(`<form id="board-usage-form" class="shift-form">
       <fieldset><legend>Поля записи работы</legend>
         ${sourceCheckboxes(aircraft)}
-        <label>Новый показатель<input name="newSource" type="text" maxlength="80"></label>
+        <details id="board-add-source"><summary>Добавить показатель</summary>
+          <label>Название<input name="newSource" type="text" maxlength="80"></label>
+          ${sourceDefinitionFields()}
+        </details>
       </fieldset>
       <button class="primary-button">Сохранить показатели</button>
     </form>`, { title: "Показатели работы", back: true, settings: false });
-    document.getElementById("board-usage-form").addEventListener("submit", (event) => {
+    const form = document.getElementById("board-usage-form");
+    const readSource = bindSourceDefinition(document.getElementById("board-add-source"), form.elements.newSource, null,
+      (label) => usageSourceByName(usageSources(aircraft), label), ({ key }) => usageRule(key, aircraft).factor);
+    form.addEventListener("submit", (event) => {
       event.preventDefault();
-      const data = new FormData(event.currentTarget);
-      const previous = [aircraft.enabledUsageSources, aircraft.customUsageSources];
+      const source = readSource();
+      if (source === false) return;
+      const data = new FormData(form);
+      const previous = [aircraft.enabledUsageSources, aircraft.customUsageSources, aircraft.usageFactors];
       const enabled = enabledSourcesFromForm(aircraft, data);
-      const label = data.get("newSource").trim();
-      if (label) {
-        const existing = usageSourceByName(usageSources(aircraft), label);
-        if (existing) enabled[existing.key] = true;
-        else aircraft.customUsageSources = [...(aircraft.customUsageSources || []), { key: `custom-${id()}`, label }];
+      if (source?.source) {
+        enabled[source.source.key] = true;
+        if (source.factor !== usageRule(source.source.key, aircraft).factor) {
+          aircraft.usageFactors = { ...aircraft.usageFactors, [source.source.key]: source.factor };
+        }
+      } else if (source) {
+        aircraft.customUsageSources = [...(aircraft.customUsageSources || []), newUsageSource(source)];
       }
       aircraft.enabledUsageSources = usageSourceOverrides(aircraft, enabled);
       if (saveState()) render();
-      else { [aircraft.enabledUsageSources, aircraft.customUsageSources] = previous; showToast("Не удалось сохранить показатели"); }
+      else { [aircraft.enabledUsageSources, aircraft.customUsageSources, aircraft.usageFactors] = previous; showToast("Не удалось сохранить показатели"); }
     });
   }
 
@@ -170,7 +255,7 @@
       if (!amount) return [];
       return [{ resourceId: resource.id, blockId: owner?.kind === "airframe" ? null : owner?.id, name: resource.name, object: resource.object, unit: resource.unit,
         priority: resource.priority === true,
-        labels: Object.fromEntries(usageSources(aircraft, owner).map(({ key, label }) => [key, label])),
+        labels: Object.fromEntries(usageSources(aircraft, owner).map((source) => [source.key, calculationSourceLabel(source)])),
         inputs, amount, remaining: Math.max(0, resource.remaining - amount) }];
     });
   }
@@ -210,9 +295,11 @@
       factor: aircraft?.settings?.landingCoefficients?.[key] ?? DEFAULT_AIRCRAFT_SETTINGS.landingCoefficients[key] ?? 1,
     };
     const profile = usageTypeOverride(aircraft);
+    const custom = key.startsWith("custom-") && (aircraft?.customUsageSources?.find((source) => source.key === key) ??
+      profile?.customSources?.find((source) => source.key === key));
     return {
-      label: profile?.labels?.[key] ?? defaults.label,
-      factor: profile?.factors?.[key] ?? defaults.factor,
+      label: profile?.labels?.[key] ?? custom?.label ?? defaults.label,
+      factor: aircraft?.usageFactors?.[key] ?? profile?.factors?.[key] ?? custom?.factor ?? defaults.factor,
       enabled: profile?.enabled?.[key] ?? defaults.enabled,
     };
   }
@@ -1367,7 +1454,7 @@
           ${sourceEnabled(aircraft, "arresterHooks") ? `<label><span>${escapeHtml(usageRule("arresterHooks").label)}</span><input name="arresterHooks" type="number" min="0" value="0"></label>` : ""}
         </fieldset>
         ${customSources(aircraft).some(({ key }) => sourceEnabled(aircraft, key)) ? `<fieldset><legend>Другие показатели</legend>${customSources(aircraft)
-          .filter(({ key }) => sourceEnabled(aircraft, key)).map(({ key, label }) => `<label>${escapeHtml(label)}<input name="${key}" type="number" min="0" step="any"></label>`).join("")}</fieldset>` : ""}
+          .filter(({ key }) => sourceEnabled(aircraft, key)).map(customWorkInput).join("")}</fieldset>` : ""}
         <div id="operation-picker"></div>
         <fieldset><legend>${escapeHtml(usageRule("ground").label)}</legend>
           <p class="field-help">Процент и округление берутся из формуляра каждого двигателя.</p>
@@ -1433,9 +1520,7 @@
       direction: ground.groundRoundingDirection,
       percent: ground.groundPercent,
     };
-    const coefficients = state.usageRules || override
-      ? Object.fromEntries(["runway", "carrier", "touch", "circuit"].map((key) => [key, factor(key)]))
-      : aircraft.settings.landingCoefficients;
+    const coefficients = Object.fromEntries(["runway", "carrier", "touch", "circuit"].map((key) => [key, factor(key)]));
     function engineIncrement(data, side, block, flight) {
       const actualGround = Number(data.get(`${side}Ground`));
       const override = data.get(`${side}Flight`);
@@ -1464,15 +1549,17 @@
         });
       }
       const sources = sourceEnabled(aircraft, "flight") ? { flight: flight / 60 } : {};
-      for (const { key } of usageSources(aircraft)) {
+      for (const key of OPTIONAL_USAGE_TYPES) {
         const value = data.get(key);
         if (value != null && value !== "") sources[key] = Number(value);
       }
+      const customUsage = readCustomWork(aircraft, data);
+      for (const { key, value } of customUsage) sources[key] = value;
       const sourceBoard = correction ? { ...aircraft, resources: aircraft.resources.map((resource) => ({
         ...resource, remaining: correction.beforeUsage.resources.find((item) => item.id === resource.id)?.remaining ?? resource.remaining,
       })) } : aircraft;
       const accruals = resourceAccruals(sourceBoard, date, sources, engineUsage);
-      return { flight, left: engineUsage.get(leftBlock), right: engineUsage.get(rightBlock), engineUsage, accruals };
+      return { flight, left: engineUsage.get(leftBlock), right: engineUsage.get(rightBlock), engineUsage, accruals, customUsage };
     }
     const update = () => {
       const data = new FormData(form);
@@ -1502,7 +1589,7 @@
         showToast(modeError);
         return;
       }
-      const { flight, left, right, engineUsage, accruals } = calculate(data);
+      const { flight, left, right, engineUsage, accruals, customUsage } = calculate(data);
       const backup = structuredClone(aircraft);
       if (correction && !canCorrectShift(aircraft, correction)) {
         showToast("Показания изменились. Открой запись заново");
@@ -1557,11 +1644,13 @@
         beforeUsage,
         afterUsage: usageSnapshot(aircraft),
         revisions: correction ? [...(correction.revisions || []), {
-          correctedAt: new Date().toISOString(), raw: correction.raw, accruals: correction.accruals, engineAccruals: correction.engineAccruals,
+          correctedAt: new Date().toISOString(), raw: correction.raw, customUsage: correction.customUsage,
+          accruals: correction.accruals, engineAccruals: correction.engineAccruals,
         }] : [],
         operationType: operation?.id,
         operationLabel: operation?.label,
         raw: Object.fromEntries(data),
+        customUsage,
         sourceLabels: Object.fromEntries(usageSources(aircraft).map(({ key, label }) => [key, label])),
         accruals,
         engineAccruals: [...engineUsage].map(([block, usage]) => ({ blockId: block.id, name: block.name, ...usage })),
@@ -2178,9 +2267,9 @@
   function accrualSummary(entries) {
     const ordered = [...entries].sort((a, b) => Number(Boolean(b.priority)) - Number(Boolean(a.priority)));
     const row = (entry) => `<li><strong>${escapeHtml(entry.object)} · ${escapeHtml(entry.name)}</strong>
-      <span>Расход ${formatNumber(entry.amount)} ${escapeHtml(entry.unit)} · остаток ${formatNumber(entry.remaining)}</span>
+      <span>Расход ${formatNumber(entry.amount, 6)} ${escapeHtml(entry.unit)} · остаток ${formatNumber(entry.remaining, 6)}</span>
       <small>${entry.inputs.map(({ key, input, factor, amount }) =>
-        `${escapeHtml(entry.labels?.[key] || ENGINE_SOURCES[key] || USAGE_TYPES[key] || "Показатель")} ${formatNumber(input)} × ${formatNumber(factor)} = ${formatNumber(amount)}`).join(" · ")}</small></li>`;
+        `${escapeHtml(entry.labels?.[key] || ENGINE_SOURCES[key] || USAGE_TYPES[key] || "Показатель")} ${formatNumber(input, 6)} × ${formatNumber(factor, 6)} = ${formatNumber(amount, 6)}`).join(" · ")}</small></li>`;
     return `<ol class="accrual-items">${ordered.slice(0, 3).map(row).join("")}</ol>
       ${ordered.length > 3 ? `<details><summary>Остальные начисления (${ordered.length - 3})</summary><ol class="accrual-items">${ordered.slice(3).map(row).join("")}</ol></details>` : ""}`;
   }
@@ -2191,12 +2280,18 @@
     if (!shift) { navigateBack(); return; }
     const engines = shift.engineAccruals || [];
     const builtIn = (key) => shift.usageRules?.[key]?.label || usageRule(key).label;
+    const customRows = shift.customUsage?.map(({label, value, seconds, format}) => {
+      if (seconds == null) return [label, formatNumber(value)];
+      const text = format === "seconds" ? `${Math.floor(seconds / 60)} мин ${seconds % 60} с` :
+        `${Math.floor(seconds / 3600)} ч ${Math.floor(seconds / 60) % 60} мин`;
+      return [label, text];
+    }) ?? Object.entries(shift.raw || {}).filter(([key, value]) => key.startsWith("custom-") && value !== "")
+      .map(([key, value]) => [shift.sourceLabels?.[key] || key, value]);
     const rawRows = [
       [builtIn("flight"), calc.formatDuration(shift.flightMinutes)],
       ...OPTIONAL_USAGE_TYPES.filter((key) => shift.raw ? key in shift.raw : key in (shift.landingsByType || {}))
         .map((key) => [builtIn(key), shift.raw?.[key] ?? shift.landingsByType?.[key]]),
-      ...Object.entries(shift.raw || {}).filter(([key, value]) => key.startsWith("custom-") && value !== "")
-        .map(([key, value]) => [shift.sourceLabels?.[key] || aircraft.customUsageSources?.find((item) => item.key === key)?.label || key, value]),
+      ...customRows,
     ];
     app.innerHTML = shell(`
       <section class="section-stack"><h1>${escapeHtml(shift.operationLabel || "Лётная смена")}</h1><p>${formatDate(shift.date)}</p>
@@ -2259,8 +2354,11 @@
       }),
     ];
     const edges = [...resourceEdges, ...counterEdges];
-    const sourceLabels = new Map(usageSources(aircraft, { kind: "engine" }).map(({ key, label }) => [key, label]));
+    const sourceLabels = new Map(usageSources(aircraft, { kind: "engine" }).map((source) => [source.key, calculationSourceLabel(source)]));
     for (const [key, label] of Object.entries(shift?.sourceLabels || {})) sourceLabels.set(key, label);
+    for (const entry of shift?.accruals || []) {
+      for (const [key, label] of Object.entries(entry.labels || {})) sourceLabels.set(key, label);
+    }
     const sourceKeys = [...new Set([...(shift ? [] : usageSources(aircraft).filter(({ key }) => sourceEnabled(aircraft, key)).map(({ key }) => key)),
       ...edges.map(({ key }) => key)])];
     const node = (block) => {
@@ -2341,7 +2439,7 @@
       const heading = isSource ? sourceLabels.get(key) || key : nodes.find((item) => item.id === key)?.name;
       details.innerHTML = `<h2>${escapeHtml(heading || "")}</h2>${matching.length ? `<ul class="accrual-items">${matching.map((edge) => `<li>
         <strong>${escapeHtml(sourceLabels.get(edge.key) || edge.key)} × ${formatNumber(edge.factor)} → ${escapeHtml(nodes.find((item) => item.id === edge.target)?.name || "")} · ${escapeHtml(edge.name)}</strong>
-        <small>${shift ? `${formatNumber(edge.input)} × ${formatNumber(edge.factor)} = ${formatNumber(edge.amount)}` :
+        <small>${shift ? `${formatNumber(edge.input, 6)} × ${formatNumber(edge.factor, 6)} = ${formatNumber(edge.amount, 6)}` :
           `${edge.counter ? "Счётчик формуляра" : "Списание ресурса"} · ${!edge.enabled ? "Источник отключён" :
             !edge.installed ? "Агрегат демонтирован" : edge.target === boardNode ? "Начисляется на борт" : "Агрегат должен быть установлен на дату работы"}
             ${edge.installedDate ? ` · с ${formatDate(edge.installedDate)}` : ""}
@@ -2448,10 +2546,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.34</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.35</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.34", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.35", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -2505,9 +2603,10 @@
         <fieldset id="resource-consumption"><legend>Расход ресурса из записи работы</legend>
           <p>Пустое поле отключает начисление. Множитель переводит показатель в единицы этого ресурса.</p>
           <div id="resource-inputs" class="field-pair"></div>
-          <details><summary>Добавить показатель смены</summary>
+          <details id="resource-add-source-panel"><summary>Добавить показатель смены</summary>
             <label>Показатель<select id="resource-source-choice"></select></label>
-            <label>Название нового показателя<input id="resource-source-name" maxlength="80"></label>
+            <label>Или введи название<input id="resource-source-name" type="text" maxlength="80"></label>
+            ${sourceDefinitionFields()}
             <button type="button" class="secondary-button" id="resource-source-add">Добавить в смену</button>
           </details>
           ${aircraft.resources.some((item) => item !== resource) ? `<details><summary>Скопировать из другого агрегата</summary>
@@ -2569,9 +2668,11 @@
     const readInputs = () => Object.fromEntries([...inputsRoot.querySelectorAll("input")].filter((input) => input.value !== "")
       .map((input) => [input.dataset.source, Number(input.value)]));
     const drawInputs = (values) => {
-      inputsRoot.innerHTML = usageSources(aircraft, currentOwner()).map(({ key, label }) => `
-        <label>${escapeHtml(label)}${sourceEnabled(aircraft, key) ? "" : " · отключён"}
-        <input data-source="${key}" type="number" min="0" step="any" value="${values[key] ?? ""}" placeholder="—"></label>`).join("");
+      inputsRoot.innerHTML = usageSources(aircraft, currentOwner()).map((source) => {
+        const { key } = source;
+        return `<label>${escapeHtml(calculationSourceLabel(source))}${sourceEnabled(aircraft, key) ? "" : " · отключён"}
+        <input data-source="${key}" type="number" min="0" step="any" value="${values[key] ?? ""}" placeholder="—"></label>`;
+      }).join("");
       sourceChoice.replaceChildren(new Option("Новый показатель", ""),
         ...usageSources(aircraft).filter(({ key }) => !sourceEnabled(aircraft, key)).map(({ key, label }) => new Option(label, key)));
       const fieldset = inputsRoot.closest("fieldset");
@@ -2593,17 +2694,27 @@
     resourceForm.elements.object.addEventListener("change", () => refreshInputs(true));
     ownerControl.addEventListener("change", () => refreshInputs());
     resourceForm.elements.unit.addEventListener("change", () => refreshInputs());
+    const sourceName = document.getElementById("resource-source-name");
+    const readSource = bindSourceDefinition(document.getElementById("resource-add-source-panel"), sourceName, sourceChoice,
+      (label, key) => label ? usageSourceByName(usageSources(aircraft), label) : usageSources(aircraft).find((item) => item.key === key),
+      ({ key }) => usageRule(key, aircraft).factor);
     document.getElementById("resource-source-add").addEventListener("click", () => {
-      const control = document.getElementById("resource-source-name");
-      const label = control.value.trim();
-      if (!sourceChoice.value && !label) { showToast("Выбери показатель или введи название"); return; }
-      const key = label ? usageSourceByName(usageSources(aircraft), label)?.key : sourceChoice.value;
+      const source = readSource();
+      if (source === false) return;
+      if (!source) { showToast("Выбери показатель или введи название"); return; }
+      const key = source.source?.key;
       if (key && sourceEnabled(aircraft, key)) { showToast("Этот показатель уже включён в форму работы"); return; }
-      const previous = [aircraft.enabledUsageSources, aircraft.customUsageSources];
-      if (key) aircraft.enabledUsageSources = { ...aircraft.enabledUsageSources, [key]: true };
-      else aircraft.customUsageSources = [...(aircraft.customUsageSources || []), { key: `custom-${id()}`, label }];
-      if (saveState()) { drawInputs(readInputs()); control.value = ""; }
-      else { [aircraft.enabledUsageSources, aircraft.customUsageSources] = previous; showToast("Не удалось добавить показатель"); }
+      const previous = [aircraft.enabledUsageSources, aircraft.customUsageSources, aircraft.usageFactors];
+      if (key) {
+        aircraft.enabledUsageSources = { ...aircraft.enabledUsageSources, [key]: true };
+        if (source.factor !== usageRule(key, aircraft).factor) aircraft.usageFactors = { ...aircraft.usageFactors, [key]: source.factor };
+      } else aircraft.customUsageSources = [...(aircraft.customUsageSources || []), newUsageSource(source)];
+      if (saveState()) {
+        drawInputs(readInputs());
+        sourceName.value = "";
+        delete resourceForm.querySelector("[data-source-factor]").dataset.edited;
+        sourceName.dispatchEvent(new Event("input"));
+      } else { [aircraft.enabledUsageSources, aircraft.customUsageSources, aircraft.usageFactors] = previous; showToast("Не удалось добавить показатель"); }
     });
     const selectedCopy = () => aircraft.resources.find((item) => item.id === document.getElementById("resource-copy-from")?.value);
     document.getElementById("resource-copy-limit")?.addEventListener("click", () => {
@@ -2811,18 +2922,21 @@
     const form = document.getElementById("usage-settings-form");
     const collection = document.getElementById("type-usage-fields");
     const currentLabel = ({ key, label }) => draft.labels[key] || label;
+    const draftFactor = (item) => draft.factors[item.key] ?? item.factor ?? usageRule(item.key, aircraft).factor;
+    let readSource;
     function drawFields() {
       if (!collection) return;
       const current = fields();
       const available = current.filter(({ key }) => !enabled(key));
       collection.innerHTML = current.filter(({ key }) => enabled(key)).map((item) => {
         const { key } = item;
-        const factor = draft.factors[key] ?? usageRule(key, aircraft).factor;
+        const factor = draftFactor(item);
         return `<fieldset><legend>${escapeHtml(currentLabel(item))}</legend>
           <div class="field-pair type-usage-pair">
             <label>Название<input name="${key}Label" type="text" value="${escapeHtml(currentLabel(item))}" maxlength="80" required></label>
             <label>Коэффициент<input name="${key}Factor" type="number" min="0" step="any" value="${factor}" required></label>
           </div>
+          <p class="field-help">${sourceKind(item) === "time" ? "Время" : "Количество"}</p>
           <small class="field-help">Пример: 1 × ${formatNumber(factor)} = ${formatNumber(factor)}</small>
           <button type="button" class="small-button" data-disable-source="${key}">Убрать показатель</button>
         </fieldset>`;
@@ -2830,8 +2944,12 @@
           ${available.length ? `<label>Из списка<select name="existingSource"><option value="">Выбрать</option>${available.map((item) =>
             `<option value="${item.key}">${escapeHtml(currentLabel(item))}</option>`).join("")}</select></label>` : ""}
           <label>Или введи название<input name="newSource" type="text" maxlength="80"></label>
+          ${sourceDefinitionFields()}
           <button type="button" class="secondary-button" id="type-add-source-button">Добавить показатель</button>
         </details>`;
+      readSource = bindSourceDefinition(collection.querySelector("#type-add-source"), form.elements.newSource, form.elements.existingSource,
+        (label, key) => label ? usageSourceByName(fields().map((item) => ({ ...item, label: currentLabel(item) })), label) :
+          fields().find((item) => item.key === key), draftFactor);
     }
     function readDraft() {
       if (!form) return;
@@ -2840,7 +2958,7 @@
         const label = form.elements.namedItem(`${key}Label`).value.trim();
         const factor = form.elements.namedItem(`${key}Factor`).valueAsNumber;
         if (label !== currentLabel(item)) draft.labels[key] = label;
-        if (factor !== (draft.factors[key] ?? usageRule(key, aircraft).factor)) draft.factors[key] = factor;
+        if (factor !== draftFactor(item)) draft.factors[key] = factor;
       }
     }
     function save() {
@@ -2881,21 +2999,21 @@
       if (save()) { render(); showToast("Настройки типа сохранены"); }
     });
     function addSource(required = false) {
-      const label = form.elements.newSource.value.trim();
-      const selected = form.elements.existingSource?.value;
-      if (!label && !selected) {
+      const source = readSource();
+      if (source === false) return false;
+      if (!source) {
         if (required) showToast("Выбери показатель или введи название");
         return !required;
       }
-      const existing = label && usageSourceByName(fields().map((item) => ({ key: item.key, label: currentLabel(item) })), label);
-      const key = label ? existing?.key : selected;
+      const key = source.source?.key;
       if (key) {
         if (enabled(key)) { showToast("Этот показатель уже включён для выбранного типа"); return false; }
         draft.enabled[key] = true;
+        if (source.factor !== draftFactor(source.source)) draft.factors[key] = source.factor;
       } else {
-        const custom = `custom-${id()}`;
-        draft.customSources.push({ key: custom, label });
-        draft.enabled[custom] = true;
+        const custom = newUsageSource(source);
+        draft.customSources.push(custom);
+        draft.enabled[custom.key] = true;
       }
       form.elements.newSource.value = "";
       if (form.elements.existingSource) form.elements.existingSource.value = "";
@@ -2986,7 +3104,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.34</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.35</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -3126,9 +3244,10 @@
   function bindCreationUsage(form) {
     const root = document.getElementById("creation-usage");
     const drafts = new Map();
+    let readSource;
     const current = () => {
       const { value: type } = form.elements.type;
-      if (!drafts.has(type)) drafts.set(type, { type, enabledUsageSources: {}, customUsageSources: [] });
+      if (!drafts.has(type)) drafts.set(type, { type, enabledUsageSources: {}, customUsageSources: [], usageFactors: {} });
       return drafts.get(type);
     };
     function draw() {
@@ -3143,8 +3262,12 @@
           ${available.length ? `<label>Из списка<select name="existingSource"><option value="">Выбрать</option>${available.map(({ key, label }) =>
             `<option value="${key}">${escapeHtml(label)}</option>`).join("")}</select></label>` : ""}
           <label>Или введи название<input name="newSource" type="text" maxlength="80"></label>
+          ${sourceDefinitionFields()}
           <button type="button" class="secondary-button" id="creation-add-source">Добавить показатель</button>
         </details></fieldset>`;
+      readSource = bindSourceDefinition(root.querySelector("details"), form.elements.newSource, form.elements.existingSource,
+        (label, key) => label ? usageSourceByName(usageSources(draft), label) : usageSources(draft).find((item) => item.key === key),
+        ({ key }) => usageRule(key, draft).factor);
     }
     form.elements.type.addEventListener("change", draw);
     root.addEventListener("click", (event) => {
@@ -3156,15 +3279,16 @@
         return;
       }
       if (event.target.id !== "creation-add-source") return;
-      const label = form.elements.newSource.value.trim();
-      const choice = form.elements.existingSource?.value;
-      if (!label && !choice) { showToast("Выбери показатель или введи название"); return; }
-      const key = label ? usageSourceByName(usageSources(draft), label)?.key : choice;
+      const source = readSource();
+      if (source === false) return;
+      if (!source) { showToast("Выбери показатель или введи название"); return; }
+      const key = source.source?.key;
       if (key) {
         if (sourceEnabled(draft, key)) { showToast("Этот показатель уже включён для борта"); return; }
         draft.enabledUsageSources[key] = true;
+        if (source.factor !== usageRule(key, draft).factor) draft.usageFactors[key] = source.factor;
       } else {
-        draft.customUsageSources.push({ key: `custom-${id()}`, label });
+        draft.customUsageSources.push(newUsageSource(source));
       }
       draw();
     });
@@ -3172,12 +3296,12 @@
     return {
       read() {
         const draft = current();
-        return { enabledUsageSources: usageSourceOverrides(draft, draft.enabledUsageSources), customUsageSources: draft.customUsageSources };
+        return { enabledUsageSources: usageSourceOverrides(draft, draft.enabledUsageSources), customUsageSources: draft.customUsageSources, usageFactors: draft.usageFactors };
       },
     };
   }
 
-  function createAircraft({ type, boardNumber, serialNumber, rfNumber, enabledUsageSources, customUsageSources }) {
+  function createAircraft({ type, boardNumber, serialNumber, rfNumber, enabledUsageSources, customUsageSources, usageFactors }) {
     const template = state.typeSettings.find((entry) => entry.type.toLowerCase() === type.toLowerCase());
     const sameType = state.aircraft.find((item) => item.type.toLowerCase() === type.toLowerCase());
     const id = `aircraft-${Date.now()}`;
@@ -3187,6 +3311,7 @@
       boardNumber: boardNumber.trim(),
       enabledUsageSources,
       customUsageSources,
+      usageFactors,
       serialNumber: serialNumber || "Не указан",
       rfNumber: (rfNumber || "").replace(/^RF[\s-]*/i, ""),
       notifications: state.globalNotifications,
@@ -3386,8 +3511,8 @@
     return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   }
 
-  function formatNumber(value) {
-    return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value));
+  function formatNumber(value, maximumFractionDigits = 2) {
+    return new Intl.NumberFormat("ru-RU", { maximumFractionDigits }).format(Number(value));
   }
 
   function formatSeconds(totalSeconds) {
