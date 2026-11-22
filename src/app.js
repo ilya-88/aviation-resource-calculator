@@ -23,6 +23,10 @@
       factor: DEFAULT_AIRCRAFT_SETTINGS.landingCoefficients[key] ?? 1,
     };
   }
+
+  function usageTypeOverride(aircraft) {
+    return state.usageTypeOverrides?.find((entry) => entry.type === aircraft.type.trim().toLowerCase());
+  }
   const DEFAULT_NOTIFICATION_CONFIG = {
     mode: "all",
     leadDays: 3,
@@ -85,6 +89,7 @@
         typeSettings: state.typeSettings,
         usageRules: state.usageRules,
         sharedGround: state.sharedGround,
+        usageTypeOverrides: state.usageTypeOverrides,
         aircraft: state.aircraft,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
@@ -189,6 +194,7 @@
     else if (state.view === "reports") renderReports();
     else if (state.view === "settings") renderSettings();
     else if (state.view === "usage-settings") renderUsageSettings();
+    else if (state.view === "type-usage-settings") renderTypeUsageSettings();
     else if (state.view === "aircraft-layout") renderAircraftLayout();
     else if (state.view === "about") renderAbout();
     else renderHome();
@@ -586,7 +592,7 @@
 
   function renderShift() {
     const aircraft = selectedAircraft();
-    const ground = state.sharedGround ?? aircraft.settings;
+    const ground = usageTypeOverride(aircraft)?.ground ?? state.sharedGround ?? aircraft.settings;
     const today = new Date();
     const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     app.innerHTML = shell(`
@@ -638,18 +644,20 @@
   function bindShiftForm() {
     const form = document.getElementById("shift-form");
     const aircraft = selectedAircraft();
-    const ground = state.sharedGround ?? aircraft.settings;
+    const override = usageTypeOverride(aircraft);
+    const ground = override?.ground ?? state.sharedGround ?? aircraft.settings;
+    const factor = (key) => override?.factors[key] ?? usageRule(key).factor;
     const groundOptions = {
       stepMinutes: ground.groundRoundingMinutes,
       direction: ground.groundRoundingDirection,
       percent: ground.groundPercent,
     };
-    const coefficients = state.usageRules
-      ? Object.fromEntries(["runway", "carrier", "touch", "circuit"].map((key) => [key, usageRule(key).factor]))
+    const coefficients = state.usageRules || override
+      ? Object.fromEntries(["runway", "carrier", "touch", "circuit"].map((key) => [key, factor(key)]))
       : aircraft.settings.landingCoefficients;
     function engineIncrement(flight, actualGround) {
       const result = calc.calculateEngineIncrement(flight, actualGround, groundOptions);
-      result.totalMinutes = flight * usageRule("flight").factor + result.ground.contributionMinutes * usageRule("ground").factor;
+      result.totalMinutes = flight * factor("flight") + result.ground.contributionMinutes * factor("ground");
       return result;
     }
     const update = () => {
@@ -697,14 +705,14 @@
         if (leftBlock.hasPpr) leftBlock.pprMinutes = (leftBlock.pprMinutes || 0) + left.totalMinutes;
         leftBlock.starts = (leftBlock.starts || 0) + Number(data.get("leftStarts"));
         accumulateModes(leftBlock, data, "left");
-        leftBlock.maximumSeconds = (leftBlock.maximumSeconds ?? 0) + Number(data.get("leftMaximum")) * usageRule("maximum").factor;
+        leftBlock.maximumSeconds = (leftBlock.maximumSeconds ?? 0) + Number(data.get("leftMaximum")) * factor("maximum");
       }
       if (rightBlock?.installed) {
         if (rightBlock.hasSne) rightBlock.sneMinutes = (rightBlock.sneMinutes || 0) + right.totalMinutes;
         if (rightBlock.hasPpr) rightBlock.pprMinutes = (rightBlock.pprMinutes || 0) + right.totalMinutes;
         rightBlock.starts = (rightBlock.starts || 0) + Number(data.get("rightStarts"));
         accumulateModes(rightBlock, data, "right");
-        rightBlock.maximumSeconds = (rightBlock.maximumSeconds ?? 0) + Number(data.get("rightMaximum")) * usageRule("maximum").factor;
+        rightBlock.maximumSeconds = (rightBlock.maximumSeconds ?? 0) + Number(data.get("rightMaximum")) * factor("maximum");
       }
       aircraft.resources.forEach((resource) => {
         const owner = aircraft.blocks.find((block) => block.name === resource.object);
@@ -730,9 +738,9 @@
         rightEngineMinutes: right.totalMinutes,
         landingsByType: landings,
         landingCoefficients: { ...coefficients },
-        usageRules: structuredClone(state.usageRules ?? {}),
+        usageRules: Object.fromEntries(Object.keys(USAGE_TYPES).map((key) => [key, { ...usageRule(key), factor: factor(key) }])),
         groundOptions: { ...groundOptions },
-        weightedHooks: arresterHooks * usageRule("arresterHooks").factor,
+        weightedHooks: arresterHooks * factor("arresterHooks"),
         leftMaximumSeconds: Number(data.get("leftMaximum")),
         rightMaximumSeconds: Number(data.get("rightMaximum")),
         actualLandings,
@@ -1083,10 +1091,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.6</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.7</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.6", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.7", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1236,6 +1244,65 @@
       saveState();
       state.selectedResourceId = null;
       navigateBack();
+    });
+  }
+
+  function renderTypeUsageSettings() {
+    const aircraftTypes = new Map(state.aircraft.map((aircraft) => [aircraft.type.trim().toLowerCase(), aircraft]));
+    app.innerHTML = shell(`
+      <form id="type-usage-form" class="shift-form settings-form">
+        <label>Тип самолёта<select name="type" required>
+          <option value="">Выбрать тип</option>
+          ${[...aircraftTypes].map(([key, aircraft]) => `<option value="${escapeHtml(key)}">${escapeHtml(aircraft.type)}</option>`).join("")}
+        </select></label>
+        <p class="field-help">Настройки типа применяются ко всем его бортам. Общие правила действуют для остальных типов.</p>
+        <div id="type-usage-fields"></div>
+      </form>`, { title: "Коэффициенты по типу", subtitle: "", back: true, settings: false });
+    const form = document.getElementById("type-usage-form");
+    const fields = document.getElementById("type-usage-fields");
+    function showFields() {
+      const aircraft = aircraftTypes.get(form.elements.type.value);
+      if (!aircraft) { fields.innerHTML = ""; return; }
+      const rule = usageTypeOverride(aircraft);
+      const ground = rule?.ground ?? state.sharedGround ?? aircraft.settings;
+      fields.innerHTML = `<fieldset><legend>Коэффициенты и земная наработка</legend>
+        ${Object.keys(USAGE_TYPES).map((key) => `<label>${escapeHtml(usageRule(key).label)}<input name="${key}" type="number" min="0" step="any" value="${rule?.factors[key] ?? (state.usageRules ? usageRule(key).factor : aircraft.settings.landingCoefficients[key] ?? 1)}" required></label>`).join("")}
+        <label>Процент земли<input name="percent" type="number" min="0" max="100" step="any" value="${ground.groundPercent}" required></label>
+        <label>Шаг округления, минут<input name="step" type="number" min="1" step="1" value="${ground.groundRoundingMinutes}" required></label>
+        <label>Направление<select name="direction">${[["nearest","До ближайшего"],["up","Вверх"],["down","Вниз"]].map(([value, name]) => `<option value="${value}" ${ground.groundRoundingDirection === value ? "selected" : ""}>${name}</option>`).join("")}</select></label>
+        <button class="primary-button" type="submit">Сохранить для типа</button>
+        ${rule ? `<button class="secondary-button" type="button" id="remove-type-rule">Вернуть общие правила</button>` : ""}
+      </fieldset>`;
+    }
+    function saveRules(next) {
+      const previous = state.usageTypeOverrides;
+      state.usageTypeOverrides = next;
+      if (!saveState()) {
+        state.usageTypeOverrides = previous;
+        showToast("Не удалось сохранить настройки");
+        return;
+      }
+      showFields();
+      showToast("Настройки сохранены");
+    }
+    form.elements.type.addEventListener("change", showFields);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      const type = String(data.get("type"));
+      if (!aircraftTypes.has(type)) return;
+      const next = (state.usageTypeOverrides ?? []).filter((entry) => entry.type !== type);
+      next.push({ type, factors: Object.fromEntries(Object.keys(USAGE_TYPES).map((key) => [key, Number(data.get(key))])),
+        ground: { groundPercent: Number(data.get("percent")), groundRoundingMinutes: Number(data.get("step")),
+          groundRoundingDirection: String(data.get("direction")) } });
+      saveRules(next);
+    });
+    fields.addEventListener("click", (event) => {
+      if (event.target.id !== "remove-type-rule") return;
+      const type = form.elements.type.value;
+      chooseLayoutAction("Вернуть общие правила для этого типа?", [["reset","Вернуть"],["cancel","Отмена"]], (action) => {
+        if (action === "reset") saveRules(state.usageTypeOverrides.filter((entry) => entry.type !== type));
+      });
     });
   }
 
@@ -1405,14 +1472,15 @@
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Приложение</p><h1>Настройки</h1></div></section>
       <section class="settings-list">
-        <button class="setting-row" data-view="usage-settings"><strong>Виды наработки</strong>${icon("chevron")}</button>
+        <button class="setting-row" data-view="usage-settings"><strong>Виды наработки · общие</strong>${icon("chevron")}</button>
+        <button class="setting-row" data-view="type-usage-settings"><strong>Коэффициенты по типу самолёта</strong>${icon("chevron")}</button>
         <label class="setting-row"><span><strong>Все уведомления</strong><small>Главный переключатель имеет высший приоритет</small></span><input id="global-notifications" type="checkbox" ${state.globalNotifications ? "checked" : ""}></label>
         <div class="settings-subheading">Уведомления по самолётам</div>
         ${aircraftNotificationRows}
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.6</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.7</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
