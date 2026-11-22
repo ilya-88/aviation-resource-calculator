@@ -325,12 +325,32 @@
         <button class="secondary-button" data-view="resources">${icon("resource")} Остатки ресурсов</button>
         <button class="primary-button" data-view="shift">${icon("log")} Внести лётную смену</button>
       </div>
-      <button class="text-button" data-view="aircraft-layout">Настроить раскладку</button>
-      <div id="counter-preview">${layoutEditing ? "" : counterTiles(aircraft, aircraft.counterLayout ?? defaultCounterLayout)}</div>
       <section class="aircraft-tab-panel">${tabContent}</section>
     `, { title: `${aircraft.type} · Борт ${aircraft.boardNumber}`, subtitle: "", singleLine: true, back: true, settings: !layoutEditing, settingsScope: "aircraft" });
+    const panel = app.querySelector(".aircraft-tab-panel");
+    const preview = document.createElement("div");
+    preview.id = "counter-preview";
+    panel.prepend(preview);
+    const catalog = new Map();
+    const items = app.querySelectorAll(".aircraft-actions > button, .aircraft-tab-panel .equipment-block, .aircraft-tab-panel .resource-row, .aircraft-tab-panel .history-row, .aircraft-tab-panel button.add-block-button, .aircraft-tab-panel [data-action='edit-blocks']");
+    for (const [index, item] of [...items].entries()) {
+      const resource = item.querySelector("[data-resource-id]");
+      const key = "widget:" + (item.dataset.view || item.dataset.blockId || resource?.dataset.resourceId ||
+        (item.dataset.action ? item.dataset.action + ":" + activeTab : activeTab + ":" + index));
+      catalog.set(key, item.outerHTML);
+      item.remove();
+    }
+    const preferred = aircraft.boardLayouts?.[activeTab] ?? [
+      ...(aircraft.counterLayout ?? defaultCounterLayout),
+      ...[...catalog.keys()].map((key) => ({ keys: [key], wide: false })),
+    ];
+    const layout = preferred.filter((tile) => !tile.keys[0].startsWith("widget:") || catalog.has(tile.keys[0]));
+    for (const key of catalog.keys()) {
+      if (!layout.some((tile) => tile.keys.includes(key))) layout.push({ keys: [key], wide: false });
+    }
     if (!layoutEditing) {
-      const tiles = app.querySelector(".counter-tiles");
+      preview.innerHTML = counterTiles(aircraft, layout, false, catalog);
+      const tiles = preview.querySelector(".counter-tiles");
       let holdTimer;
       let start;
       function stopHold() { clearTimeout(holdTimer); start = null; }
@@ -350,6 +370,7 @@
       for (const name of ["pointerup", "pointercancel", "pointerleave"]) tiles.addEventListener(name, stopHold);
       tiles.addEventListener("contextmenu", (event) => event.preventDefault());
     }
+    return { layout, catalog, activeTab };
   }
 
   const defaultCounterLayout = [
@@ -374,7 +395,7 @@
     dialog.showModal();
   }
 
-  function counterTiles(aircraft, layout, editing = false) {
+  function counterTiles(aircraft, layout, editing = false, catalog = new Map()) {
     const name = escapeHtml(usageRule("flight").label);
     const values = {
       flightSne: [name + " СНЭ", calc.formatDuration(aircraft.totalFlightMinutes)],
@@ -387,12 +408,12 @@
         ${editing && activeCounterIndex === index ? `<div class="counter-gesture-toolbar">
           <button type="button" data-gesture="move" aria-label="Переместить" aria-pressed="${counterGesture === "move"}">✥</button>
           <button type="button" data-gesture="resize" aria-label="Изменить размер" aria-pressed="${counterGesture === "resize"}">↔</button>
-          <button type="button" data-layout-action="edit" data-index="${index}" aria-label="Изменить подпись">✎</button>
+          ${values[tile.keys[0]] ? `<button type="button" data-layout-action="edit" data-index="${index}" aria-label="Изменить подпись">✎</button>` : ""}
         </div><svg class="counter-edit-outline" aria-hidden="true"><rect pathLength="100" rx="22"/></svg>` : ""}
-        ${tile.keys.map((key) => `<div class="counter-value">${tile.labels?.[key] ? escapeHtml(tile.labels[key]) : values[key][0]} <strong>${values[key][1]}</strong></div>`).join("")}
+        ${tile.keys.map((key) => `<div class="counter-value">${catalog.get(key) ?? `${tile.labels?.[key] ? escapeHtml(tile.labels[key]) : values[key][0]} <strong>${values[key][1]}</strong>`}</div>`).join("")}
         ${editing ? `<div class="counter-controls" hidden>
           ${[["up","↑","Вверх"],["down","↓","Вниз"],["left","←","Влево"],["right","→","Вправо"],["size",(tile.span ?? (tile.wide ? 12 : 6)) > 6 ? "Сузить" : "Расширить","Изменить ширину"],
-            ...(index + 1 < layout.length ? [["merge","Объединить","Объединить со следующей карточкой"]] : []),
+            ...(index + 1 < layout.length && values[tile.keys[0]] && values[layout[index + 1].keys[0]] ? [["merge","Объединить","Объединить со следующей карточкой"]] : []),
             ...(tile.keys.length > 1 ? [["split","Разделить","Разделить показатели"]] : []),
           ].map(([action, label, title]) => `<button class="secondary-button" type="button" data-layout-action="${action}" data-index="${index}" aria-label="${title}">${label}</button>`).join("")}
         </div>` : ""}
@@ -401,12 +422,12 @@
 
   function renderAircraftLayout() {
     const aircraft = selectedAircraft();
-    let draft = structuredClone(aircraft.counterLayout ?? defaultCounterLayout);
-    const initial = JSON.stringify(draft);
     const scrollY = window.scrollY;
     activeCounterIndex ??= 0;
     counterGesture = "";
-    renderAircraft(true);
+    const { layout, catalog, activeTab } = renderAircraft(true);
+    let draft = structuredClone(layout);
+    const initial = JSON.stringify(draft);
     const preview = document.getElementById("counter-preview");
     const surface = preview.closest("main");
     const controls = document.createElement("div");
@@ -414,7 +435,9 @@
     controls.innerHTML = `<button class="secondary-button" id="layout-default">По умолчанию</button><button class="primary-button" id="layout-save">Готово</button>`;
     surface.after(controls);
     surface.querySelectorAll("button").forEach((button) => { button.disabled = true; });
-    const paint = () => { preview.innerHTML = counterTiles(aircraft, draft, true); };
+    const paint = () => { preview.innerHTML = counterTiles(aircraft, draft, true, catalog);
+      preview.querySelectorAll(".counter-value button").forEach((button) => { button.disabled = true; });
+    };
     let drag;
     let hold;
     let pinch;
@@ -555,15 +578,15 @@
       if (event.target.closest(".counter-tile")) event.preventDefault();
     });
     function save() {
-      const previous = aircraft.counterLayout;
-      aircraft.counterLayout = JSON.stringify(draft) === JSON.stringify(defaultCounterLayout) ? undefined : structuredClone(draft);
+      const previous = aircraft.boardLayouts;
+      aircraft.boardLayouts = { ...previous, [activeTab]: structuredClone(draft) };
       if (saveState()) {
         const currentScroll = window.scrollY;
         finishBackNavigation();
         window.scrollTo(0, currentScroll);
       }
       else {
-        aircraft.counterLayout = previous;
+        aircraft.boardLayouts = previous;
         showToast("Не удалось сохранить раскладку");
       }
     }
@@ -644,7 +667,8 @@
     document.getElementById("layout-default").onclick = () => {
       chooseLayoutAction("Восстановить стандартную раскладку?", [["reset","Восстановить"],["cancel","Отмена"]], (action) => {
         if (action !== "reset") return;
-        draft = structuredClone(defaultCounterLayout);
+        draft = structuredClone([...defaultCounterLayout, ...[...catalog.keys()].map((key) => ({ keys: [key], wide: false }))]);
+        activeCounterIndex = 0;
         paint();
       });
     };
@@ -1218,10 +1242,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.10</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.11</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.10", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.11", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1668,7 +1692,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.10</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.11</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });

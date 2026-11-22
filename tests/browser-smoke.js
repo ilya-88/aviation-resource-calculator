@@ -374,12 +374,18 @@ async function main() {
       window.handleAndroidBack();
       window.handleAndroidBack();
       document.querySelector('[data-aircraft-id]').click();
-      document.querySelector('[data-view="aircraft-layout"]').click();
+      const hold = async (target) => {
+        target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, isPrimary: true }));
+        await new Promise(resolve => setTimeout(resolve, 2100));
+      };
+      await hold(document.querySelector('[data-view="shift"]'));
+      const baseCount = document.querySelectorAll('.counter-tile').length;
+      const selectedAction = Boolean(document.querySelector('.counter-tile-active [data-view="shift"]'));
       document.querySelector('[data-layout-action="split"]').click();
       document.querySelector('[data-layout-action="right"][data-index="0"]').click();
       document.querySelector('[data-layout-action="merge"]').click();
       document.querySelector('[data-layout-action="size"][data-index="0"]').click();
-      const count = document.querySelectorAll('.counter-tile').length;
+      const count = document.querySelectorAll('.counter-tile').length - baseCount;
       window.handleAndroidBack();
       let dialog = document.querySelector('dialog[open]');
       await new Promise(resolve => {
@@ -388,8 +394,8 @@ async function main() {
       });
       const tile = document.querySelector('.counter-tile');
       const persisted = tile.getBoundingClientRect().width < tile.parentElement.clientWidth &&
-        JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].counterLayout[0].span === 6;
-      document.querySelector('[data-view="aircraft-layout"]').click();
+        JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].boardLayouts.aggregates[0].span === 6;
+      await hold(document.querySelector('[data-block-id]'));
       document.querySelector('#layout-default').click();
       dialog = document.querySelector('dialog[open]');
       await new Promise(resolve => {
@@ -397,10 +403,10 @@ async function main() {
         dialog.querySelector('[value="reset"]').click();
       });
       document.querySelector('#layout-save').click();
-      return { count, persisted, restored: document.querySelectorAll('.counter-tile').length === 2 &&
-        JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].counterLayout == null };
+      return { count, persisted, selectedAction, restored: document.querySelectorAll('.counter-tile').length === baseCount &&
+        JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].boardLayouts.aggregates[0].span == null };
     })()`);
-    assert.deepEqual(layoutResult, { count: 2, persisted: true, restored: true });
+    assert.deepEqual(layoutResult, { count: 0, persisted: true, selectedAction: true, restored: true });
     results.aircraftLayout = "ok";
 
     process.stdout.write(`${JSON.stringify(results)}\n`);
