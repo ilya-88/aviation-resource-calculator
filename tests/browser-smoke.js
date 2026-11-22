@@ -388,9 +388,9 @@ async function main() {
       const baseCount = document.querySelectorAll('.counter-tile').length;
       const selectedAction = Boolean(document.querySelector('.counter-tile-active [data-view="shift"]'));
       document.querySelector('[data-layout-action="split"]').click();
-      document.querySelector('[data-layout-action="right"][data-index="0"]').click();
+      document.querySelector('[data-layout-action="right"][data-index="1"]').click();
       document.querySelector('[data-layout-action="merge"]').click();
-      document.querySelector('[data-layout-action="size"][data-index="0"]').click();
+      document.querySelector('[data-layout-action="size"][data-index="1"]').click();
       const count = document.querySelectorAll('.counter-tile').length - baseCount;
       window.handleAndroidBack();
       let dialog = document.querySelector('dialog[open]');
@@ -398,7 +398,7 @@ async function main() {
         dialog.addEventListener('close', resolve, { once: true });
         dialog.querySelector('[value="save"]').click();
       });
-      const tile = document.querySelector('.counter-tile');
+      const tile = document.querySelector('.counter-tile:nth-child(2)');
       const persisted = tile.getBoundingClientRect().width < tile.parentElement.clientWidth &&
         JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].boardLayouts.aggregates[0].span === 6;
       await hold(document.querySelector('[data-block-id]'));
@@ -415,7 +415,7 @@ async function main() {
     assert.deepEqual(layoutResult, { count: 0, persisted: true, selectedAction: true, restored: true });
     results.aircraftLayout = "ok";
     const liveReflow = await evaluate(`(async () => {
-      const source = document.querySelector('.counter-tile .counter-value');
+      const source = document.querySelector('[data-tile-key="widget:board-tabs"] .aircraft-tab');
       source.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [new Touch({ identifier: 1, target: source })] }));
       await new Promise(resolve => setTimeout(resolve, 900));
       source.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true }));
@@ -454,9 +454,13 @@ async function main() {
       const gentleResize = before.width - after.width > 0 && before.width - after.width <= 14 && Math.abs(before.left - after.left) <= 1;
       content.dispatchEvent(new TouchEvent('touchend', { bubbles: true, changedTouches: [dragSize(171)] }));
       document.querySelector('#layout-save').click();
-      return { movedBeforeRelease, fontGrowsInline, fontReset, toolbarFits, gentleResize };
+      const savedTabPosition = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].boardTabsLayout.index;
+      document.querySelector('[data-aircraft-tab="works"]').click();
+      const tabsStillWork = document.querySelector('[data-aircraft-tab="works"]').getAttribute('aria-selected') === 'true' &&
+        document.querySelectorAll('.counter-tile')[savedTabPosition].dataset.tileKey === 'widget:board-tabs';
+      return { movedBeforeRelease, fontGrowsInline, fontReset, toolbarFits, gentleResize, tabsStillWork };
     })()`);
-    assert.deepEqual(liveReflow, { movedBeforeRelease: true, fontGrowsInline: true, fontReset: true, toolbarFits: true, gentleResize: true });
+    assert.deepEqual(liveReflow, { movedBeforeRelease: true, fontGrowsInline: true, fontReset: true, toolbarFits: true, gentleResize: true, tabsStillWork: true });
     results.liveTileReflow = "ok";
     const journal = await evaluate(`(() => {
       window.handleAndroidBack();

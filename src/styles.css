@@ -59,6 +59,9 @@ button { color: inherit; }
 .counter-move-ghost { position: fixed; z-index: 30; pointer-events: none; opacity: .9; box-shadow: var(--shadow); }
 .counter-controls[hidden] { display: none; }
 .counter-value > :is(button, article) { width: 100%; max-width: 100%; margin: 0; font-size: inherit; }
+.counter-value > .aircraft-tabs { margin: 0; border: 0; padding: 0; display: flex; flex-wrap: wrap; overflow: visible; }
+.counter-value .aircraft-tab { flex: 1 1 0; min-width: 0; font-size: inherit; white-space: normal; overflow-wrap: anywhere; padding-inline: 8px; }
+.counter-value .aircraft-tab:last-child { flex-basis: 100%; }
 #counter-preview .counter-value button:disabled { pointer-events: none; }
 .counter-value > .equipment-block { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; min-height: 48px; padding: 5px; }
 .counter-value .equipment-block__icon, .counter-value .equipment-block > :last-child { display: none; }

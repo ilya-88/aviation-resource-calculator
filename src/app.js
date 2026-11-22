@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.21";
+  const APP_VERSION = "0.2.22";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -360,22 +360,25 @@
     preview.id = "counter-preview";
     panel.prepend(preview);
     const catalog = new Map();
-    const items = app.querySelectorAll(".aircraft-actions > button, .aircraft-tab-panel .equipment-block, .aircraft-tab-panel .resource-row, .aircraft-tab-panel .history-row, .aircraft-tab-panel button.add-block-button, .aircraft-tab-panel [data-action='edit-blocks']");
+    const items = app.querySelectorAll(".aircraft-tabs, .aircraft-actions > button, .aircraft-tab-panel .equipment-block, .aircraft-tab-panel .resource-row, .aircraft-tab-panel .history-row, .aircraft-tab-panel button.add-block-button, .aircraft-tab-panel [data-action='edit-blocks']");
     for (const [index, item] of [...items].entries()) {
       const resource = item.querySelector("[data-resource-id]");
-      const key = "widget:" + (item.dataset.view || item.dataset.blockId || resource?.dataset.resourceId ||
+      const key = "widget:" + (item.matches(".aircraft-tabs") ? "board-tabs" : item.dataset.view || item.dataset.blockId || resource?.dataset.resourceId ||
         (item.dataset.action ? item.dataset.action + ":" + activeTab : activeTab + ":" + index));
       catalog.set(key, item.outerHTML);
       item.remove();
     }
     const preferred = aircraft.boardLayouts?.[activeTab] ?? [
       ...(aircraft.counterLayout ?? defaultCounterLayout),
-      ...[...catalog.keys()].map((key) => ({ keys: [key], wide: false })),
+      ...[...catalog.keys()].filter((key) => key !== "widget:board-tabs").map((key) => ({ keys: [key], wide: false })),
     ];
-    const layout = preferred.filter((tile) => !tile.keys[0].startsWith("widget:") || catalog.has(tile.keys[0]));
+    const layout = preferred.filter((tile) => tile.keys[0] !== "widget:board-tabs" &&
+      (!tile.keys[0].startsWith("widget:") || catalog.has(tile.keys[0])));
     for (const key of catalog.keys()) {
-      if (!layout.some((tile) => tile.keys.includes(key))) layout.push({ keys: [key], wide: false });
+      if (key !== "widget:board-tabs" && !layout.some((tile) => tile.keys.includes(key))) layout.push({ keys: [key], wide: false });
     }
+    const tabsLayout = aircraft.boardTabsLayout;
+    layout.splice(tabsLayout?.index ?? 0, 0, tabsLayout?.tile ?? { keys: ["widget:board-tabs"], wide: true });
     if (!layoutEditing) {
       preview.innerHTML = counterTiles(aircraft, layout, false, catalog);
       const tiles = preview.querySelector(".counter-tiles");
@@ -504,7 +507,7 @@
       landingPpr: ["Посадки ППР", aircraft.pprLandings ?? "Не задано"],
     };
     return `<section class="counter-tiles" aria-label="Наработка борта">${layout.map((tile, index) => `
-      <article class="counter-tile ${editing && activeCounterIndex === index ? "counter-tile-active" : ""}" data-counter-index="${index}" style="--tile-start:${tile.columnStart ?? "auto"};--tile-span:${Math.round((tile.span ?? (tile.wide ? 12 : 6)) * 10)};--tile-height:${tile.height ?? 0}px;--tile-font:${tile.font ?? 1}rem">
+      <article class="counter-tile ${editing && activeCounterIndex === index ? "counter-tile-active" : ""}" data-counter-index="${index}" data-tile-key="${escapeHtml(tile.keys[0])}" style="--tile-start:${tile.columnStart ?? "auto"};--tile-span:${Math.round((tile.span ?? (tile.wide ? 12 : 6)) * 10)};--tile-height:${tile.height ?? 0}px;--tile-font:${tile.font ?? 1}rem">
         ${editing && activeCounterIndex === index ? `<div class="counter-gesture-toolbar">
           <button type="button" class="counter-toolbar-handle" aria-label="Передвинуть панель">⠿</button>
           <button type="button" data-gesture="move" aria-label="Переместить" aria-pressed="${counterGesture === "move"}">✥</button>
@@ -775,7 +778,10 @@
     });
     function save() {
       const previous = aircraft.boardLayouts;
-      aircraft.boardLayouts = { ...previous, [activeTab]: structuredClone(draft) };
+      const previousTabs = aircraft.boardTabsLayout;
+      const tabsIndex = draft.findIndex((tile) => tile.keys[0] === "widget:board-tabs");
+      aircraft.boardTabsLayout = { index: tabsIndex, tile: structuredClone(draft[tabsIndex]) };
+      aircraft.boardLayouts = { ...previous, [activeTab]: structuredClone(draft.filter((tile) => tile.keys[0] !== "widget:board-tabs")) };
       if (saveState()) {
         recordDiagnostic("layout.save.ok");
         const currentScroll = window.scrollY;
@@ -785,6 +791,7 @@
       else {
         recordDiagnostic("layout.save.error");
         aircraft.boardLayouts = previous;
+        aircraft.boardTabsLayout = previousTabs;
         showToast("Не удалось сохранить раскладку");
       }
     }
@@ -870,7 +877,7 @@
       chooseLayoutAction("Сбросить размер выбранной плитки?", [["reset","Сбросить"],["cancel","Отмена"]], (action) => {
         if (action !== "reset") return;
         const tile = draft[activeCounterIndex];
-        tile.wide = tile.keys.length > 1;
+        tile.wide = tile.keys.length > 1 || tile.keys[0] === "widget:board-tabs";
         delete tile.span;
         delete tile.columnStart;
         delete tile.height;
@@ -1447,10 +1454,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.21</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.22</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.21", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.22", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1941,7 +1948,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.21</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.22</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
