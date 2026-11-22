@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.33";
+  const APP_VERSION = "0.2.34";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -71,6 +71,13 @@
     return aircraft.enabledUsageSources?.[key] ?? (usageRule(key, aircraft).enabled !== false);
   }
 
+  function usageSourceByName(sources, label) {
+    const normalize = (value) => value.trim().replace(/\s+/g, " ").toLowerCase().replaceAll("ё", "е");
+    const name = normalize(label);
+    return sources.find((source) => normalize(source.label) === name) ??
+      sources.find(({ key }) => (USAGE_TYPES[key] && normalize(USAGE_TYPES[key]) === name) || (key === "touch" && name === "касание"));
+  }
+
   function sourceCheckboxes(aircraft = {}) {
     return usageSources(aircraft).map(({ key, label }) => `
       <label class="checkbox-row"><input type="checkbox" name="usageSource" value="${key}" ${sourceEnabled(aircraft, key) ? "checked" : ""}><span>${escapeHtml(label)}</span></label>`
@@ -95,9 +102,14 @@
       event.preventDefault();
       const data = new FormData(event.currentTarget);
       const previous = [aircraft.enabledUsageSources, aircraft.customUsageSources];
-      aircraft.enabledUsageSources = usageSourceOverrides(aircraft, enabledSourcesFromForm(aircraft, data));
+      const enabled = enabledSourcesFromForm(aircraft, data);
       const label = data.get("newSource").trim();
-      if (label) aircraft.customUsageSources = [...(aircraft.customUsageSources || []), { key: `custom-${id()}`, label }];
+      if (label) {
+        const existing = usageSourceByName(usageSources(aircraft), label);
+        if (existing) enabled[existing.key] = true;
+        else aircraft.customUsageSources = [...(aircraft.customUsageSources || []), { key: `custom-${id()}`, label }];
+      }
+      aircraft.enabledUsageSources = usageSourceOverrides(aircraft, enabled);
       if (saveState()) render();
       else { [aircraft.enabledUsageSources, aircraft.customUsageSources] = previous; showToast("Не удалось сохранить показатели"); }
     });
@@ -2436,10 +2448,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.33</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.34</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.33", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.34", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -2582,10 +2594,11 @@
     ownerControl.addEventListener("change", () => refreshInputs());
     resourceForm.elements.unit.addEventListener("change", () => refreshInputs());
     document.getElementById("resource-source-add").addEventListener("click", () => {
-      const key = sourceChoice.value;
       const control = document.getElementById("resource-source-name");
       const label = control.value.trim();
-      if (!key && !label) { showToast("Выбери показатель или введи название"); return; }
+      if (!sourceChoice.value && !label) { showToast("Выбери показатель или введи название"); return; }
+      const key = label ? usageSourceByName(usageSources(aircraft), label)?.key : sourceChoice.value;
+      if (key && sourceEnabled(aircraft, key)) { showToast("Этот показатель уже включён в форму работы"); return; }
       const previous = [aircraft.enabledUsageSources, aircraft.customUsageSources];
       if (key) aircraft.enabledUsageSources = { ...aircraft.enabledUsageSources, [key]: true };
       else aircraft.customUsageSources = [...(aircraft.customUsageSources || []), { key: `custom-${id()}`, label }];
@@ -2816,7 +2829,7 @@
       }).join("") + `<details id="type-add-source"><summary>Добавить показатель</summary>
           ${available.length ? `<label>Из списка<select name="existingSource"><option value="">Выбрать</option>${available.map((item) =>
             `<option value="${item.key}">${escapeHtml(currentLabel(item))}</option>`).join("")}</select></label>` : ""}
-          <label>Или свой показатель<input name="newSource" type="text" maxlength="80"></label>
+          <label>Или введи название<input name="newSource" type="text" maxlength="80"></label>
           <button type="button" class="secondary-button" id="type-add-source-button">Добавить показатель</button>
         </details>`;
     }
@@ -2837,17 +2850,20 @@
         showToast("Введи название показателя");
         return false;
       }
+      if (!addSource()) return false;
       const previous = state.usageTypeOverrides;
       const key = type.toLowerCase();
       state.usageTypeOverrides = [...previous.filter((item) => item.type !== key), { ...profile, ...draft, type: key }];
       if (saveState()) return true;
       state.usageTypeOverrides = previous;
+      drawFields();
       showToast("Не удалось сохранить настройки типа");
       return false;
     }
     function afterDraft(next) {
       readDraft();
-      if (JSON.stringify(draft) === initial) { next(); return; }
+      const pending = form.elements.newSource.value.trim() || form.elements.existingSource?.value;
+      if (!pending && JSON.stringify(draft) === initial) { next(); return; }
       if (app.querySelector("dialog[open]")) return;
       chooseLayoutAction("Сохранить изменения наработки?", [["save", "Сохранить"], ["discard", "Выйти без сохранения"], ["cancel", "Остаться"]], (action) => {
         if (action === "discard" || (action === "save" && save())) next();
@@ -2864,29 +2880,37 @@
       event.preventDefault();
       if (save()) { render(); showToast("Настройки типа сохранены"); }
     });
+    function addSource(required = false) {
+      const label = form.elements.newSource.value.trim();
+      const selected = form.elements.existingSource?.value;
+      if (!label && !selected) {
+        if (required) showToast("Выбери показатель или введи название");
+        return !required;
+      }
+      const existing = label && usageSourceByName(fields().map((item) => ({ key: item.key, label: currentLabel(item) })), label);
+      const key = label ? existing?.key : selected;
+      if (key) {
+        if (enabled(key)) { showToast("Этот показатель уже включён для выбранного типа"); return false; }
+        draft.enabled[key] = true;
+      } else {
+        const custom = `custom-${id()}`;
+        draft.customSources.push({ key: custom, label });
+        draft.enabled[custom] = true;
+      }
+      form.elements.newSource.value = "";
+      if (form.elements.existingSource) form.elements.existingSource.value = "";
+      return true;
+    }
     collection?.addEventListener("click", (event) => {
       const disable = event.target.closest("[data-disable-source]");
       if (disable) {
         readDraft();
         draft.enabled[disable.dataset.disableSource] = false;
         drawFields();
-        return;
+      } else if (event.target.id === "type-add-source-button") {
+        readDraft();
+        if (addSource(true)) drawFields();
       }
-      if (event.target.id !== "type-add-source-button") return;
-      const label = form.elements.newSource.value.trim();
-      const key = form.elements.existingSource?.value;
-      if (!label && !key) { showToast("Выбери показатель или введи название"); return; }
-      readDraft();
-      if (label && fields().some((item) => currentLabel(item).toLowerCase() === label.toLowerCase())) {
-        showToast("Показатель с таким названием уже есть");
-        return;
-      }
-      if (label) {
-        const custom = `custom-${id()}`;
-        draft.customSources.push({ key: custom, label });
-        draft.enabled[custom] = true;
-      } else draft.enabled[key] = true;
-      drawFields();
     });
     collection?.addEventListener("input", (event) => {
       const field = event.target;
@@ -2962,7 +2986,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.33</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.34</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -3118,7 +3142,7 @@
         <details ${available.length === sources.length ? "open" : ""}><summary>Добавить показатель</summary>
           ${available.length ? `<label>Из списка<select name="existingSource"><option value="">Выбрать</option>${available.map(({ key, label }) =>
             `<option value="${key}">${escapeHtml(label)}</option>`).join("")}</select></label>` : ""}
-          <label>Или свой показатель<input name="newSource" type="text" maxlength="80"></label>
+          <label>Или введи название<input name="newSource" type="text" maxlength="80"></label>
           <button type="button" class="secondary-button" id="creation-add-source">Добавить показатель</button>
         </details></fieldset>`;
     }
@@ -3135,13 +3159,13 @@
       const label = form.elements.newSource.value.trim();
       const choice = form.elements.existingSource?.value;
       if (!label && !choice) { showToast("Выбери показатель или введи название"); return; }
-      if (label) {
-        if (usageSources(draft).some((item) => item.label.toLowerCase() === label.toLowerCase())) {
-          showToast("Показатель с таким названием уже есть");
-          return;
-        }
+      const key = label ? usageSourceByName(usageSources(draft), label)?.key : choice;
+      if (key) {
+        if (sourceEnabled(draft, key)) { showToast("Этот показатель уже включён для борта"); return; }
+        draft.enabledUsageSources[key] = true;
+      } else {
         draft.customUsageSources.push({ key: `custom-${id()}`, label });
-      } else draft.enabledUsageSources[choice] = true;
+      }
       draw();
     });
     draw();

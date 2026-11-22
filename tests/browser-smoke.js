@@ -123,7 +123,7 @@ async function main() {
       const form = document.querySelector('#creation-form');
       form.elements.type.value = "МиГ-29";
       form.elements.type.dispatchEvent(new Event('change'));
-      form.elements.existingSource.value = 'arresterHooks';
+      form.elements.newSource.value = 'Зацепы за аэрофинишер';
       document.querySelector('#creation-add-source').click();
       form.elements.newSource.value = 'Циклы борта';
       document.querySelector('#creation-add-source').click();
@@ -442,7 +442,7 @@ async function main() {
       const runway = document.querySelector('#shift-form [name="runway"]');
       runway.value = '2';
       runway.dispatchEvent(new Event('input', { bubbles: true }));
-      const applies = document.querySelector('#shift-summary').textContent.includes('Зачёт посадок: 5');
+      const applies = Boolean(runway.form.elements.touch) && document.querySelector('#shift-summary').textContent.includes('Зачёт посадок: 5');
       window.handleAndroidBack();
       return { archived, omitted, inherited, applies, hidesOptional, emptyState, template: read().usageTypeOverrides.find(entry => entry.type === 'миг-29').factors.runway,
         restored: !read().archivedAircraftTypes.includes('миг-29'), newAircraft: read().aircraft.find(item => item.boardNumber === '43').type };
@@ -466,6 +466,42 @@ async function main() {
     })()`);
     assert.equal(savedUsageName, "Полётное время");
     results.usageSettingsBackSave = "ok";
+    const namedUsage = await evaluate(`(() => {
+      const type = document.querySelector('#usage-aircraft-type').value;
+      let form = document.querySelector('#usage-settings-form');
+      const wasOff = !form.elements.touchFactor && [...form.elements.existingSource.options].some(option => option.value === 'touch');
+      form.elements.newSource.value = ' КАСАНИЯ ';
+      document.querySelector('#type-add-source-button').click();
+      const addedByName = Boolean(form.elements.touchFactor);
+      document.querySelector('[data-disable-source="touch"]').click();
+      form.elements.newSource.value = 'касание';
+      form.requestSubmit();
+      form = document.querySelector('#usage-settings-form');
+      const enabled = Boolean(form.elements.touchFactor);
+      form.elements.newSource.value = 'Касания';
+      document.querySelector('#type-add-source-button').click();
+      const blocksDuplicate = document.querySelector('.toast')?.textContent.includes('уже включён для выбранного типа');
+      form.elements.newSource.value = '';
+      const storage = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
+      const profile = storage.usageTypeOverrides.find(row => row.type === type.toLowerCase());
+      const reused = profile.enabled.touch && !profile.customSources.some(item => /касани/i.test(item.label));
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      document.querySelector('[data-aircraft-id]').click();
+      document.querySelector('[data-view="shift"]').click();
+      const work = document.querySelector('#shift-form');
+      work.elements.touch.value = '1';
+      work.elements.touch.dispatchEvent(new Event('input', { bubbles: true }));
+      const appearsInWork = work.querySelectorAll('[name="touch"]').length === 1 &&
+        document.querySelector('#shift-summary').textContent.includes('Зачёт посадок: 0,6');
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      document.querySelector('[data-action="settings"]').click();
+      document.querySelector('[data-view="usage-settings"]').click();
+      return { type, wasOff, addedByName, enabled, blocksDuplicate, reused, appearsInWork };
+    })()`);
+    assert.deepEqual(namedUsage, { type: "Су-33", wasOff: true, addedByName: true, enabled: true, blocksDuplicate: true, reused: true, appearsInWork: true });
+    results.usageSourceByName = "ok";
     const layoutResult = await evaluate(`(async () => {
       window.handleAndroidBack();
       window.handleAndroidBack();
