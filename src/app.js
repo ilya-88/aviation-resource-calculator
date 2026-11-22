@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.35";
+  const APP_VERSION = "0.2.36";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -83,11 +83,33 @@
     return source?.kind ?? (TIME_USAGE_TYPES.has(source?.key) ? "time" : "count");
   }
 
-  function sourceDefinitionFields() {
-    return `<div class="field-pair source-definition">
-      <label>Тип значения<select data-source-kind><option value="count">Количество</option><option value="time">Время</option></select></label>
-      <label>Коэффициент<input data-source-factor type="number" min="0" step="any" value="1" required></label>
-      <label data-duration-format hidden>Формат ввода<select><option value="hours">Часы и минуты</option><option value="seconds">Минуты и секунды</option></select></label>
+  function keepBuiltInKind(control, source) {
+    const expected = sourceKind(source);
+    if (control.value === expected) return;
+    control.value = expected;
+    showToast(expected === "time"
+      ? "У показателя задан идентификатор подсчёта времени. Его нельзя считать в штуках."
+      : "У показателя задан идентификатор подсчёта количества. Его нельзя использовать для учёта времени.");
+  }
+
+  function usageKindOptions(selected) {
+    return [["count", "Количество"], ["time", "Время"]].map(([value, name]) =>
+      `<option value="${value}" ${value === selected ? "selected" : ""}>${name}</option>`).join("");
+  }
+
+  function durationOptions(selected) {
+    return [["hours", "Часы и минуты"], ["seconds", "Минуты и секунды"]].map(([value, name]) =>
+      `<option value="${value}" ${value === selected ? "selected" : ""}>${name}</option>`).join("");
+  }
+
+  function sourceDefinitionFields(nameInput, choice = "") {
+    return `<div class="usage-source-grid source-definition">
+      ${choice}
+      ${nameInput}
+      <label class="usage-coefficient">Коэффициент<input data-source-factor type="number" min="0" step="any" value="1" required></label>
+      <label>Категория<select data-source-kind>${usageKindOptions("count")}</select></label>
+      <label data-duration-format hidden>Формат ввода<select>${durationOptions("hours")}</select></label>
+      <small class="field-help usage-example" data-source-example></small>
     </div>`;
   }
 
@@ -95,22 +117,29 @@
     const kind = root.querySelector("[data-source-kind]");
     const factor = root.querySelector("[data-source-factor]");
     const format = root.querySelector("[data-duration-format]");
+    const example = root.querySelector("[data-source-example]");
     const readSelection = () => ({
       label: name.value.trim(),
       source: resolve(name.value.trim(), choice?.value),
     });
-    const toggleFormat = () => { format.hidden = kind.value !== "time" || kind.disabled; };
+    const toggleFormat = () => { format.hidden = kind.value !== "time" || Boolean(readSelection().source); };
+    const updateExample = () => { example.textContent = usageFactorExample(factor.valueAsNumber); };
     const update = () => {
       const { source } = readSelection();
-      kind.disabled = Boolean(source);
+      kind.disabled = Boolean(source?.key.startsWith("custom-"));
       if (source) kind.value = sourceKind(source);
       if (!factor.dataset.edited) factor.value = source ? getFactor(source) : 1;
       toggleFormat();
+      updateExample();
     };
     name.addEventListener("input", update);
     choice?.addEventListener("change", update);
-    kind.addEventListener("change", toggleFormat);
-    factor.addEventListener("input", () => { factor.dataset.edited = "true"; });
+    kind.addEventListener("change", () => {
+      const { source } = readSelection();
+      if (source && !source.key.startsWith("custom-")) keepBuiltInKind(kind, source);
+      toggleFormat();
+    });
+    factor.addEventListener("input", () => { factor.dataset.edited = "true"; updateExample(); });
     update();
     return () => {
       const { label, source } = readSelection();
@@ -119,6 +148,10 @@
       const value = factor.dataset.edited ? factor.valueAsNumber : source ? getFactor(source) : 1;
       return { label, source, factor: value, kind: source ? sourceKind(source) : kind.value, format: format.querySelector("select").value };
     };
+  }
+
+  function usageFactorExample(value) {
+    return Number.isFinite(value) && value >= 0 ? `Пример: 1 × ${formatNumber(value, 6)} = ${formatNumber(value, 6)}` : "";
   }
 
   function newUsageSource({ label, kind, format, factor }) {
@@ -170,8 +203,7 @@
       <fieldset><legend>Поля записи работы</legend>
         ${sourceCheckboxes(aircraft)}
         <details id="board-add-source"><summary>Добавить показатель</summary>
-          <label>Название<input name="newSource" type="text" maxlength="80"></label>
-          ${sourceDefinitionFields()}
+          ${sourceDefinitionFields('<label>Название<input name="newSource" type="text" maxlength="80"></label>')}
         </details>
       </fieldset>
       <button class="primary-button">Сохранить показатели</button>
@@ -286,7 +318,17 @@
 
   function canCorrectShift(aircraft, shift) {
     return Boolean(shift?.beforeUsage && shift.afterUsage && shift === aircraft.shifts.at(-1) &&
-      JSON.stringify(shift.afterUsage) === JSON.stringify(usageSnapshot(aircraft)));
+      sameRecordedUsageKinds(aircraft, shift) && JSON.stringify(shift.afterUsage) === JSON.stringify(usageSnapshot(aircraft)));
+  }
+
+  function sameRecordedUsageKinds(aircraft, shift) {
+    const recorded = shift.customUsage ?? Object.entries(shift.raw || {})
+      .filter(([key, value]) => key.startsWith("custom-") && value !== "").map(([key]) => ({ key }));
+    return recorded.every(({ key, seconds, format }) => {
+      const source = customSources(aircraft).find((item) => item.key === key);
+      return source && sourceEnabled(aircraft, key) &&
+        (seconds == null ? sourceKind(source) === "count" : source.kind === "time" && source.format === format);
+    });
   }
 
   function usageRule(key, aircraft = selectedAircraft()) {
@@ -375,6 +417,7 @@
         typeSettings: state.typeSettings,
         aircraftTypes: state.aircraftTypes,
         archivedAircraftTypes: state.archivedAircraftTypes,
+        removedAircraftTypes: state.removedAircraftTypes,
         usageRules: state.usageRules,
         sharedGround: state.sharedGround,
         usageTypeOverrides: state.usageTypeOverrides,
@@ -392,6 +435,7 @@
     normalized.typeSettings = Array.isArray(raw?.typeSettings) ? raw.typeSettings : [];
     normalized.usageTypeOverrides = Array.isArray(raw?.usageTypeOverrides) ? raw.usageTypeOverrides : [];
     normalized.archivedAircraftTypes = Array.isArray(raw?.archivedAircraftTypes) ? raw.archivedAircraftTypes : [];
+    normalized.removedAircraftTypes = Array.isArray(raw?.removedAircraftTypes) ? raw.removedAircraftTypes : [];
     if (!Array.isArray(normalized.aircraft)) normalized.aircraft = [];
     normalized.aircraft = normalized.aircraft.map((aircraft) => ({
       ...aircraft,
@@ -435,7 +479,7 @@
       if (typeof value !== "string" || !value.trim()) continue;
       const name = value.trim();
       const key = name.toLowerCase();
-      if (!types.has(key)) types.set(key, name);
+      if (!types.has(key) && !normalized.removedAircraftTypes.includes(key)) types.set(key, name);
     }
     normalized.aircraftTypes = [...types.values()];
     for (const key of types.keys()) {
@@ -1820,9 +1864,12 @@
   }
 
   function aircraftTypeSelect(selected = "") {
-    const types = state.aircraftTypes.filter((name) => !isArchivedType(name) || name.toLowerCase() === selected.trim().toLowerCase());
+    const key = selected.trim().toLowerCase();
+    const types = state.aircraftTypes.filter((name) => !isArchivedType(name) || name.toLowerCase() === key);
+    const removed = state.removedAircraftTypes.includes(key);
+    if (removed) types.push(selected);
     return `<select name="type" required><option value="">Выбрать тип</option>${types.map((name) =>
-      `<option value="${escapeHtml(name)}" ${name.toLowerCase() === selected.trim().toLowerCase() ? "selected" : ""}>${escapeHtml(name)}</option>`
+      `<option value="${escapeHtml(name)}" ${name.toLowerCase() === key ? "selected" : ""}>${escapeHtml(name)}${removed && name === selected ? " · удалён из справочника" : ""}</option>`
     ).join("")}</select>`;
   }
 
@@ -1842,7 +1889,10 @@
       event.preventDefault();
       const data = Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, value.trim()]));
       const status = document.getElementById("board-details-status");
-      if (!state.aircraftTypes.includes(data.type) || !data.boardNumber) { status.textContent = "Укажи тип и бортовой номер."; return; }
+      if (!(data.type.toLowerCase() === aircraft.type.trim().toLowerCase() || activeAircraftTypes().includes(data.type)) || !data.boardNumber) {
+        status.textContent = "Укажи тип и бортовой номер.";
+        return;
+      }
       data.rfNumber = data.rfNumber.replace(/^RF[\s-]*/i, "");
       const previous = Object.fromEntries(Object.keys(data).map((key) => [key, aircraft[key]]));
       Object.assign(aircraft, data);
@@ -2304,6 +2354,8 @@
         ${shift.accruals?.length ? accrualSummary(shift.accruals) : `<p>${shift.accruals ? "Начислений по ресурсам нет." : "Для этой записи разбивка по ресурсам не сохранялась."}</p>`}
         <button class="secondary-button" id="open-shift-map">Карта начислений</button>
         ${canCorrectShift(aircraft, shift) ? `<button class="secondary-button" data-view="correct-shift">Исправить запись</button>` : ""}
+        ${shift === aircraft.shifts.at(-1) && shift.beforeUsage && !sameRecordedUsageKinds(aircraft, shift)
+          ? `<p class="field-help">Состав или единицы показателей изменились. В журнале сохранены исходные значения этой записи.</p>` : ""}
         ${(shift.revisions || []).map((revision) => `<details><summary>Предыдущая версия · ${escapeHtml(new Date(revision.correctedAt).toLocaleString("ru-RU"))}</summary>
           <p>Налёт: ${calc.formatDuration(Number(revision.raw.flightHours) * 60 + Number(revision.raw.flightMinutes))}</p>
           ${accrualSummary(revision.accruals || [])}</details>`).join("")}
@@ -2546,10 +2598,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.35</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.36</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.35", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.36", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -2604,9 +2656,8 @@
           <p>Пустое поле отключает начисление. Множитель переводит показатель в единицы этого ресурса.</p>
           <div id="resource-inputs" class="field-pair"></div>
           <details id="resource-add-source-panel"><summary>Добавить показатель смены</summary>
-            <label>Показатель<select id="resource-source-choice"></select></label>
-            <label>Или введи название<input id="resource-source-name" type="text" maxlength="80"></label>
-            ${sourceDefinitionFields()}
+            ${sourceDefinitionFields('<label>Название<input id="resource-source-name" type="text" maxlength="80"></label>',
+              '<label class="usage-source-choice">Из списка<select id="resource-source-choice"></select></label>')}
             <button type="button" class="secondary-button" id="resource-source-add">Добавить в смену</button>
           </details>
           ${aircraft.resources.some((item) => item !== resource) ? `<details><summary>Скопировать из другого агрегата</summary>
@@ -2844,10 +2895,13 @@
           <button type="submit" class="primary-button">Добавить тип</button>
         </form>
         <section class="settings-list" aria-label="Доступные типы">
-          ${types.map((name, index) => `<div class="setting-row"><strong>${escapeHtml(name)}</strong><button class="small-button" type="button" data-archive-type="${index}">В корзину</button></div>`).join("") || "<p>Доступных типов пока нет.</p>"}
+          ${types.map((name, index) => `<div class="setting-row type-catalog-card"><strong>${escapeHtml(name)}</strong><button class="type-archive-button" type="button" data-archive-type="${index}" aria-label="Переместить ${escapeHtml(name)} в корзину">×</button></div>`).join("") || "<p>Доступных типов пока нет.</p>"}
         </section>
         <details id="aircraft-type-trash" ${types.length ? "" : "open"}><summary>Корзина (${archived.length})</summary>
-          ${archived.map((name, index) => `<div class="setting-row"><strong>${escapeHtml(name)}</strong><button class="small-button" type="button" data-restore-type="${index}">Восстановить</button></div>`).join("") || "<p>Корзина пуста.</p>"}
+          ${archived.map((name, index) => `<div class="setting-row type-trash-row"><strong>${escapeHtml(name)}</strong>
+            <div class="type-trash-actions"><button class="small-button" type="button" data-restore-type="${index}">Восстановить</button>
+            <button class="small-button danger-button" type="button" data-delete-type="${index}">Стереть совсем</button></div>
+          </div>`).join("") || "<p>Корзина пуста.</p>"}
         </details>
       </section>`, { title: "Типы самолётов", back: true, settings: false });
     document.getElementById("aircraft-type-form").addEventListener("submit", (event) => {
@@ -2859,13 +2913,23 @@
         showToast(isArchivedType(name) ? "Тип уже в корзине. Его можно восстановить" : "Такой тип уже есть");
         return;
       }
-      state.aircraftTypes.push(name);
-      state.usageTypeOverrides.push({
+      const previous = {
+        removedAircraftTypes: state.removedAircraftTypes, usageTypeOverrides: state.usageTypeOverrides,
+        typeSettings: state.typeSettings, aircraftTypes: state.aircraftTypes,
+      };
+      if (state.removedAircraftTypes.includes(key) && state.aircraft.some((item) => item.type.trim().toLowerCase() === key)) {
+        showToast("Это название осталось у существующих бортов. Введи другое название");
+        return;
+      }
+      state.removedAircraftTypes = previous.removedAircraftTypes.filter((item) => item !== key);
+      state.typeSettings = previous.typeSettings.filter((item) => item.type.trim().toLowerCase() !== key);
+      state.aircraftTypes = [...previous.aircraftTypes, name];
+      state.usageTypeOverrides = [...previous.usageTypeOverrides.filter((item) => item.type !== key), {
         type: key, labels: { flight: USAGE_TYPES.flight, runway: "Посадки" },
         enabled: defaultUsageSources(),
-      });
+      }];
       if (saveState()) render();
-      else { state.aircraftTypes.pop(); state.usageTypeOverrides.pop(); showToast("Не удалось сохранить тип"); }
+      else { Object.assign(state, previous); showToast("Не удалось сохранить тип"); }
     });
     function changeArchive(name, archivedNow) {
       const previous = state.archivedAircraftTypes;
@@ -2876,11 +2940,33 @@
     }
     app.querySelectorAll("[data-archive-type]").forEach((button) => button.addEventListener("click", () => {
       const name = types[Number(button.dataset.archiveType)];
-      chooseLayoutAction("Переместить тип в корзину? Существующие борта сохранят его.",
+      chooseLayoutAction("Удалить тип в корзину? Существующие борта сохранят его.",
         [["archive", "В корзину"], ["cancel", "Отмена"]], (action) => { if (action === "archive") changeArchive(name, true); });
     }));
     app.querySelectorAll("[data-restore-type]").forEach((button) => button.addEventListener("click", () => {
       changeArchive(archived[Number(button.dataset.restoreType)], false);
+    }));
+    app.querySelectorAll("[data-delete-type]").forEach((button) => button.addEventListener("click", () => {
+      const name = archived[Number(button.dataset.deleteType)];
+      const key = name.toLowerCase();
+      const linked = state.aircraft.some((item) => item.type.trim().toLowerCase() === key);
+      const prompt = linked ? "Стереть тип из справочника? Существующие борта сохранят свои данные и правила расчёта." : "Стереть тип и его настройки из справочника?";
+      chooseLayoutAction(prompt, [["delete", "Стереть совсем"], ["cancel", "Отмена"]], (action) => {
+        if (action !== "delete") return;
+        const previous = {
+          aircraftTypes: state.aircraftTypes, archivedAircraftTypes: state.archivedAircraftTypes,
+          removedAircraftTypes: state.removedAircraftTypes, usageTypeOverrides: state.usageTypeOverrides, typeSettings: state.typeSettings,
+        };
+        state.aircraftTypes = previous.aircraftTypes.filter((item) => item !== name);
+        state.archivedAircraftTypes = previous.archivedAircraftTypes.filter((item) => item !== key);
+        if (linked) state.removedAircraftTypes = [...previous.removedAircraftTypes, key];
+        else {
+          state.usageTypeOverrides = previous.usageTypeOverrides.filter((item) => item.type !== key);
+          state.typeSettings = previous.typeSettings.filter((item) => item.type.trim().toLowerCase() !== key);
+        }
+        if (saveState()) render();
+        else { Object.assign(state, previous); showToast("Не удалось удалить тип"); }
+      });
     }));
   }
 
@@ -2931,20 +3017,22 @@
       collection.innerHTML = current.filter(({ key }) => enabled(key)).map((item) => {
         const { key } = item;
         const factor = draftFactor(item);
-        return `<fieldset><legend>${escapeHtml(currentLabel(item))}</legend>
-          <div class="field-pair type-usage-pair">
+        const kind = sourceKind(item);
+        const editableKind = key.startsWith("custom-");
+        return `<fieldset class="usage-source-card" aria-label="${escapeHtml(currentLabel(item))}">
+          <div class="usage-source-grid">
             <label>Название<input name="${key}Label" type="text" value="${escapeHtml(currentLabel(item))}" maxlength="80" required></label>
-            <label>Коэффициент<input name="${key}Factor" type="number" min="0" step="any" value="${factor}" required></label>
+            <label class="usage-coefficient">Коэффициент<input name="${key}Factor" type="number" min="0" step="any" value="${factor}" required></label>
+            <label>Категория<select name="${key}Kind" data-usage-kind="${key}">${usageKindOptions(kind)}</select></label>
+            ${editableKind ? `<label class="usage-time-format" ${kind === "time" ? "" : "hidden"}>Формат ввода<select name="${key}Format">${durationOptions(item.format)}</select></label>` : ""}
+            <small class="field-help usage-example">${usageFactorExample(factor)}</small>
+            <button type="button" class="small-button usage-remove" data-disable-source="${key}">Убрать</button>
           </div>
-          <p class="field-help">${sourceKind(item) === "time" ? "Время" : "Количество"}</p>
-          <small class="field-help">Пример: 1 × ${formatNumber(factor)} = ${formatNumber(factor)}</small>
-          <button type="button" class="small-button" data-disable-source="${key}">Убрать показатель</button>
         </fieldset>`;
       }).join("") + `<details id="type-add-source"><summary>Добавить показатель</summary>
-          ${available.length ? `<label>Из списка<select name="existingSource"><option value="">Выбрать</option>${available.map((item) =>
-            `<option value="${item.key}">${escapeHtml(currentLabel(item))}</option>`).join("")}</select></label>` : ""}
-          <label>Или введи название<input name="newSource" type="text" maxlength="80"></label>
-          ${sourceDefinitionFields()}
+          ${sourceDefinitionFields('<label>Название<input name="newSource" type="text" maxlength="80"></label>',
+            available.length ? `<label class="usage-source-choice">Из списка<select name="existingSource"><option value="">Выбрать</option>${available.map((item) =>
+              `<option value="${item.key}">${escapeHtml(currentLabel(item))}</option>`).join("")}</select></label>` : "")}
           <button type="button" class="secondary-button" id="type-add-source-button">Добавить показатель</button>
         </details>`;
       readSource = bindSourceDefinition(collection.querySelector("#type-add-source"), form.elements.newSource, form.elements.existingSource,
@@ -2959,6 +3047,12 @@
         const factor = form.elements.namedItem(`${key}Factor`).valueAsNumber;
         if (label !== currentLabel(item)) draft.labels[key] = label;
         if (factor !== draftFactor(item)) draft.factors[key] = factor;
+        if (key.startsWith("custom-")) {
+          const kind = form.elements.namedItem(`${key}Kind`).value;
+          if (kind !== sourceKind(item)) item.kind = kind;
+          if (kind === "time") item.format = form.elements.namedItem(`${key}Format`).value;
+          else delete item.format;
+        }
       }
     }
     function save() {
@@ -3034,10 +3128,17 @@
       const field = event.target;
       const row = field.closest("fieldset");
       if (!row) return;
-      if (field.name.endsWith("Label")) row.querySelector("legend").textContent = field.value;
+      if (field.name.endsWith("Label") && row.classList.contains("usage-source-card")) row.setAttribute("aria-label", field.value);
       if (field.name.endsWith("Factor")) {
-        const value = field.valueAsNumber;
-        row.querySelector("small").textContent = Number.isFinite(value) && value >= 0 ? `Пример: 1 × ${formatNumber(value)} = ${formatNumber(value)}` : "";
+        row.querySelector("small").textContent = usageFactorExample(field.valueAsNumber);
+      }
+    });
+    collection?.addEventListener("change", (event) => {
+      if (event.target.matches("[data-usage-kind]")) {
+        const key = event.target.dataset.usageKind;
+        if (!key.startsWith("custom-")) keepBuiltInKind(event.target, { key });
+        const format = event.target.closest("fieldset").querySelector(".usage-time-format");
+        if (format) format.hidden = event.target.value !== "time";
       }
     });
   }
@@ -3104,7 +3205,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.35</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.36</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -3259,10 +3360,9 @@
         ${sources.filter(({ key }) => sourceEnabled(draft, key)).map(({ key, label }) => `
           <div class="setting-row"><strong>${escapeHtml(label)}</strong><button type="button" class="small-button" data-creation-hide-source="${key}">Убрать</button></div>`).join("")}
         <details ${available.length === sources.length ? "open" : ""}><summary>Добавить показатель</summary>
-          ${available.length ? `<label>Из списка<select name="existingSource"><option value="">Выбрать</option>${available.map(({ key, label }) =>
-            `<option value="${key}">${escapeHtml(label)}</option>`).join("")}</select></label>` : ""}
-          <label>Или введи название<input name="newSource" type="text" maxlength="80"></label>
-          ${sourceDefinitionFields()}
+          ${sourceDefinitionFields('<label>Название<input name="newSource" type="text" maxlength="80"></label>',
+            available.length ? `<label class="usage-source-choice">Из списка<select name="existingSource"><option value="">Выбрать</option>${available.map(({ key, label }) =>
+              `<option value="${key}">${escapeHtml(label)}</option>`).join("")}</select></label>` : "")}
           <button type="button" class="secondary-button" id="creation-add-source">Добавить показатель</button>
         </details></fieldset>`;
       readSource = bindSourceDefinition(root.querySelector("details"), form.elements.newSource, form.elements.existingSource,

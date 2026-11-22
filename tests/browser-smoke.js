@@ -117,6 +117,13 @@ async function main() {
       choice.dispatchEvent(new Event('change'));
       const noCatalogInUsage = !document.querySelector('#aircraft-type-form, [data-archive-type], #aircraft-type-trash');
       const onlyMain = [...document.querySelectorAll('[data-disable-source]')].map(button => button.dataset.disableSource).join(',') === 'flight,runway';
+      const card = document.querySelector('[data-usage-kind="flight"]').closest('fieldset');
+      const nameBox = card.querySelector('[name="flightLabel"]').getBoundingClientRect();
+      const factorBox = card.querySelector('[name="flightFactor"]').getBoundingClientRect();
+      const categoryBox = card.querySelector('[name="flightKind"]').getBoundingClientRect();
+      const exampleBox = card.querySelector('.usage-example').getBoundingClientRect();
+      const compact = Math.abs(nameBox.top - factorBox.top) < 1 && factorBox.left > nameBox.right &&
+        categoryBox.top > nameBox.bottom && exampleBox.top > categoryBox.bottom && nameBox.width < card.clientWidth * 0.65;
       window.handleAndroidBack();
       window.handleAndroidBack();
       document.querySelector('[data-action="add-aircraft"]').click();
@@ -143,7 +150,7 @@ async function main() {
         h1: document.querySelector("h1")?.textContent,
         count: saved.aircraft.length,
         notifications: created?.notifications,
-        fullWidth, onlyMain, canHideFlight, noUsageInCatalog, firstByDefault, noCatalogInUsage,
+        fullWidth, onlyMain, canHideFlight, noUsageInCatalog, firstByDefault, noCatalogInUsage, compact,
         localSources: created.customUsageSources.map(source => source.label),
         localDefinition: created.customUsageSources.map(({kind, factor}) => [kind, factor]),
         localHooks: created.enabledUsageSources.arresterHooks,
@@ -156,6 +163,7 @@ async function main() {
     assert.equal(newAircraft.notifications, false);
     assert.ok(newAircraft.fullWidth && newAircraft.onlyMain && newAircraft.canHideFlight && newAircraft.localHooks);
     assert.ok(newAircraft.noUsageInCatalog && newAircraft.firstByDefault && newAircraft.noCatalogInUsage);
+    assert.ok(newAircraft.compact);
     assert.deepEqual(newAircraft.localSources, ["Циклы борта"]);
     assert.deepEqual(newAircraft.localDefinition, [["count", 2]]);
     assert.equal(newAircraft.activeTab, "aggregates");
@@ -400,14 +408,21 @@ async function main() {
       const hidesOptional = !rules.elements.touchFactor;
       rules.elements.existingSource.value = 'touch';
       rules.elements.existingSource.dispatchEvent(new Event('change'));
-      const fixedCategory = rules.querySelector('[data-source-kind]').disabled &&
-        rules.querySelector('[data-source-kind]').value === 'count';
+      const category = rules.querySelector('[data-source-kind]');
+      category.value = 'time';
+      category.dispatchEvent(new Event('change'));
+      const fixedCategory = category.value === 'count' && document.querySelector('.toast').textContent.includes('идентификатор подсчёта количества');
       const touchFactor = rules.querySelector('[data-source-factor]');
       touchFactor.value = '0.75';
       touchFactor.dispatchEvent(new Event('input'));
       document.querySelector('#type-add-source-button').click();
       rules.elements.newSource.value = 'Осмотры';
       document.querySelector('#type-add-source-button').click();
+      const customCard = [...rules.querySelectorAll('.usage-source-card')].find(card => card.getAttribute('aria-label') === 'Осмотры');
+      const customKind = customCard.querySelector('[data-usage-kind]');
+      customKind.value = 'time';
+      customKind.dispatchEvent(new Event('change', { bubbles: true }));
+      customCard.querySelector('.usage-time-format select').value = 'seconds';
       rules.elements.newSource.value = 'Проверка времени';
       const kind = rules.querySelector('[data-source-kind]');
       kind.value = 'time';
@@ -464,10 +479,12 @@ async function main() {
       runway.dispatchEvent(new Event('input', { bubbles: true }));
       const applies = document.querySelector('#shift-summary').textContent.includes('Зачёт посадок: 5,75');
       window.handleAndroidBack();
-      return { archived, omitted, inherited, applies, hidesOptional, emptyState, fixedCategory, template: read().usageTypeOverrides.find(entry => entry.type === 'миг-29').factors.runway,
+      const profile = read().usageTypeOverrides.find(entry => entry.type === 'миг-29');
+      const editedCategory = profile.customSources.some(source => source.label === 'Осмотры' && source.kind === 'time' && source.format === 'seconds');
+      return { archived, omitted, inherited, applies, hidesOptional, emptyState, fixedCategory, editedCategory, template: profile.factors.runway,
         restored: !read().archivedAircraftTypes.includes('миг-29'), newAircraft: read().aircraft.find(item => item.boardNumber === '43').type };
     })()`);
-    assert.deepEqual(typeSettings, { archived: true, omitted: true, inherited: true, applies: true, hidesOptional: true, emptyState: true, fixedCategory: true,
+    assert.deepEqual(typeSettings, { archived: true, omitted: true, inherited: true, applies: true, hidesOptional: true, emptyState: true, fixedCategory: true, editedCategory: true,
       template: 2.5, restored: true, newAircraft: "МиГ-29" });
     results.typeSettings = "ok";
     const savedUsageName = await evaluate(`(async () => {
@@ -489,6 +506,10 @@ async function main() {
     const namedUsage = await evaluate(`(() => {
       const type = document.querySelector('#usage-aircraft-type').value;
       let form = document.querySelector('#usage-settings-form');
+      form.elements.flightKind.value = 'count';
+      form.elements.flightKind.dispatchEvent(new Event('change', { bubbles: true }));
+      const renamedCounter = form.elements.flightLabel.value === 'Полётное время' && form.elements.flightKind.value === 'time' &&
+        document.querySelector('.toast').textContent.includes('идентификатор подсчёта времени');
       const wasOff = !form.elements.touchFactor && [...form.elements.existingSource.options].some(option => option.value === 'touch');
       form.elements.newSource.value = ' КАСАНИЯ ';
       document.querySelector('#type-add-source-button').click();
@@ -518,9 +539,9 @@ async function main() {
       window.handleAndroidBack();
       document.querySelector('[data-action="settings"]').click();
       document.querySelector('[data-view="usage-settings"]').click();
-      return { type, wasOff, addedByName, enabled, blocksDuplicate, reused, appearsInWork };
+      return { type, wasOff, addedByName, enabled, blocksDuplicate, reused, appearsInWork, renamedCounter };
     })()`);
-    assert.deepEqual(namedUsage, { type: "Су-33", wasOff: true, addedByName: true, enabled: true, blocksDuplicate: true, reused: true, appearsInWork: true });
+    assert.deepEqual(namedUsage, { type: "Су-33", wasOff: true, addedByName: true, enabled: true, blocksDuplicate: true, reused: true, appearsInWork: true, renamedCounter: true });
     results.usageSourceByName = "ok";
     const layoutResult = await evaluate(`(async () => {
       window.handleAndroidBack();
@@ -1242,6 +1263,73 @@ async function main() {
       tileAudit[tab] = await audit;
     }
     results.tileResizeAudit = tileAudit;
+
+    const typeDeletion = await evaluate(`(async () => {
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
+      const press = async (choice) => {
+        const dialog = document.querySelector('dialog[open]');
+        await new Promise(resolve => {
+          dialog.addEventListener('close', resolve, { once: true });
+          dialog.querySelector('[value="' + choice + '"]').click();
+        });
+      };
+      const find = (selector, label) => [...document.querySelectorAll(selector)].find(button => button.closest('.setting-row').querySelector('strong').textContent === label);
+      const board = () => read().aircraft.find(item => item.boardNumber === '85');
+      window.handleAndroidBack();
+      document.querySelector('[data-action="settings"]').click();
+      document.querySelector('[data-view="aircraft-types"]').click();
+      const before = JSON.stringify(board());
+      const profile = JSON.stringify(read().usageTypeOverrides.find(row => row.type === 'су-33'));
+      const close = find('[data-archive-type]', 'Су-33');
+      const cross = close.textContent.trim() === '×' && getComputedStyle(close).position === 'absolute' &&
+        Number.parseFloat(getComputedStyle(close).borderRadius) >= 50;
+      close.click();
+      await press('cancel');
+      const cancelArchive = Boolean(find('[data-archive-type]', 'Су-33'));
+      find('[data-archive-type]', 'Су-33').click();
+      await press('archive');
+      document.querySelector('#aircraft-type-trash summary').click();
+      const inTrash = Boolean(find('[data-restore-type]', 'Су-33')) && !find('[data-archive-type]', 'Су-33');
+      find('[data-delete-type]', 'Су-33').click();
+      await press('cancel');
+      const cancelDelete = Boolean(find('[data-delete-type]', 'Су-33'));
+      find('[data-delete-type]', 'Су-33').click();
+      await press('delete');
+      const removed = !find('[data-delete-type]', 'Су-33') && !read().aircraftTypes.includes('Су-33');
+      const intact = JSON.stringify(board()) === before && JSON.stringify(read().usageTypeOverrides.find(row => row.type === 'су-33')) === profile;
+      const typeForm = document.querySelector('#aircraft-type-form');
+      typeForm.elements.type.value = 'Пробный тип';
+      typeForm.requestSubmit();
+      find('[data-archive-type]', 'Пробный тип').click();
+      await press('archive');
+      document.querySelector('#aircraft-type-trash summary').click();
+      find('[data-delete-type]', 'Пробный тип').click();
+      await press('delete');
+      const unusedPurged = !read().aircraftTypes.includes('Пробный тип') &&
+        !read().usageTypeOverrides.some(row => row.type === 'пробный тип');
+      return { cross, cancelArchive, inTrash, cancelDelete, removed, intact, unusedPurged };
+    })()`);
+    assert.deepEqual(typeDeletion, { cross: true, cancelArchive: true, inTrash: true, cancelDelete: true, removed: true, intact: true, unusedPurged: true });
+    await command("Page.reload");
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (await evaluate("Boolean(document.querySelector('[data-action=add-aircraft]'))").catch(() => false)) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const typeDeletionAfterReload = await evaluate(`(() => {
+      document.querySelector('[data-action="add-aircraft"]').click();
+      const omitted = ![...document.querySelector('#creation-form [name="type"]').options].some(option => option.value === 'Су-33');
+      window.handleAndroidBack();
+      document.querySelector('[data-board-menu="board-details"]').click();
+      const form = document.querySelector('#board-details-form');
+      const retained = form.elements.type.value === 'Су-33' && form.elements.type.selectedOptions[0].textContent.includes('удалён из справочника');
+      form.elements.rfNumber.value = '33738';
+      form.requestSubmit();
+      const saved = Boolean(document.querySelector('[data-aircraft-id]')) && JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'))
+        .aircraft.some(board => board.type === 'Су-33' && board.blocks.length > 0);
+      return { omitted, retained, saved };
+    })()`);
+    assert.deepEqual(typeDeletionAfterReload, { omitted: true, retained: true, saved: true });
+    results.typeDeletion = "ok";
 
     process.stdout.write(`${JSON.stringify(results)}\n`);
   } finally {

@@ -221,8 +221,21 @@ button.setting-row { cursor: pointer; }
 .type-usage details, #creation-usage details { padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
 .type-usage details > :not(summary), #creation-usage details > :not(summary) { margin-top: 10px; }
 .type-usage summary, #creation-usage summary { padding: 7px 0; cursor: pointer; }
-.type-usage-pair { grid-template-columns: minmax(0, 3fr) minmax(92px, 1fr); align-items: end; }
-.source-definition [hidden] { display: none; }
+.usage-source-card { min-width: 0; padding: 11px 12px; }
+.usage-source-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 7px 11px; align-items: start; }
+.usage-source-grid > label { min-width: 0; gap: 4px; }
+.usage-source-grid input, .usage-source-grid select { min-width: 0; min-height: 36px; padding-inline: 8px; }
+.usage-source-grid label > :is(input, select) { width: min(100%, 14rem); }
+.usage-source-grid .usage-coefficient { grid-column: 2; justify-self: end; width: min(100%, 8rem); }
+.usage-source-grid .usage-source-choice { grid-column: 1 / -1; }
+.usage-source-grid .usage-example { grid-column: 1; align-self: center; }
+.usage-source-grid .usage-remove { grid-column: 2; justify-self: end; }
+.usage-source-grid [hidden] { display: none; }
+#type-usage-fields { gap: 9px; }
+#usage-aircraft-type { width: min(100%, 22rem); }
+.type-catalog-card { position: relative; min-height: 58px; padding: 12px 58px 12px 14px; align-items: center; overflow-wrap: anywhere; }
+.type-archive-button { position: absolute; top: 6px; right: 6px; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--red-soft); color: var(--red); font-size: 24px; cursor: pointer; }
+.type-trash-row, .type-trash-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 #aircraft-type-form label { width: 100%; }
 .settings-section-heading { margin-top: 28px; }
 .compact-metrics { margin: 4px 0 0; }
