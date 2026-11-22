@@ -267,3 +267,106 @@ button.setting-row { cursor: pointer; }
   .toast { animation: toast-in .2s ease-out; }
   @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
 }
+.operation-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.operation-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+
+.accrual-items {
+  display: grid;
+  gap: 10px;
+  padding-inline-start: 22px;
+}
+
+.accrual-items li > :is(strong, span, small) {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.usage-map-scroll {
+  max-height: 65vh;
+  overflow: auto;
+  border: 1px solid #8794a8;
+  border-radius: 12px;
+}
+
+.usage-map-canvas {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, max-content);
+  justify-items: start;
+  align-items: start;
+  gap: 110px;
+  padding: 52px 134px 110px 88px;
+  width: max-content;
+}
+
+.map-origin, .map-sources, .map-targets {
+  display: grid;
+  gap: 18px;
+  justify-items: start;
+}
+
+.map-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.map-wire {
+  stroke: #728397;
+  stroke-width: 1;
+}
+
+.map-wire--muted {
+  stroke: #be6037;
+  stroke-dasharray: 4 4;
+}
+
+.map-wire--selected {
+  stroke: #428ce7;
+  stroke-width: 2;
+}
+
+.map-node {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  text-align: left;
+  max-width: 215px;
+  padding: 7px 10px;
+  border: 1px solid #8192a9;
+  border-radius: 8px;
+  color: #152b42;
+  background: #f4f8fd;
+  overflow-wrap: anywhere;
+}
+
+.map-node--linked { box-shadow: 0 0 9px #38a968a8; }
+.map-node--unlinked { box-shadow: 0 0 9px #ea724aaf; }
+.map-node--selected { outline: 2px solid #428ce7; }
+
+.map-node-caption, .map-node-tools button {
+  background: transparent;
+  color: inherit;
+  border: none;
+  padding: 4px;
+  text-align: left;
+}
+
+.map-node-caption small { display: block; }
+.map-node-tools { display: flex; }
+.map-node-tools [data-map-grip] { touch-action: none; cursor: grab; }

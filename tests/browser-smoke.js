@@ -311,6 +311,11 @@ async function main() {
       document.querySelector('[data-action="back"]').click();
       document.querySelector('[data-aircraft-tab="works"]').click();
       document.querySelector('[data-view="shift"]').click();
+      const inputs = document.querySelector('#shift-form');
+      inputs.elements.flightHours.value = '1';
+      inputs.elements.leftGround.value = '13';
+      inputs.elements.rightGround.value = '13';
+      inputs.elements.leftGround.dispatchEvent(new Event('input', { bubbles: true }));
       return {
         h1: document.querySelector("h1")?.textContent,
         left: document.querySelector('#left-calculation')?.textContent,
@@ -320,7 +325,7 @@ async function main() {
         separateModes: Boolean(document.querySelector('[name="leftCombinedMode"]') && document.querySelector('[name="rightCombinedMode"]'))
       };
     })()`);
-    assert.equal(shift.h1, "Лётная смена");
+    assert.equal(shift.h1, "Новая запись работы");
     assert.match(shift.left, /13 → 15 мин → 20% = 3 мин/);
     assert.match(shift.summary, /Левый: 1:03 · Правый: 1:03/);
     assert.equal(shift.hooks && shift.starts && shift.separateModes, true);
@@ -354,7 +359,7 @@ async function main() {
       [...document.querySelectorAll('[data-aircraft-id]')].find(item => item.textContent.includes('борт 42')).click();
       document.querySelector('[data-action="settings"]').click();
       const rules = document.querySelector('#aircraft-rules-form');
-      rules.elements.groundPercent.value = '25';
+      rules.elements.runway.value = '2.5';
       rules.requestSubmit();
       document.querySelector('[data-action="back"]').click();
       document.querySelector('[data-action="back"]').click();
@@ -364,10 +369,10 @@ async function main() {
       form.elements.boardNumber.value = '43';
       form.requestSubmit();
       const saved = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
-      return { template: saved.typeSettings.find(entry => entry.type === 'МиГ-29').settings.groundPercent,
-        newAircraft: saved.aircraft.find(item => item.boardNumber === '43').settings.groundPercent };
+      return { template: saved.typeSettings.find(entry => entry.type === 'МиГ-29').settings.landingCoefficients.runway,
+        newAircraft: saved.aircraft.find(item => item.boardNumber === '43').settings.landingCoefficients.runway };
     })()`);
-    assert.deepEqual(typeSettings, { template: 25, newAircraft: 25 });
+    assert.deepEqual(typeSettings, { template: 2.5, newAircraft: 2.5 });
     results.typeSettings = "ok";
     const savedUsageName = await evaluate(`(async () => {
       document.querySelector('[data-action="back"]').click();
@@ -605,6 +610,103 @@ async function main() {
       extraEngine: [[63, 9]], unitPprAdded: 60, resetPpr: 0, resetModes: [0, 0], keepsSne: true, previousPpr: 63,
     });
     results.repairUsage = "ok";
+
+    const routing = await evaluate(`(() => {
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft.find(board => board.boardNumber === '42');
+      const click = selector => document.querySelector(selector).click();
+      const openBlock = name => [...document.querySelectorAll('.aircraft-tab-panel [data-block-id]')].find(item => item.textContent.includes(name)).click();
+      const submit = selector => document.querySelector(selector).requestSubmit();
+      click('[data-action="settings"]');
+      click('[data-view="board-usage"]');
+      document.querySelector('#board-usage-form [value="arresterHooks"]').checked = false;
+      submit('#board-usage-form');
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      click('[data-aircraft-tab="aggregates"]');
+      click('[data-action="add-block"]');
+      const blockForm = document.querySelector('#creation-form');
+      blockForm.elements.name.value = 'ГАК';
+      blockForm.elements.serialNumber.value = 'G-456';
+      submit('#creation-form');
+      openBlock('ГАК');
+      click('[data-action="add-resource"]');
+      const resource = document.querySelector('#resource-form');
+      resource.elements.name.value = 'Ресурс по зацепам';
+      resource.elements.limit.value = '50';
+      resource.elements.remaining.value = '50';
+      resource.elements.unit.value = 'пос.';
+      resource.elements.unit.dispatchEvent(new Event('change'));
+      document.querySelector('#resource-source-choice').value = 'arresterHooks';
+      click('#resource-source-add');
+      document.querySelector('[data-source="arresterHooks"]').value = '2';
+      submit('#resource-form');
+      window.handleAndroidBack();
+      click('[data-view="correct-usage"]');
+      const correction = document.querySelector('#correct-usage-form');
+      correction.elements.repairs.value = '2';
+      correction.elements.repairs.dispatchEvent(new Event('input'));
+      correction.elements.sneMinutes.value = '420';
+      correction.elements.pprMinutes.value = '60';
+      submit('#correct-usage-form');
+      const historical = document.querySelector('#historical-repair-form');
+      historical.elements.number.value = '2';
+      historical.elements.sneMinutes.value = '360';
+      historical.elements.sneLandings.value = '48';
+      submit('#historical-repair-form');
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      click('[data-view="usage-map"]');
+      const block = read().blocks.find(item => item.name === 'ГАК');
+      click('[data-map-select="' + block.id + '"]');
+      const map = document.querySelector('#map-details').textContent.includes('× 2');
+      const connected = document.querySelector('[data-map-target="' + block.id + '"]').classList.contains('map-node--linked');
+      window.handleAndroidBack();
+      click('[data-aircraft-tab="aggregates"]');
+      openBlock('Правый двигатель');
+      const engineForm = document.querySelector('#block-form');
+      engineForm.elements.groundPercent.value = '40';
+      submit('#block-form');
+      window.handleAndroidBack();
+      openBlock('Гидронасос');
+      click('[data-action="add-resource"]');
+      const copyFrom = document.querySelector('#resource-copy-from');
+      copyFrom.value = read().resources.find(item => item.object === 'ГАК').id;
+      click('#resource-copy-limit');
+      click('#resource-copy-inputs');
+      const copied = document.querySelector('#resource-form').elements.limit.value === '50' &&
+        document.querySelector('[data-source="arresterHooks"]').value === '2';
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      click('[data-view="shift"]');
+      const form = document.querySelector('#shift-form');
+      form.elements.flightHours.value = '1';
+      form.elements.arresterHooks.value = '1';
+      form.elements.rightFlight.value = '30';
+      form.elements.rightGround.value = '13';
+      form.elements.operationType.value = '2';
+      form.elements.arresterHooks.dispatchEvent(new Event('input', { bubbles: true }));
+      const preview = document.querySelector('#shift-summary').textContent.includes('Расход 2');
+      submit('#shift-form');
+      click('[data-aircraft-tab="works"]');
+      click('[data-shift-id]');
+      click('[data-view="correct-shift"]');
+      const revise = document.querySelector('#shift-form');
+      revise.elements.arresterHooks.value = '2';
+      submit('#shift-form');
+      const board = read();
+      const shift = board.shifts.at(-1);
+      const saved = board.resources.find(item => item.object === 'ГАК');
+      const hook = board.blocks.find(item => item.name === 'ГАК');
+      return { map, connected, preview, copied, amount: shift.accruals.find(item => item.resourceId === saved.id).amount,
+        remaining: saved.remaining, previous: shift.revisions[0].raw.arresterHooks, kind: shift.operationLabel,
+        rightFlight: shift.engineAccruals.find(item => item.blockId === 'engine-right').flightMinutes,
+        rightTotal: shift.engineAccruals.find(item => item.blockId === 'engine-right').minutes,
+        historyBeforeRepair: hook.historicalRepairs[2].beforeRepair.sneMinutes, repairs: hook.repairs,
+        hookPpr: hook.pprMinutes };
+    })()`);
+    assert.deepEqual(routing, { map: true, connected: true, preview: true, copied: true, amount: 4, remaining: 46, previous: '1',
+      kind: 'Руление', rightFlight: 30, rightTotal: 36, historyBeforeRepair: 360, repairs: 2, hookPpr: 120 });
+    results.resourceRouting = "ok";
 
     process.stdout.write(`${JSON.stringify(results)}\n`);
   } finally {

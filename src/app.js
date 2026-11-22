@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.26";
+  const APP_VERSION = "0.2.27";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -43,6 +43,134 @@
     circuit: "Конвейер", arresterHooks: "Зацепы за аэрофинишер",
   };
   const OPTIONAL_USAGE_TYPES = ["runway", "carrier", "touch", "circuit", "arresterHooks"];
+  const DEFAULT_OPERATION_TYPES = ["Лётная смена", "КОД", "Руление"].map((label, index) => ({ id: String(index), label }));
+  const id = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const ENGINE_SOURCES = { engineMinutes: "Общая наработка двигателя, ч", starts: "Запуски", maximum: "Максимал, с", afterburner: "Форсаж, с", or: "ОР, с", combat: "Б, с", combined: "Б + УБ, с" };
+
+  function usageSources(aircraft, owner) {
+    const sources = [
+      { key: "flight", label: `${usageRule("flight").label}, ч` },
+      ...OPTIONAL_USAGE_TYPES.map((key) => ({ key, label: usageRule(key).label })),
+      ...(aircraft.customUsageSources || []),
+    ];
+    if (owner?.kind === "engine") sources.push(...Object.entries(ENGINE_SOURCES).map(([key, label]) => ({ key, label })));
+    return sources;
+  }
+
+  function sourceEnabled(aircraft, key) {
+    return aircraft.enabledUsageSources?.[key] ?? (usageRule(key).enabled !== false);
+  }
+
+  function sourceCheckboxes(aircraft = {}) {
+    return usageSources(aircraft).map(({ key, label }) => `
+      <label class="checkbox-row"><input type="checkbox" name="usageSource" value="${key}" ${sourceEnabled(aircraft, key) ? "checked" : ""}><span>${escapeHtml(label)}</span></label>`
+    ).join("");
+  }
+
+  function enabledSourcesFromForm(aircraft, data) {
+    const enabled = new Set(data.getAll("usageSource"));
+    return Object.fromEntries(usageSources(aircraft).map(({ key }) => [key, enabled.has(key)]));
+  }
+
+  function renderBoardUsage() {
+    const aircraft = selectedAircraft();
+    app.innerHTML = shell(`<form id="board-usage-form" class="shift-form">
+      <fieldset><legend>Поля записи работы</legend>
+        ${sourceCheckboxes(aircraft)}
+        <label>Новый показатель<input name="newSource" maxlength="80"></label>
+      </fieldset>
+      <button class="primary-button">Сохранить показатели</button>
+    </form>`, { title: "Показатели работы", back: true, settings: false });
+    document.getElementById("board-usage-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget);
+      const previous = [aircraft.enabledUsageSources, aircraft.customUsageSources];
+      aircraft.enabledUsageSources = enabledSourcesFromForm(aircraft, data);
+      const label = data.get("newSource").trim();
+      if (label) aircraft.customUsageSources = [...(aircraft.customUsageSources || []), { key: `custom-${id()}`, label }];
+      if (saveState()) render();
+      else { [aircraft.enabledUsageSources, aircraft.customUsageSources] = previous; showToast("Не удалось сохранить показатели"); }
+    });
+  }
+
+  function resourceOwner(aircraft, resource) {
+    if (resource.objectId) return aircraft.blocks.find((block) => block.id === resource.objectId);
+    return aircraft.blocks.find((block) => block.name === resource.object);
+  }
+
+  function resourceInputs(resource, owner) {
+    if (resource.unit === "дн.") return {};
+    if (resource.consumption) return resource.consumption;
+    if (resource.unit === "ч") return { [owner?.kind === "engine" ? "engineMinutes" : "flight"]: 1 };
+    if (resource.unit === "зап." && owner?.kind === "engine") return { starts: 1 };
+    return {};
+  }
+
+  function blockInstalledOn(block, date) {
+    const installations = (block.events || []).filter((entry) => ["install", "dismantle"].includes(entry.type) && entry.date)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const latest = installations.filter((entry) => entry.date <= date).at(-1);
+    if (latest) return latest.type === "install";
+    if (installations.length) return installations[0].type === "dismantle";
+    return block.installed !== false;
+  }
+
+  function countsTowardPpr(block, date) {
+    if (!(block?.repairs > 0)) return false;
+    const laterRepair = (block.events || []).some((event) => event.type === "repair" && event.date > date);
+    return !laterRepair && !Object.values(block.historicalRepairs || {}).some((event) => event.date > date);
+  }
+
+  function resourceAccruals(aircraft, date, sources, engineUsage) {
+    return aircraft.resources.flatMap((resource) => {
+      const owner = resourceOwner(aircraft, resource);
+      if ((!owner && resource.objectId) || (owner && !blockInstalledOn(owner, date)) ||
+        (resource.installed && resource.installed > date)) return [];
+      const engine = engineUsage.get(owner);
+      const values = { ...sources };
+      if (engine) Object.assign(values, {
+        engineMinutes: engine.minutes / 60, starts: engine.starts, maximum: engine.maximumSeconds,
+        afterburner: engine.afterburnerSeconds, ...engine.modes,
+      });
+      const inputs = Object.entries(resourceInputs(resource, owner)).filter(([key, factor]) => factor > 0 && values[key] != null)
+        .map(([key, factor]) => ({ key, input: values[key], factor, amount: values[key] * factor }));
+      const amount = inputs.reduce((sum, item) => sum + item.amount, 0);
+      if (!amount) return [];
+      return [{ resourceId: resource.id, blockId: owner?.kind === "airframe" ? null : owner?.id, name: resource.name, object: resource.object, unit: resource.unit,
+        priority: resource.priority === true,
+        labels: Object.fromEntries(usageSources(aircraft, owner).map(({ key, label }) => [key, label])),
+        inputs, amount, remaining: Math.max(0, resource.remaining - amount) }];
+    });
+  }
+
+  const BOARD_COUNTERS = ["totalFlightMinutes", "actualLandings", "pprFlightMinutes", "pprLandings", "equivalentLandings", "arresterHooks"];
+  const BLOCK_COUNTERS = ["sneMinutes", "sneLandings", "pprMinutes", "pprLandings", "starts", "pprStarts", "maximumSeconds",
+    "pprMaximumSeconds", "afterburnerSeconds", "pprAfterburnerSeconds", "modesSeconds", "pprModesSeconds"];
+
+  function usageSnapshot(aircraft) {
+    const pick = (item, keys) => Object.fromEntries(keys.map((key) => [key, structuredClone(item[key] ?? null)]));
+    return {
+      board: pick(aircraft, BOARD_COUNTERS),
+      blocks: aircraft.blocks.map((block) => ({ id: block.id, repairs: block.repairs, values: pick(block, BLOCK_COUNTERS) })),
+      resources: aircraft.resources.filter((resource) => resource.unit !== "дн.").map((resource) =>
+        ({ id: resource.id, limit: resource.limit, remaining: resource.remaining })),
+    };
+  }
+
+  function restoreUsage(aircraft, snapshot) {
+    Object.assign(aircraft, snapshot.board);
+    for (const entry of snapshot.blocks) Object.assign(aircraft.blocks.find((block) => block.id === entry.id), entry.values);
+    for (const entry of snapshot.resources) {
+      const resource = aircraft.resources.find((item) => item.id === entry.id);
+      resource.remaining = entry.remaining;
+      resource.status = resourceStatus(resource.remaining, resource.limit);
+    }
+  }
+
+  function canCorrectShift(aircraft, shift) {
+    return Boolean(shift?.beforeUsage && shift.afterUsage && shift === aircraft.shifts.at(-1) &&
+      JSON.stringify(shift.afterUsage) === JSON.stringify(usageSnapshot(aircraft)));
+  }
 
   function usageRule(key) {
     return state.usageRules?.[key] ?? {
@@ -237,9 +365,14 @@
     else if (state.view === "board-details") renderBoardDetails();
     else if (state.view === "board-image") renderBoardImage();
     else if (state.view === "block") renderBlock();
+    else if (state.view === "correct-usage") renderUsageCorrection();
+    else if (state.view === "usage-map") renderUsageMap();
+    else if (state.view === "board-usage") renderBoardUsage();
+    else if (state.view === "shift-entry") renderShiftEntry();
     else if (state.view === "resource-editor") renderResourceEditor();
     else if (state.view === "resources") renderResources();
     else if (state.view === "shift") renderShift();
+    else if (state.view === "correct-shift") renderShift(true);
     else if (state.view === "reports") renderReports();
     else if (state.view === "settings") renderSettings();
     else if (state.view === "aircraft-types") renderAircraftTypes();
@@ -337,10 +470,10 @@
     const blocks = aircraft.blocks.filter((block) => block.kind !== "airframe").map(renderBlockTile).join("");
 
     const recentShifts = aircraft.shifts.slice(-3).reverse().map((shift) => `
-      <article class="history-row">
-        <div><strong>${formatDate(shift.date)}</strong><span>${calc.formatDuration(shift.flightMinutes)} полёта · ${shift.actualLandings} посадок</span></div>
-        <div class="history-row__value">+${calc.formatDuration(shift.leftEngineMinutes)}</div>
-      </article>`).join("");
+      <button class="history-row" data-shift-id="${escapeHtml(shift.id)}">
+        <div><strong>${formatDate(shift.date)} · ${escapeHtml(shift.operationLabel || "Лётная смена")}</strong><span>${calc.formatDuration(shift.flightMinutes)} полёта · ${shift.actualLandings} посадок</span></div>
+        ${icon("chevron")}
+      </button>`).join("");
 
     const isWork = (item) => item.notificationCategory === "workUsage" || item.notificationCategory === "workDate";
     const leastReliableResources = aircraft.resources
@@ -382,9 +515,10 @@
       <div class="aircraft-actions">
         ${aircraftForms.map(renderBlockTile).join("")}
         <button class="secondary-button" data-view="resources">${icon("resource")} Остатки ресурсов</button>
-        <button class="primary-button" data-view="shift">${icon("log")} Внести лётную смену</button>
+        <button class="primary-button" data-view="shift">${icon("log")} Внести работу</button>
       </div>
       <section class="aircraft-tab-panel">${tabContent}</section>
+      <button class="add-block-button" data-view="usage-map">Карта наработки</button>
     `, { title: `${aircraft.type} · Борт ${aircraft.boardNumber}`, subtitle: "", boardIds: aircraft,
       singleLine: true, back: true, settings: !layoutEditing, settingsScope: "aircraft" });
     const panel = app.querySelector(".aircraft-tab-panel");
@@ -1055,36 +1189,92 @@
       .map((block, index) => [`extraEngine${index}`, block]);
   }
 
-  function renderShift() {
+  function bindOperationPicker(aircraft, previousType) {
+    const picker = document.getElementById("operation-picker");
+    const form = picker.closest("form");
+    form.prepend(picker);
+    const options = aircraft.operationTypes || DEFAULT_OPERATION_TYPES;
+    let active = options.some((item) => item.id === previousType) ? previousType : aircraft.defaultOperationType || options[0]?.id;
+    const draw = () => {
+      const types = aircraft.operationTypes || DEFAULT_OPERATION_TYPES;
+      picker.innerHTML = `<fieldset><legend>Вид работы</legend>
+        <div class="operation-tags">${types.map(({ id, label }) => `<label class="operation-tag"><input type="radio" name="operationType" value="${id}" ${active === id ? "checked" : ""} required><span>${escapeHtml(label)}</span></label>`).join("")}</div>
+        <details><summary>Настроить виды работы</summary>
+          <label>Название<input id="operation-label" maxlength="80"></label>
+          <div class="operation-tags"><button class="secondary-button" type="button" data-type-action="add">Добавить</button>
+          <button class="secondary-button" type="button" data-type-action="rename">Переименовать</button>
+          <button class="secondary-button" type="button" data-type-action="default">По умолчанию</button>
+          <button class="secondary-button" type="button" data-type-action="remove">Удалить</button></div>
+          <small>По умолчанию: ${escapeHtml(types.find((item) => item.id === aircraft.defaultOperationType)?.label || types[0].label)}</small>
+        </details></fieldset>`;
+      picker.querySelectorAll('input[name="operationType"]').forEach((input) => input.addEventListener("change", () => { active = input.value; }));
+      picker.querySelectorAll("[data-type-action]").forEach((button) => button.addEventListener("click", () => {
+        const action = button.dataset.typeAction;
+        const label = picker.querySelector("#operation-label").value.trim();
+        if (["add", "rename"].includes(action) && !label) { showToast("Введи название вида работы"); return; }
+        if (action === "remove" && types.length === 1) { showToast("Оставь хотя бы один вид работы"); return; }
+        const backup = [aircraft.operationTypes, aircraft.defaultOperationType, active];
+        if (action === "add") {
+          active = id();
+          aircraft.operationTypes = [...types, { id: active, label }];
+        } else if (action === "rename") aircraft.operationTypes = types.map((item) => item.id === active ? { ...item, label } : item);
+        else if (action === "default") aircraft.defaultOperationType = active;
+        else {
+          aircraft.operationTypes = types.filter((item) => item.id !== active);
+          if (aircraft.defaultOperationType === active) aircraft.defaultOperationType = aircraft.operationTypes[0].id;
+          active = aircraft.operationTypes[0].id;
+        }
+        if (!saveState()) {
+          [aircraft.operationTypes, aircraft.defaultOperationType, active] = backup;
+          showToast("Не удалось сохранить виды работы");
+        }
+        draw();
+        picker.querySelector("details").open = true;
+      }));
+    };
+    draw();
+  }
+
+  function renderShift(editing = false) {
     const aircraft = selectedAircraft();
+    const correction = editing ? aircraft.shifts.find((shift) => shift.id === state.selectedShiftId) : null;
+    if (editing && !canCorrectShift(aircraft, correction)) {
+      showToast("Показания после этой записи уже изменились");
+      navigateBack();
+      return;
+    }
     const typeRule = usageTypeOverride(aircraft);
-    const ground = typeRule?.ground ?? state.sharedGround ?? aircraft.settings;
     const ruleSource = typeRule ? "Правила типа" : state.sharedGround ? "Общие правила" : "Настройки борта";
     const today = new Date();
     const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     app.innerHTML = shell(`
       <section class="page-heading compact">
-        <div><p class="eyebrow">Новая запись</p><h1>Лётная смена</h1><p>${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><p class="field-help">${ruleSource}</p></div>
+        <div><h1>${correction ? "Исправить запись работы" : "Новая запись работы"}</h1><p>${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><p class="field-help">${ruleSource}</p></div>
       </section>
       <form id="shift-form" class="shift-form">
         <fieldset><legend>Общие данные</legend>
           <label><span>Дата смены</span><input name="date" type="date" value="${localDate}" required></label>
-          <div class="field-pair">
-            <label><span>${escapeHtml(usageRule("flight").label)}, часы</span><input name="flightHours" type="number" min="0" value="1" step="1"></label>
+          ${sourceEnabled(aircraft, "flight") ? `<div class="field-pair">
+            <label><span>${escapeHtml(usageRule("flight").label)}, часы</span><input name="flightHours" type="number" min="0" value="0" step="1"></label>
             <label><span>${escapeHtml(usageRule("flight").label)}, минуты</span><input name="flightMinutes" type="number" min="0" max="59" value="0" step="1"></label>
-          </div>
+          </div>` : ""}
         </fieldset>
         <fieldset><legend>Посадки</legend>
           <div class="landing-grid">
-            ${OPTIONAL_USAGE_TYPES.filter((key) => key !== "arresterHooks" && usageRule(key).enabled !== false).map((key) => `<label><span>${escapeHtml(usageRule(key).label)}</span><input name="${key}" type="number" min="0" value="${key === "runway" ? 1 : 0}"></label>`).join("")}
+            ${OPTIONAL_USAGE_TYPES.filter((key) => key !== "arresterHooks" && sourceEnabled(aircraft, key)).map((key) => `<label><span>${escapeHtml(usageRule(key).label)}</span><input name="${key}" type="number" min="0" value="0"></label>`).join("")}
           </div>
-          ${usageRule("arresterHooks").enabled !== false ? `<label><span>${escapeHtml(usageRule("arresterHooks").label)}</span><input name="arresterHooks" type="number" min="0" value="0"></label>` : ""}
+          ${sourceEnabled(aircraft, "arresterHooks") ? `<label><span>${escapeHtml(usageRule("arresterHooks").label)}</span><input name="arresterHooks" type="number" min="0" value="0"></label>` : ""}
         </fieldset>
+        ${(aircraft.customUsageSources || []).length ? `<fieldset><legend>Другие показатели</legend>${aircraft.customUsageSources
+          .filter(({ key }) => sourceEnabled(aircraft, key)).map(({ key, label }) => `<label>${escapeHtml(label)}<input name="${key}" type="number" min="0" step="any"></label>`).join("")}</fieldset>` : ""}
+        <div id="operation-picker"></div>
         <fieldset><legend>${escapeHtml(usageRule("ground").label)}</legend>
-          <p class="field-help">Шаг округления: ${ground.groundRoundingMinutes} мин. В наработку двигателя идёт ${ground.groundPercent}% от округлённого времени.</p>
-          <label><span>Левый двигатель, фактически</span><div class="input-with-unit"><input id="left-ground" name="leftGround" type="number" min="0" value="13"><span>мин</span></div></label>
+          <p class="field-help">Процент и округление берутся из формуляра каждого двигателя.</p>
+          <div class="field-pair"><label>Левый двигатель, налёт в минутах<input name="leftFlight" type="number" min="0" step="any" placeholder="По налёту борта"></label>
+          <label>Правый двигатель, налёт в минутах<input name="rightFlight" type="number" min="0" step="any" placeholder="По налёту борта"></label></div>
+          <label><span>Левый двигатель, фактически</span><div class="input-with-unit"><input id="left-ground" name="leftGround" type="number" min="0" value="0"><span>мин</span></div></label>
           <div id="left-calculation" class="calculation-preview"></div>
-          <label><span>Правый двигатель, фактически</span><div class="input-with-unit"><input id="right-ground" name="rightGround" type="number" min="0" value="13"><span>мин</span></div></label>
+          <label><span>Правый двигатель, фактически</span><div class="input-with-unit"><input id="right-ground" name="rightGround" type="number" min="0" value="0"><span>мин</span></div></label>
           <div id="right-calculation" class="calculation-preview"></div>
           <div class="field-pair">
             <label><span>Запуски левого двигателя</span><input name="leftStarts" type="number" min="0" value="0"></label>
@@ -1105,6 +1295,7 @@
         ${additionalShiftEngines(aircraft).map(([prefix, block]) => `
           <fieldset><legend>${escapeHtml(block.name)}</legend>
             <label>${escapeHtml(usageRule("ground").label)}, минут<input name="${prefix}Ground" type="number" min="0" value="0"></label>
+            <label>Налёт двигателя, минут<input name="${prefix}Flight" type="number" min="0" step="any" placeholder="По налёту борта"></label>
             <label>Запуски<input name="${prefix}Starts" type="number" min="0" value="0"></label>
             <label>${escapeHtml(usageRule("maximum").label)}, секунды<input name="${prefix}Maximum" type="number" min="0" value="0"></label>
             <label>Форсаж, секунды<input name="${prefix}Afterburner" type="number" min="0" value="0"></label>
@@ -1115,16 +1306,24 @@
             </div>
           </fieldset>`).join("")}
         <section id="shift-summary" class="shift-summary"></section>
-        <button type="submit" class="primary-button wide">Рассчитать и сохранить смену</button>
+        <button type="submit" class="primary-button wide">Сохранить работу</button>
       </form>
-    `, { title: "Лётная смена", subtitle: `${aircraft.type} · борт ${aircraft.boardNumber}`, back: true, settingsScope: "aircraft" });
-    bindShiftForm();
+    `, { title: "Учёт работы", subtitle: `${aircraft.type} · борт ${aircraft.boardNumber}`, back: true, settingsScope: "aircraft" });
+    bindShiftForm(correction);
   }
 
-  function bindShiftForm() {
+  function bindShiftForm(correction) {
     const form = document.getElementById("shift-form");
     const aircraft = selectedAircraft();
+    bindOperationPicker(aircraft, correction?.operationType);
+    if (correction) {
+      for (const element of form.querySelectorAll("input[name]:not([type=radio])")) {
+        element.value = correction.raw[element.name] ?? "";
+      }
+    }
     const extraEngines = additionalShiftEngines(aircraft);
+    const leftBlock = aircraft.blocks.find((block) => block.id === "engine-left");
+    const rightBlock = aircraft.blocks.find((block) => block.id === "engine-right");
     const override = usageTypeOverride(aircraft);
     const ground = override?.ground ?? state.sharedGround ?? aircraft.settings;
     const factor = (key) => override?.factors[key] ?? usageRule(key).factor;
@@ -1136,20 +1335,56 @@
     const coefficients = state.usageRules || override
       ? Object.fromEntries(["runway", "carrier", "touch", "circuit"].map((key) => [key, factor(key)]))
       : aircraft.settings.landingCoefficients;
-    function engineIncrement(flight, actualGround) {
-      const result = calc.calculateEngineIncrement(flight, actualGround, groundOptions);
-      result.totalMinutes = flight * factor("flight") + result.ground.contributionMinutes * factor("ground");
+    function engineIncrement(data, side, block, flight) {
+      const actualGround = Number(data.get(`${side}Ground`));
+      const override = data.get(`${side}Flight`);
+      const engineFlight = override == null || override === "" ? flight : Number(override);
+      const rule = block?.groundRule;
+      const result = calc.calculateEngineIncrement(engineFlight, actualGround, rule ? {
+        stepMinutes: rule.groundRoundingMinutes, direction: rule.groundRoundingDirection, percent: rule.groundPercent,
+      } : groundOptions);
+      result.totalMinutes = engineFlight * factor("flight") + result.ground.contributionMinutes * (rule ? 1 : factor("ground"));
+      result.flightMinutes = engineFlight;
       return result;
+    }
+    function calculate(data) {
+      const flight = Number(data.get("flightHours")) * 60 + Number(data.get("flightMinutes"));
+      const left = engineIncrement(data, "left", leftBlock, flight);
+      const right = engineIncrement(data, "right", rightBlock, flight);
+      const engineUsage = new Map();
+      const date = String(data.get("date"));
+      for (const [prefix, block, increment] of [["left", leftBlock, left], ["right", rightBlock, right],
+        ...extraEngines.map(([key, item]) => [key, item, engineIncrement(data, key, item, flight)])]) {
+        if (!block || !blockInstalledOn(block, date)) continue;
+        engineUsage.set(block, {
+          minutes: increment.totalMinutes, flightMinutes: increment.flightMinutes, ground: increment.ground,
+          starts: Number(data.get(`${prefix}Starts`)), maximumSeconds: Number(data.get(`${prefix}Maximum`)) * factor("maximum"),
+          afterburnerSeconds: Number(data.get(`${prefix}Afterburner`)), modes: readModes(data, prefix),
+        });
+      }
+      const sources = sourceEnabled(aircraft, "flight") ? { flight: flight / 60 } : {};
+      for (const { key } of usageSources(aircraft)) {
+        const value = data.get(key);
+        if (value != null && value !== "") sources[key] = Number(value);
+      }
+      const sourceBoard = correction ? { ...aircraft, resources: aircraft.resources.map((resource) => ({
+        ...resource, remaining: correction.beforeUsage.resources.find((item) => item.id === resource.id)?.remaining ?? resource.remaining,
+      })) } : aircraft;
+      const accruals = resourceAccruals(sourceBoard, date, sources, engineUsage);
+      return { flight, left, right, engineUsage, accruals };
     }
     const update = () => {
       const data = new FormData(form);
-      const flight = Number(data.get("flightHours")) * 60 + Number(data.get("flightMinutes"));
-      const left = engineIncrement(flight, Number(data.get("leftGround")));
-      const right = engineIncrement(flight, Number(data.get("rightGround")));
+      const { left, right, engineUsage, accruals } = calculate(data);
       const equivalent = calc.calculateEquivalentLandings({ runway: data.get("runway"), carrier: data.get("carrier"), touch: data.get("touch"), circuit: data.get("circuit") }, coefficients);
       document.getElementById("left-calculation").textContent = `${left.ground.actualMinutes} → ${left.ground.roundedMinutes} мин → ${left.ground.percent}% = ${formatNumber(left.ground.contributionMinutes)} мин`;
       document.getElementById("right-calculation").textContent = `${right.ground.actualMinutes} → ${right.ground.roundedMinutes} мин → ${right.ground.percent}% = ${formatNumber(right.ground.contributionMinutes)} мин`;
       document.getElementById("shift-summary").innerHTML = `<span>Будет начислено</span><strong>Левый: ${calc.formatDuration(left.totalMinutes)} · Правый: ${calc.formatDuration(right.totalMinutes)}</strong><small>Зачёт посадок: ${equivalent.toLocaleString("ru-RU", { maximumFractionDigits: 6 })}</small>`;
+      const otherEngines = [...engineUsage].filter(([block]) => block !== leftBlock && block !== rightBlock);
+      if (otherEngines.length) document.getElementById("shift-summary").insertAdjacentHTML("beforeend",
+        `<details><summary>Другие двигатели (${otherEngines.length})</summary><ul>${otherEngines.map(([block, usage]) =>
+          `<li>${escapeHtml(block.name)} · ${calc.formatDuration(usage.minutes)}</li>`).join("")}</ul></details>`);
+      if (accruals.length) document.getElementById("shift-summary").insertAdjacentHTML("beforeend", accrualSummary(accruals));
     };
     form.addEventListener("input", update);
     form.addEventListener("submit", (event) => {
@@ -1161,9 +1396,14 @@
         showToast(modeError);
         return;
       }
-      const flight = Number(data.get("flightHours")) * 60 + Number(data.get("flightMinutes"));
-      const left = engineIncrement(flight, Number(data.get("leftGround")));
-      const right = engineIncrement(flight, Number(data.get("rightGround")));
+      const { flight, left, right, engineUsage, accruals } = calculate(data);
+      const backup = structuredClone(aircraft);
+      if (correction && !canCorrectShift(aircraft, correction)) {
+        showToast("Показания изменились. Открой запись заново");
+        return;
+      }
+      if (correction) restoreUsage(aircraft, correction.beforeUsage);
+      const beforeUsage = usageSnapshot(aircraft);
       const landings = {
         runway: Number(data.get("runway")),
         carrier: Number(data.get("carrier")),
@@ -1176,33 +1416,22 @@
 
       aircraft.totalFlightMinutes += flight;
       aircraft.actualLandings += actualLandings;
-      if (aircraft.pprFlightMinutes != null) aircraft.pprFlightMinutes += flight;
-      if (aircraft.pprLandings != null) aircraft.pprLandings += actualLandings;
       aircraft.equivalentLandings = Math.round((aircraft.equivalentLandings + equivalent) * 1e6) / 1e6;
       aircraft.arresterHooks += arresterHooks;
       const airframe = aircraft.blocks.find((block) => block.kind === "airframe");
-      if (airframe?.repairs > 0) {
-        aircraft.pprFlightMinutes ??= flight;
-        aircraft.pprLandings ??= actualLandings;
+      const date = String(data.get("date"));
+      if (countsTowardPpr(airframe, date) || (!airframe && (aircraft.pprFlightMinutes != null || aircraft.pprLandings != null))) {
+        aircraft.pprFlightMinutes = (aircraft.pprFlightMinutes || 0) + flight;
+        aircraft.pprLandings = (aircraft.pprLandings || 0) + actualLandings;
       }
-      const leftBlock = aircraft.blocks.find((block) => block.id === "engine-left");
-      const rightBlock = aircraft.blocks.find((block) => block.id === "engine-right");
-      const engineUsage = new Map();
-      const engineEntries = [["left", leftBlock, left], ["right", rightBlock, right],
-        ...extraEngines.map(([prefix, block]) => [prefix, block, engineIncrement(flight, Number(data.get(`${prefix}Ground`)))])];
-      for (const [side, block, increment] of engineEntries) {
-        if (!block?.installed) continue;
-        const starts = Number(data.get(`${side}Starts`));
-        const maximum = Number(data.get(`${side}Maximum`)) * factor("maximum");
-        const afterburner = Number(data.get(`${side}Afterburner`));
-        const modes = readModes(data, side);
-        engineUsage.set(block, { minutes: increment.totalMinutes, starts, maximumSeconds: maximum, afterburnerSeconds: afterburner, modes });
-        addBlockUsage(block, increment.totalMinutes, actualLandings);
+      for (const [block, { minutes, starts, maximumSeconds: maximum, afterburnerSeconds: afterburner, modes }] of engineUsage) {
+        const afterRepair = countsTowardPpr(block, date);
+        addBlockUsage(block, minutes, actualLandings, afterRepair);
         block.starts = (block.starts || 0) + starts;
         block.maximumSeconds = (block.maximumSeconds || 0) + maximum;
         block.afterburnerSeconds = (block.afterburnerSeconds || 0) + afterburner;
         accumulateModes(block.modesSeconds ??= {}, modes);
-        if (block.repairs > 0) {
+        if (afterRepair) {
           block.pprStarts = (block.pprStarts || 0) + starts;
           block.pprMaximumSeconds = (block.pprMaximumSeconds || 0) + maximum;
           block.pprAfterburnerSeconds = (block.pprAfterburnerSeconds || 0) + afterburner;
@@ -1210,26 +1439,27 @@
         }
       }
       for (const block of aircraft.blocks) {
-        if (block.installed && block.kind === "unit") addBlockUsage(block, flight, actualLandings);
+        if (block.kind === "unit" && blockInstalledOn(block, date)) addBlockUsage(block, flight, actualLandings, countsTowardPpr(block, date));
       }
-      aircraft.resources.forEach((resource) => {
-        const owner = aircraft.blocks.find((block) => block.name === resource.object);
-        if (owner?.installed === false) return;
-        const usage = engineUsage.get(owner);
-        let spent;
-        if (resource.unit === "ч") {
-          if (owner?.kind === "engine" && !usage) return;
-          spent = (usage?.minutes ?? flight) / 60;
-        } else if (resource.unit === "зап." && usage) {
-          spent = usage.starts;
-        } else {
-          return;
-        }
-        resource.remaining = Math.max(0, resource.remaining - spent);
+      for (const entry of accruals) {
+        const resource = aircraft.resources.find((item) => item.id === entry.resourceId);
+        resource.remaining = entry.remaining;
         resource.status = resourceStatus(resource.remaining, resource.limit);
-      });
-      aircraft.shifts.push({
-        id: `shift-${Date.now()}`,
+      }
+      const operation = (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find((item) => item.id === data.get("operationType"));
+      const entry = {
+        id: correction?.id || id(),
+        beforeUsage,
+        afterUsage: usageSnapshot(aircraft),
+        revisions: correction ? [...(correction.revisions || []), {
+          correctedAt: new Date().toISOString(), raw: correction.raw, accruals: correction.accruals, engineAccruals: correction.engineAccruals,
+        }] : [],
+        operationType: operation?.id,
+        operationLabel: operation?.label,
+        raw: Object.fromEntries(data),
+        sourceLabels: Object.fromEntries(usageSources(aircraft).map(({ key, label }) => [key, label])),
+        accruals,
+        engineAccruals: [...engineUsage].map(([block, usage]) => ({ blockId: block.id, name: block.name, ...usage })),
         date: String(data.get("date")),
         flightMinutes: flight,
         leftEngineMinutes: left.totalMinutes,
@@ -1255,12 +1485,21 @@
         rightStarts: Number(data.get("rightStarts")),
         leftModesSeconds: readModes(data, "left"),
         rightModesSeconds: readModes(data, "right"),
-      });
-      saveState();
-      state.view = "aircraft";
-      if (viewStack.at(-1) === "aircraft") viewStack.pop();
-      render();
-      showToast(`Смена сохранена: левый ${calc.formatDuration(left.totalMinutes)}, правый ${calc.formatDuration(right.totalMinutes)}.`);
+      };
+      if (correction) aircraft.shifts[aircraft.shifts.length - 1] = entry;
+      else {
+        const previous = aircraft.shifts.at(-1);
+        if (previous) { delete previous.beforeUsage; delete previous.afterUsage; }
+        aircraft.shifts.push(entry);
+      }
+      if (!saveState()) {
+        Object.assign(aircraft, backup);
+        showToast("Не удалось сохранить работу");
+        render();
+        return;
+      }
+      navigateBack();
+      showToast(correction ? "Запись исправлена, начисления пересчитаны" : "Работа сохранена");
     });
     update();
   }
@@ -1285,10 +1524,10 @@
     return "";
   }
 
-  function addBlockUsage(block, minutes, landings) {
+  function addBlockUsage(block, minutes, landings, afterRepair) {
     block.sneMinutes = (block.sneMinutes || 0) + minutes;
     block.sneLandings = (block.sneLandings || 0) + landings;
-    if (block.repairs > 0) {
+    if (afterRepair) {
       block.pprMinutes = (block.pprMinutes || 0) + minutes;
       block.pprLandings = (block.pprLandings || 0) + landings;
     }
@@ -1317,6 +1556,7 @@
       </div>`).join("");
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>Настройки самолёта</h1></div></section>
+      <button class="setting-row" data-view="board-usage"><strong>Показатели работы этого борта</strong>${icon("chevron")}</button>
       <section class="settings-list">
         <label class="setting-row"><span><strong>Уведомления этого самолёта</strong><small>${state.globalNotifications ? "Работы и ресурсы выбранного борта" : "Общие уведомления приложения выключены"}</small></span><input id="aircraft-notifications" type="checkbox" ${aircraft.notifications ? "checked" : ""} ${!state.globalNotifications ? "disabled" : ""}></label>
       </section>
@@ -1336,13 +1576,6 @@
       <label class="search-field notification-search">${icon("search")}<input id="notification-work-search" type="search" placeholder="Поиск по работам и объектам"></label>
       <section class="settings-list notification-work-list">${notificationRows || `<div class="empty-state compact-empty"><p>Ресурсных работ пока нет.</p></div>`}</section>
       <form id="aircraft-rules-form" class="shift-form settings-form">
-        <fieldset><legend>Пересчёт земной наработки</legend>
-          <div class="field-pair">
-            <label><span>Шаг округления, минут</span><input name="groundRoundingMinutes" type="number" min="1" step="1" value="${aircraft.settings.groundRoundingMinutes}" required></label>
-            <label><span>Направление округления</span><select name="groundRoundingDirection">${[["nearest", "До ближайшего"], ["up", "Вверх"], ["down", "Вниз"]].map(([value, label]) => `<option value="${value}" ${aircraft.settings.groundRoundingDirection === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
-            <label><span>Доля в общей наработке, %</span><input name="groundPercent" type="number" min="0" step="0.1" value="${aircraft.settings.groundPercent}" required></label>
-          </div>
-        </fieldset>
         <fieldset><legend>Коэффициенты приведённых посадок</legend>
           <div class="landing-grid">
             <label><span>БВПП</span><input name="runway" type="number" min="0" step="0.1" value="${coefficients.runway}" required></label>
@@ -1395,9 +1628,6 @@
     document.getElementById("aircraft-rules-form").addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
-      aircraft.settings.groundRoundingMinutes = Number(data.get("groundRoundingMinutes"));
-      aircraft.settings.groundRoundingDirection = String(data.get("groundRoundingDirection"));
-      aircraft.settings.groundPercent = Number(data.get("groundPercent"));
       aircraft.settings.landingCoefficients = {
         runway: Number(data.get("runway")),
         carrier: Number(data.get("carrier")),
@@ -1560,6 +1790,7 @@
       return;
     }
     const repaired = block.repairs > 0;
+    const groundRule = block.groundRule ?? usageTypeOverride(aircraft)?.ground ?? state.sharedGround ?? aircraft.settings;
     const ppr = (value) => repaired && value != null ? value : "—";
     const modeRow = (label, total, sinceRepair, format) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${format(total || 0)} / ${ppr(sinceRepair == null ? null : format(sinceRepair))}</strong></div>`;
     const blockFields = block.kind !== "airframe" ? `
@@ -1586,7 +1817,7 @@
         </div>` : ""}
       </fieldset>` : "";
     const relatedResources = aircraft.resources.filter((resource) =>
-      resource.object === block.name || (block.kind === "airframe" && resource.object === "Самолёт")
+      resourceOwner(aircraft, resource) === block || (block.kind === "airframe" && resource.object === "Самолёт")
     );
     const assemblies = aircraft.blocks.filter((item) => item.kind !== "airframe");
     const installedAssemblies = assemblies.filter((item) => item.installed !== false);
@@ -1632,6 +1863,13 @@
         <span>${eventLabels[item.type] || "Событие"}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</span>
         ${counters ? `<span>До ремонта: ${counters}</span>` : ""}</div></article>`;
     }).join("");
+    const historicalRows = Object.entries(block.historicalRepairs || {}).map(([number, entry]) => {
+      const { sneMinutes, pprMinutes, sneLandings, pprLandings } = entry.beforeRepair;
+      return `<article class="history-row"><div><strong>Ремонт № ${escapeHtml(number)}${entry.date ? ` · ${formatDate(entry.date)}` : ""}</strong>
+        <span>До ремонта · СНЭ: ${sneMinutes == null ? "—" : calc.formatDuration(sneMinutes)}, посадки ${sneLandings ?? "—"}</span>
+        <span>ППР: ${pprMinutes == null ? "—" : calc.formatDuration(pprMinutes)}, посадки ${pprLandings ?? "—"}</span>
+        ${entry.note ? `<span>${escapeHtml(entry.note)}</span>` : ""}</div></article>`;
+    }).join("");
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>${escapeHtml(block.name)}</h1><p>${escapeHtml(block.caption)}</p></div></section>
       <form id="block-form" class="shift-form">
@@ -1651,14 +1889,21 @@
         </fieldset>
         ${airframeFields}
         ${blockFields}
+        ${block.kind === "engine" ? `<fieldset><legend>Земная наработка этого двигателя</legend>
+          <label>Доля в общей наработке, %<input name="groundPercent" type="number" min="0" max="100" step="any" value="${groundRule.groundPercent}" required></label>
+          <label>Шаг округления, минут<input name="groundStep" type="number" min="1" step="1" value="${groundRule.groundRoundingMinutes}" required></label>
+          <label>Направление<select name="groundDirection">${[["nearest","До ближайшего"],["up","Вверх"],["down","Вниз"]].map(([value, name]) =>
+            `<option value="${value}" ${groundRule.groundRoundingDirection === value ? "selected" : ""}>${name}</option>`).join("")}</select></label>
+        </fieldset>` : ""}
         <button type="submit" class="primary-button wide">Сохранить формуляр</button>
       </form>
+      <button type="button" class="add-block-button" data-view="correct-usage">Уточнить показания</button>
       ${installations}
       <div class="section-heading settings-section-heading"><div><h2>Ресурсы и работы</h2><p>Связанные с этим формуляром ограничения.</p></div></div>
       <section class="resource-list">${relatedResources.length ? resourceRows(relatedResources, { editable: true }) : `<div class="empty-state compact-empty"><p>Связанных ресурсов пока нет.</p></div>`}</section>
-      <button class="add-block-button" data-action="add-resource" data-resource-object="${escapeHtml(block.name)}">${icon("plus")} Добавить ограниченный ресурс</button>
+      <button class="add-block-button" data-action="add-resource" data-resource-object="${escapeHtml(block.name)}" data-resource-owner="${escapeHtml(block.id)}">${icon("plus")} Добавить ограниченный ресурс</button>
       <div class="section-heading settings-section-heading"><div><h2>История событий</h2><p>Смены, ремонты, установки и продления.</p></div></div>
-      <section class="history-list">${eventRows || `<div class="empty-state compact-empty"><p>Исторических операций для этого объекта пока нет.</p></div>`}</section>
+      <section class="history-list">${(eventRows + historicalRows) || `<div class="empty-state compact-empty"><p>Исторических операций для этого объекта пока нет.</p></div>`}</section>
       <form id="block-event-form" class="shift-form event-form">
         <fieldset><legend>Добавить событие</legend>
           <div class="field-pair"><label><span>Тип события</span><select name="type"><option value="repair">Ремонт</option><option value="dismantle">Демонтаж</option><option value="install">Установка</option><option value="extension">Продление ресурса</option><option value="correction">Корректировка</option></select></label><label><span>Дата</span><input name="date" type="date" value="${todayIso()}" required></label></div>
@@ -1690,9 +1935,15 @@
           block.pprMinutes = data.get("pprMinutes") === "" ? null : Number(data.get("pprMinutes"));
           block.pprLandings = data.get("pprLandings") === "" ? null : Number(data.get("pprLandings"));
         }
-        if (block.kind === "engine") block.starts = Number(data.get("starts"));
+        if (block.kind === "engine") {
+          block.starts = Number(data.get("starts"));
+          block.groundRule = { groundPercent: Number(data.get("groundPercent")), groundRoundingMinutes: Number(data.get("groundStep")),
+            groundRoundingDirection: data.get("groundDirection") };
+        }
       }
-      aircraft.resources.forEach((resource) => { if (resource.object === oldName) resource.object = block.name; });
+      aircraft.resources.forEach((resource) => {
+        if (resource.objectId === block.id || (!resource.objectId && resource.object === oldName)) resource.object = block.name;
+      });
       saveState();
       showToast("Формуляр сохранён");
       renderBlock();
@@ -1704,6 +1955,7 @@
       const type = String(data.get("type"));
       const item = { id: `event-${Date.now()}`, type, date: String(data.get("date")), note: String(data.get("note") || "").trim() };
       if (type === "repair") {
+        item.repairNumber = block.repairs + 1;
         item.beforeRepair = {
           sneMinutes: block.kind === "airframe" ? aircraft.totalFlightMinutes : block.sneMinutes ?? 0,
           pprMinutes: repaired ? (block.kind === "airframe" ? aircraft.pprFlightMinutes : block.pprMinutes) ?? null : null,
@@ -1745,6 +1997,295 @@
     });
   }
 
+  function renderUsageCorrection() {
+    const aircraft = selectedAircraft();
+    const block = aircraft.blocks.find((item) => item.id === state.selectedBlockId);
+    const airframe = block.kind === "airframe";
+    const subject = airframe ? aircraft : block;
+    const readCounter = (key) => {
+      const [group, entry] = key.split(".");
+      return entry ? subject[group]?.[entry] : subject[group];
+    };
+    const writeCounter = (key, value) => {
+      const [group, entry] = key.split(".");
+      if (entry) subject[group] = { ...subject[group], [entry]: value };
+      else subject[group] = value;
+    };
+    const names = airframe ? ["totalFlightMinutes", "actualLandings", "pprFlightMinutes", "pprLandings"] :
+      ["sneMinutes", "sneLandings", "pprMinutes", "pprLandings"];
+    const labels = ["Наработка СНЭ, минут", "Посадки СНЭ", "Наработка ППР, минут", "Посадки ППР"];
+    const counters = names.map((key, index) => [key, labels[index], subject[key], index >= 2]);
+    if (block.kind === "engine") {
+      for (const [label, total, ppr] of [
+        ["Запуски", "starts", "pprStarts"], ["Максимал, с", "maximumSeconds", "pprMaximumSeconds"],
+        ["Форсаж, с", "afterburnerSeconds", "pprAfterburnerSeconds"],
+        ["ОР, с", "modesSeconds.or", "pprModesSeconds.or"], ["Б, с", "modesSeconds.combat", "pprModesSeconds.combat"],
+        ["Б + УБ, с", "modesSeconds.combined", "pprModesSeconds.combined"],
+      ]) {
+        counters.push([total, `${label} · СНЭ`, readCounter(total), false], [ppr, `${label} · ППР`, readCounter(ppr), true]);
+      }
+    }
+    const repairs = block.events.filter((entry) => entry.type === "repair");
+    const imported = block.historicalRepairs || {};
+    app.innerHTML = shell(`
+      <form id="correct-usage-form" class="shift-form">
+        <fieldset><legend>Текущие показания · ${escapeHtml(block.name)}</legend>
+          <label>Количество ремонтов<input name="repairs" type="number" min="${repairs.length}" step="1" value="${block.repairs}" required></label>
+          <div class="field-pair">${counters.map(([key, label, value, isPpr]) => `<label>${escapeHtml(label)}<input name="${key}" ${isPpr ? "data-ppr" : ""} type="number" min="0" step="any" value="${value ?? (isPpr ? "" : 0)}"></label>`).join("")}</div>
+          <label>Основание или номер документа<input name="note"></label>
+          <button class="primary-button" type="submit">Сохранить показания</button>
+        </fieldset>
+      </form>
+      <form id="historical-repair-form" class="shift-form">
+        <fieldset ${block.repairs ? "" : "disabled"}><legend>Показания до ремонта</legend>
+          <p>Заполни известные данные отдельно для каждого ремонта. Пустое поле означает, что показание неизвестно.</p>
+          <label>Ремонт №<input name="number" type="number" min="1" max="${block.repairs}" value="1" required></label>
+          <label>Дата ремонта<input name="date" type="date"></label>
+          <div class="field-pair">${counters.map(([key, label]) => `<label>${escapeHtml(label)}<input name="${key}" type="number" min="0" step="any"></label>`).join("")}</div>
+          <label>Основание<input name="note"></label>
+          <button class="secondary-button" type="submit">Сохранить запись о ремонте</button>
+        </fieldset>
+      </form>`, { title: "Уточнить показания", back: true, settings: false });
+    const form = document.getElementById("correct-usage-form");
+    const update = () => form.querySelectorAll("[data-ppr]").forEach((input) => { input.disabled = Number(form.elements.repairs.value) === 0; });
+    form.elements.repairs.addEventListener("input", update);
+    update();
+    const numberOrNull = (value) => value === "" || value == null ? null : Number(value);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      const previous = { repairs: block.repairs };
+      const current = { repairs: Number(data.get("repairs")) };
+      for (const [key, , , isPpr] of counters) {
+        previous[key] = readCounter(key) ?? null;
+        current[key] = isPpr ? numberOrNull(data.get(key)) : Number(data.get(key));
+        writeCounter(key, current[key]);
+      }
+      block.repairs = current.repairs;
+      block.events.push({ id: id(), type: "correction", date: todayIso(), note: data.get("note"), previous, current });
+      if (saveState()) {
+        render();
+        showToast("Показания сохранены");
+      } else {
+        block.events.pop();
+        block.repairs = previous.repairs;
+        for (const [key] of counters) writeCounter(key, previous[key]);
+        showToast("Не удалось сохранить показания");
+      }
+    });
+    const history = document.getElementById("historical-repair-form");
+    const loadRepair = () => {
+      const number = Number(history.elements.number.value);
+      const entry = imported[number] || repairs.find((item, index) => (item.repairNumber ?? index + 1) === number);
+      history.elements.date.value = entry?.date || "";
+      history.elements.note.value = entry?.note || "";
+      const usage = entry?.beforeRepair || {};
+      counters.forEach(([key], index) => {
+        const [group, entry] = key.split(".");
+        history.elements[key].value = usage[key] ?? (entry ? usage[group]?.[entry] : null) ??
+          usage[["sneMinutes", "sneLandings", "pprMinutes", "pprLandings"][index]] ?? "";
+      });
+    };
+    history.elements.number.addEventListener("input", loadRepair);
+    loadRepair();
+    history.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const data = new FormData(history);
+      const number = Number(data.get("number"));
+      const beforeRepair = Object.fromEntries(counters.map(([key], index) => [
+        ["sneMinutes", "sneLandings", "pprMinutes", "pprLandings"][index] || key, numberOrNull(data.get(key)),
+      ]));
+      block.historicalRepairs = { ...imported, [number]: { date: data.get("date"), note: data.get("note"), beforeRepair } };
+      if (saveState()) { render(); showToast("Показания до ремонта сохранены"); }
+      else { block.historicalRepairs = imported; showToast("Не удалось сохранить запись"); }
+    });
+  }
+
+  function accrualSummary(entries) {
+    const ordered = [...entries].sort((a, b) => Number(Boolean(b.priority)) - Number(Boolean(a.priority)));
+    const row = (entry) => `<li><strong>${escapeHtml(entry.object)} · ${escapeHtml(entry.name)}</strong>
+      <span>Расход ${formatNumber(entry.amount)} ${escapeHtml(entry.unit)} · остаток ${formatNumber(entry.remaining)}</span>
+      <small>${entry.inputs.map(({ key, input, factor, amount }) =>
+        `${escapeHtml(entry.labels?.[key] || ENGINE_SOURCES[key] || USAGE_TYPES[key] || "Показатель")} ${formatNumber(input)} × ${formatNumber(factor)} = ${formatNumber(amount)}`).join(" · ")}</small></li>`;
+    return `<ol class="accrual-items">${ordered.slice(0, 3).map(row).join("")}</ol>
+      ${ordered.length > 3 ? `<details><summary>Остальные начисления (${ordered.length - 3})</summary><ol class="accrual-items">${ordered.slice(3).map(row).join("")}</ol></details>` : ""}`;
+  }
+
+  function renderShiftEntry() {
+    const aircraft = selectedAircraft();
+    const shift = aircraft.shifts.find((entry) => entry.id === state.selectedShiftId);
+    if (!shift) { navigateBack(); return; }
+    const engines = shift.engineAccruals || [];
+    const builtIn = (key) => shift.usageRules?.[key]?.label || usageRule(key).label;
+    const rawRows = [
+      [builtIn("flight"), calc.formatDuration(shift.flightMinutes)],
+      ...OPTIONAL_USAGE_TYPES.filter((key) => shift.raw ? key in shift.raw : key in (shift.landingsByType || {}))
+        .map((key) => [builtIn(key), shift.raw?.[key] ?? shift.landingsByType?.[key]]),
+      ...Object.entries(shift.raw || {}).filter(([key, value]) => key.startsWith("custom-") && value !== "")
+        .map(([key, value]) => [shift.sourceLabels?.[key] || aircraft.customUsageSources?.find((item) => item.key === key)?.label || key, value]),
+    ];
+    app.innerHTML = shell(`
+      <section class="section-stack"><h1>${escapeHtml(shift.operationLabel || "Лётная смена")}</h1><p>${formatDate(shift.date)}</p>
+        <details open><summary>Введённые показатели</summary><dl>${rawRows.map(([label, value]) =>
+          `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value))}</dd>`).join("")}</dl></details>
+        <details open><summary>Двигатели</summary><ol class="accrual-items">${engines.length ? engines.map((entry) =>
+          `<li><strong>${escapeHtml(entry.name)} · ${calc.formatDuration(entry.minutes)}</strong><small>Налёт ${calc.formatDuration(entry.flightMinutes)} · земля ${entry.ground.actualMinutes} → ${entry.ground.roundedMinutes} мин × ${entry.ground.percent}%</small></li>`).join("") :
+          `<li>Левый · ${calc.formatDuration(shift.leftEngineMinutes)}</li><li>Правый · ${calc.formatDuration(shift.rightEngineMinutes)}</li>`}</ol></details>
+        <h2>Расход ресурсов</h2>
+        ${shift.accruals?.length ? accrualSummary(shift.accruals) : `<p>${shift.accruals ? "Начислений по ресурсам нет." : "Для этой записи разбивка по ресурсам не сохранялась."}</p>`}
+        <button class="secondary-button" id="open-shift-map">Карта начислений</button>
+        ${canCorrectShift(aircraft, shift) ? `<button class="secondary-button" data-view="correct-shift">Исправить запись</button>` : ""}
+        ${(shift.revisions || []).map((revision) => `<details><summary>Предыдущая версия · ${escapeHtml(new Date(revision.correctedAt).toLocaleString("ru-RU"))}</summary>
+          <p>Налёт: ${calc.formatDuration(Number(revision.raw.flightHours) * 60 + Number(revision.raw.flightMinutes))}</p>
+          ${accrualSummary(revision.accruals || [])}</details>`).join("")}
+      </section>`, { title: "Запись работы", back: true, settings: false });
+    document.getElementById("open-shift-map").addEventListener("click", () => {
+      state.mapShiftId = shift.id;
+      navigateTo("usage-map");
+    });
+  }
+
+  function renderUsageMap() {
+    const aircraft = selectedAircraft();
+    const shift = aircraft.shifts.find((entry) => entry.id === state.mapShiftId);
+    const blocks = aircraft.blocks.filter((block) => block.kind !== "airframe");
+    const first = aircraft.blocks.find((block) => block.kind === "airframe");
+    const boardNode = "__airframe";
+    const resources = aircraft.resources.filter((resource) => resource.unit !== "дн.");
+    const edges = shift ? (shift.accruals || []).flatMap((entry) => entry.inputs.map((input) => ({
+      ...input, target: entry.blockId || boardNode, name: entry.name, enabled: true, installed: true,
+    }))) : resources.flatMap((resource) => {
+      const owner = resourceOwner(aircraft, resource);
+      if (!owner && resource.object !== "Самолёт") return [];
+      return Object.entries(resourceInputs(resource, owner)).filter(([, factor]) => factor > 0).map(([key, factor]) => ({
+        key, factor, target: owner?.kind === "airframe" || !owner ? boardNode : owner.id,
+        name: resource.name, enabled: sourceEnabled(aircraft, key), installed: owner?.installed !== false,
+      }));
+    });
+    const sourceLabels = new Map(usageSources(aircraft, { kind: "engine" }).map(({ key, label }) => [key, label]));
+    for (const [key, label] of Object.entries(shift?.sourceLabels || {})) sourceLabels.set(key, label);
+    const sourceKeys = [...new Set([...(shift ? [] : usageSources(aircraft).filter(({ key }) => sourceEnabled(aircraft, key)).map(({ key }) => key)),
+      ...edges.map(({ key }) => key)])];
+    const node = (block) => {
+      const incoming = edges.filter(({ target }) => target === block.id);
+      const connected = incoming.some(({ enabled, installed }) => enabled && installed);
+      const number = block.serialNumber || resourceOwnerNumber(block);
+      return `<div class="map-node ${connected ? "map-node--linked" : "map-node--unlinked"}" data-map-target="${escapeHtml(block.id)}">
+        <button type="button" class="map-node-caption" data-map-select="${escapeHtml(block.id)}"><strong>${escapeHtml(block.name)}</strong><small>${escapeHtml(number || "Номер не указан")}</small></button>
+        <div class="map-node-tools">${block.formId ? `<button type="button" data-block-id="${escapeHtml(block.formId)}" aria-label="Открыть формуляр">↗</button>` : ""}
+        ${shift ? "" : `<button type="button" data-map-grip aria-label="Переместить блок">⠿</button>`}</div>
+      </div>`;
+    };
+    function resourceOwnerNumber(block) {
+      return resources.find((resource) => resourceOwner(aircraft, resource)?.id === block.id && resource.serialNumber)?.serialNumber;
+    }
+    const nodes = [{ id: boardNode, name: `${aircraft.type} · борт ${aircraft.boardNumber}`, formId: first?.id, serialNumber: aircraft.serialNumber },
+      ...blocks.map((block) => ({ ...block, formId: block.id }))];
+    for (const entry of shift?.accruals || []) {
+      if (entry.blockId && !nodes.some((item) => item.id === entry.blockId)) nodes.push({ id: entry.blockId, name: entry.object });
+    }
+    app.innerHTML = shell(`
+      <section class="section-stack">
+        <h1>${shift ? "Карта начислений" : "Карта наработки"}</h1>
+        ${shift ? `<p>${formatDate(shift.date)} · ${escapeHtml(shift.operationLabel || "Лётная смена")}</p>` : ""}
+        <label class="map-zoom">Масштаб<input id="map-scale" type="range" min="45" max="150" value="100" step="5"></label>
+        <div class="usage-map-scroll">
+          <div class="usage-map-canvas">
+            <svg class="map-wires" aria-hidden="true"><defs><marker id="map-arrow" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#728397"/></marker></defs></svg>
+            <div class="map-origin">${node(nodes[0])}</div>
+            <div class="map-sources">${sourceKeys.map((key) => `<button class="map-node" data-map-source="${escapeHtml(key)}">${escapeHtml(sourceLabels.get(key) || key)}</button>`).join("")}</div>
+            <div class="map-targets">${nodes.slice(1).map(node).join("")}</div>
+          </div>
+        </div>
+        <section id="map-details" aria-live="polite"><p>Нажми на показатель или агрегат, чтобы увидеть его связи и множители.</p></section>
+      </section>`, { title: "Карта наработки", back: true, settings: false });
+    const canvas = document.querySelector(".usage-map-canvas");
+    const zoom = document.getElementById("map-scale");
+    const details = document.getElementById("map-details");
+    const wires = canvas.querySelector("svg");
+    const targets = new Map([...canvas.querySelectorAll("[data-map-target]")].map((item) => [item.dataset.mapTarget, item]));
+    const sources = new Map([...canvas.querySelectorAll("[data-map-source]")].map((item) => [item.dataset.mapSource, item]));
+    let active;
+    const scale = () => Number(zoom.value) / 100;
+    const position = (element, right) => {
+      const rect = element.getBoundingClientRect();
+      const surface = canvas.getBoundingClientRect();
+      return [(rect[right ? "right" : "left"] - surface.left) / scale(), (rect.top + rect.height / 2 - surface.top) / scale()];
+    };
+    const draw = () => {
+      wires.querySelectorAll("line").forEach((line) => line.remove());
+      const connect = (from, to, muted, emphasized) => {
+        const [x1, y1] = position(from, true);
+        const [x2, y2] = position(to, false);
+        const wire = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        for (const [key, value] of Object.entries({ x1, y1, x2, y2 })) wire.setAttribute(key, value);
+        wire.setAttribute("class", `map-wire ${muted ? "map-wire--muted" : ""} ${emphasized ? "map-wire--selected" : ""}`);
+        wire.setAttribute("marker-end", "url(#map-arrow)");
+        wires.append(wire);
+      };
+      for (const [key, item] of sources) connect(targets.get(boardNode), item, !sourceEnabled(aircraft, key), active === key);
+      for (const edge of edges) {
+        if (edge.target === boardNode || !targets.has(edge.target) || !sources.has(edge.key)) continue;
+        connect(sources.get(edge.key), targets.get(edge.target), !edge.enabled || !edge.installed, active === edge.key || active === edge.target);
+      }
+    };
+    function select(key, isSource) {
+      active = key;
+      canvas.querySelectorAll(".map-node").forEach((element) => {
+        element.classList.toggle("map-node--selected", (element.dataset.mapTarget ?? element.dataset.mapSource) === key);
+      });
+      const matching = edges.filter((edge) => isSource ? edge.key === key : edge.target === key);
+      const heading = isSource ? sourceLabels.get(key) || key : nodes.find((item) => item.id === key)?.name;
+      details.innerHTML = `<h2>${escapeHtml(heading || "")}</h2>${matching.length ? `<ul class="accrual-items">${matching.map((edge) => `<li>
+        <strong>${escapeHtml(sourceLabels.get(edge.key) || edge.key)} × ${formatNumber(edge.factor)} → ${escapeHtml(nodes.find((item) => item.id === edge.target)?.name || "")} · ${escapeHtml(edge.name)}</strong>
+        <small>${shift ? `${formatNumber(edge.input)} × ${formatNumber(edge.factor)} = ${formatNumber(edge.amount)}` : !edge.enabled ? "Источник отключён" :
+          !edge.installed ? "Агрегат демонтирован" : edge.target === boardNode ? "Начисляется на борт" : "Агрегат установлен на дату работы"}</small></li>`).join("")}</ul>`
+        : `<p>${isSource ? "Нет получателей." : "Связи с ресурсом по наработке нет."}</p>`}`;
+      draw();
+    }
+    sources.forEach((element, key) => element.addEventListener("click", () => select(key, true)));
+    targets.forEach((element, key) => {
+      element.querySelector("[data-map-select]").addEventListener("click", () => select(key, false));
+      const grip = element.querySelector("[data-map-grip]");
+      if (!grip) return;
+      let start;
+      let point = aircraft.mapPositions?.[key] || [0, 0];
+      const applyPosition = () => { element.style.translate = `${point[0]}px ${point[1]}px`; draw(); };
+      element.style.translate = `${point[0]}px ${point[1]}px`;
+      grip.addEventListener("pointerdown", (event) => {
+        start = [event.clientX, event.clientY, ...point];
+        grip.setPointerCapture(event.pointerId);
+      });
+      grip.addEventListener("pointermove", (event) => {
+        if (!start) return;
+        point = [Math.max(-80, Math.min(115, start[2] + (event.clientX - start[0]) / scale())),
+          Math.max(-40, Math.min(95, start[3] + (event.clientY - start[1]) / scale()))];
+        applyPosition();
+      });
+      for (const eventName of ["pointerup", "pointercancel"]) grip.addEventListener(eventName, () => {
+        if (!start) return;
+        start = null;
+        aircraft.mapPositions = { ...aircraft.mapPositions, [key]: point };
+        if (!saveState()) showToast("Не удалось сохранить положение");
+      });
+    });
+    zoom.addEventListener("input", () => { canvas.style.zoom = scale(); draw(); });
+    const scroll = canvas.parentElement;
+    let pinch;
+    const distance = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+    scroll.addEventListener("touchstart", (event) => {
+      if (event.touches.length === 2) pinch = { distance: distance(event.touches), scale: Number(zoom.value) };
+    }, { passive: true });
+    scroll.addEventListener("touchmove", (event) => {
+      if (!pinch || !pinch.distance || event.touches.length !== 2) return;
+      event.preventDefault();
+      zoom.value = String(Math.max(Number(zoom.min), Math.min(Number(zoom.max), pinch.scale * distance(event.touches) / pinch.distance)));
+      zoom.dispatchEvent(new Event("input"));
+    }, { passive: false });
+    for (const event of ["touchend", "touchcancel"]) scroll.addEventListener(event, () => { pinch = null; });
+    requestAnimationFrame(draw);
+  }
+
   function renderReports() {
     const aircraft = selectedAircraft();
     const today = todayIso();
@@ -1782,8 +2323,14 @@
       output.innerHTML = `<h2>${formatDate(start)} — ${formatDate(end)}</h2>
         <p>Смен: ${rows.length} · ${escapeHtml(usageRule("flight").label)}: ${calc.formatDuration(totals.flightMinutes)} · Посадки: ${totals.actualLandings} / ${formatNumber(totals.equivalentLandings)} в зачёт · Зацепы: ${totals.arresterHooks}</p>
         <p>Левый двигатель: ${calc.formatDuration(totals.leftEngineMinutes)}, запусков: ${totals.leftStarts}. Правый двигатель: ${calc.formatDuration(totals.rightEngineMinutes)}, запусков: ${totals.rightStarts}.</p>
-        ${rows.map((row) => `<article class="history-row"><div><strong>${formatDate(row.date)}</strong><span>${escapeHtml(usageRule("flight").label)} ${calc.formatDuration(row.flightMinutes)} · ${row.actualLandings} посадок</span></div></article>`).join("")}`;
+        ${rows.map((row) => `<button class="history-row" data-report-shift="${escapeHtml(row.id)}"><div><strong>${formatDate(row.date)} · ${escapeHtml(row.operationLabel || "Лётная смена")}</strong><span>${escapeHtml(usageRule("flight").label)} ${calc.formatDuration(row.flightMinutes)} · ${row.actualLandings} посадок</span></div>${icon("chevron")}</button>`).join("")}`;
     }
+    output.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-report-shift]");
+      if (!row) return;
+      state.selectedShiftId = row.dataset.reportShift;
+      navigateTo("shift-entry");
+    });
     form.addEventListener("change", showReport);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -1795,10 +2342,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.26</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.27</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.26", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.27", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1807,6 +2354,7 @@
     const isNew = !resource;
     const draft = resource || {
       object: state.pendingResourceObject || "Новый агрегат",
+      objectId: state.pendingResourceOwner,
       name: state.pendingWork ? "" : "Ограниченный ресурс",
       unit: "ч",
       remaining: 0,
@@ -1831,6 +2379,7 @@
       <form id="resource-form" class="shift-form">
         <fieldset><legend>Агрегат и идентификация</legend>
           <label><span>Агрегат или объект</span><input name="object" type="text" list="resource-objects" value="${escapeHtml(draft.object)}" required><datalist id="resource-objects">${objectOptions}</datalist></label>
+          <label id="resource-owner-choice" hidden>Экземпляр агрегата<select name="ownerId"></select></label>
           <label><span>Наименование ограничения или работы</span><input name="name" type="text" value="${escapeHtml(draft.name)}" required></label>
           <div class="field-pair">
             <label><span>Заводской/обычный номер</span><input name="serialNumber" type="text" value="${escapeHtml(draft.serialNumber || "")}"></label>
@@ -1845,6 +2394,27 @@
             <label><span>Полный ресурс</span><input name="limit" type="number" min="0" step="0.01" value="${draft.limit}" required></label>
           </div>
           <label><span>Остаток</span><input name="remaining" type="number" min="0" step="0.01" value="${draft.remaining}" required></label>
+          <label class="checkbox-row"><input type="checkbox" name="priority" ${draft.priority ? "checked" : ""}><span>Показывать первым в начислениях</span></label>
+        </fieldset>
+        <fieldset id="resource-consumption"><legend>Расход ресурса из записи работы</legend>
+          <p>Пустое поле отключает начисление. Множитель переводит показатель в единицы этого ресурса.</p>
+          <div id="resource-inputs" class="field-pair"></div>
+          <details><summary>Добавить показатель смены</summary>
+            <label>Показатель<select id="resource-source-choice"></select></label>
+            <label>Название нового показателя<input id="resource-source-name" maxlength="80"></label>
+            <button type="button" class="secondary-button" id="resource-source-add">Добавить в смену</button>
+          </details>
+          ${aircraft.resources.some((item) => item !== resource) ? `<details><summary>Скопировать из другого агрегата</summary>
+            <label>Ресурс<select id="resource-copy-from">
+              <option value="">Выбрать</option>
+              ${aircraft.resources.filter((item) => item !== resource).map((item) =>
+                `<option value="${escapeHtml(item.id)}">${escapeHtml(item.object)} · ${escapeHtml(item.name)}</option>`).join("")}
+            </select></label>
+            <div class="operation-tags">
+              <button type="button" class="secondary-button" id="resource-copy-limit">Скопировать лимит</button>
+              <button type="button" class="secondary-button" id="resource-copy-inputs">Скопировать расход</button>
+            </div>
+          </details>` : ""}
         </fieldset>
         <fieldset><legend>Даты</legend>
           <div class="field-pair"><label><span>Дата изготовления</span><input name="produced" type="date" value="${draft.produced || ""}"></label><label><span>Дата установки</span><input name="installed" type="date" value="${draft.installed || ""}"></label></div>
@@ -1877,7 +2447,80 @@
           </details>`).join("")}</section>` : ""}
     `, { title: "Ресурсный агрегат", subtitle: isNew ? "Новая карточка" : draft.object, back: true, settingsScope: "aircraft" });
 
-    document.getElementById("resource-form").addEventListener("submit", (event) => {
+    const resourceForm = document.getElementById("resource-form");
+    const ownerControl = resourceForm.elements.ownerId;
+    const currentOwner = () => aircraft.blocks.find((block) => block.id === ownerControl.value);
+    const syncOwner = () => {
+      const options = aircraft.blocks.filter((block) => block.name === resourceForm.elements.object.value.trim());
+      const previous = ownerControl.value || draft.objectId;
+      ownerControl.replaceChildren(...options.map((block) => new Option(block.serialNumber || block.name, block.id)));
+      if (options.some((block) => block.id === previous)) ownerControl.value = previous;
+      ownerControl.closest("label").hidden = options.length < 2;
+    };
+    syncOwner();
+    const inputsRoot = document.getElementById("resource-inputs");
+    const sourceChoice = document.getElementById("resource-source-choice");
+    const readInputs = () => Object.fromEntries([...inputsRoot.querySelectorAll("input")].filter((input) => input.value !== "")
+      .map((input) => [input.dataset.source, Number(input.value)]));
+    const drawInputs = (values) => {
+      inputsRoot.innerHTML = usageSources(aircraft, currentOwner()).map(({ key, label }) => `
+        <label>${escapeHtml(label)}${sourceEnabled(aircraft, key) ? "" : " · отключён"}
+        <input data-source="${key}" type="number" min="0" step="any" value="${values[key] ?? ""}" placeholder="—"></label>`).join("");
+      sourceChoice.replaceChildren(new Option("Новый показатель", ""),
+        ...usageSources(aircraft).filter(({ key }) => !sourceEnabled(aircraft, key)).map(({ key, label }) => new Option(label, key)));
+      inputsRoot.closest("fieldset").hidden = resourceForm.elements.unit.value === "дн.";
+    };
+    let implicitInputs = resource?.consumption ? null : resourceInputs(draft, currentOwner());
+    drawInputs(implicitInputs || resource.consumption);
+    const refreshInputs = (refreshOwner = false) => {
+      const current = readInputs();
+      if (refreshOwner) syncOwner();
+      if (implicitInputs && JSON.stringify(implicitInputs) === JSON.stringify(current)) {
+        implicitInputs = resourceInputs({ unit: resourceForm.elements.unit.value }, currentOwner());
+        drawInputs(implicitInputs);
+      } else {
+        implicitInputs = null;
+        drawInputs(current);
+      }
+    };
+    resourceForm.elements.object.addEventListener("change", () => refreshInputs(true));
+    ownerControl.addEventListener("change", () => refreshInputs());
+    resourceForm.elements.unit.addEventListener("change", () => refreshInputs());
+    document.getElementById("resource-source-add").addEventListener("click", () => {
+      const key = sourceChoice.value;
+      const control = document.getElementById("resource-source-name");
+      const label = control.value.trim();
+      if (!key && !label) { showToast("Выбери показатель или введи название"); return; }
+      const previous = [aircraft.enabledUsageSources, aircraft.customUsageSources];
+      if (key) aircraft.enabledUsageSources = { ...aircraft.enabledUsageSources, [key]: true };
+      else aircraft.customUsageSources = [...(aircraft.customUsageSources || []), { key: `custom-${id()}`, label }];
+      if (saveState()) { drawInputs(readInputs()); control.value = ""; }
+      else { [aircraft.enabledUsageSources, aircraft.customUsageSources] = previous; showToast("Не удалось добавить показатель"); }
+    });
+    const selectedCopy = () => aircraft.resources.find((item) => item.id === document.getElementById("resource-copy-from")?.value);
+    document.getElementById("resource-copy-limit")?.addEventListener("click", () => {
+      const source = selectedCopy();
+      if (!source) return;
+      resourceForm.elements.limit.value = source.limit;
+      if (isNew) resourceForm.elements.remaining.value = source.limit;
+      resourceForm.elements.unit.value = source.unit;
+      resourceForm.elements.resourceType.value = source.resourceType;
+      refreshInputs();
+    });
+    document.getElementById("resource-copy-inputs")?.addEventListener("click", () => {
+      const source = selectedCopy();
+      if (!source) return;
+      if (source.unit !== resourceForm.elements.unit.value) { showToast("Для копирования расхода выбери ту же единицу ресурса"); return; }
+      const values = resourceInputs(source, resourceOwner(aircraft, source));
+      const allowed = usageSources(aircraft, currentOwner());
+      if (Object.keys(values).some((key) => !allowed.some((entry) => entry.key === key))) {
+        showToast("У этого агрегата нет одного из источников исходного правила");
+        return;
+      }
+      implicitInputs = null;
+      drawInputs(values);
+    });
+    resourceForm.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
       const objectName = String(data.get("object")).trim();
@@ -1887,6 +2530,9 @@
         ...(resource || {}),
         id: resource?.id || `resource-${Date.now()}`,
         object: objectName,
+        objectId: currentOwner()?.id || null,
+        consumption: readInputs(),
+        priority: data.get("priority") === "on",
         name: String(data.get("name")).trim(),
         serialNumber: String(data.get("serialNumber") || "").trim(),
         drawingNumber: String(data.get("drawingNumber") || "").trim(),
@@ -1905,12 +2551,25 @@
         notifyOnDue: data.get("notifyOnDue") === "on",
         history: Array.isArray(resource?.history) ? resource.history : [],
       });
+      const previous = resource && { ...resource };
+      let createdOwner;
+      if (objectName !== "Самолёт" && !aircraft.blocks.some((block) => block.name === objectName)) {
+        const block = normalizeBlock({ id: id(), kind: "unit", name: objectName, caption: "Агрегат с ограниченным ресурсом", status: saved.status });
+        aircraft.blocks.push(block);
+        saved.objectId = block.id;
+        createdOwner = block;
+      }
       if (resource) Object.assign(resource, saved);
       else aircraft.resources.push(saved);
-      if (objectName !== "Самолёт" && !aircraft.blocks.some((block) => block.name === objectName)) {
-        aircraft.blocks.push(normalizeBlock({ id: `unit-${Date.now()}`, kind: "unit", name: objectName, caption: "Агрегат с ограниченным ресурсом", status: saved.status }));
+      if (!saveState()) {
+        if (resource) {
+          for (const key of Object.keys(saved)) if (!(key in previous)) delete resource[key];
+          Object.assign(resource, previous);
+        } else aircraft.resources.pop();
+        if (createdOwner) aircraft.blocks.pop();
+        showToast("Не удалось сохранить ресурсную карточку");
+        return;
       }
-      saveState();
       state.selectedResourceId = saved.id;
       state.pendingResourceObject = null;
       showToast("Ресурсная карточка сохранена");
@@ -2000,12 +2659,8 @@
       const rule = usageTypeOverride(aircraft);
       source.textContent = rule ? "Для этого типа сохранены отдельные правила." :
         state.sharedGround ? "Этот тип использует общие правила." : "Для этого типа действуют исходные настройки борта.";
-      const ground = rule?.ground ?? state.sharedGround ?? aircraft.settings;
-      fields.innerHTML = `<fieldset><legend>Коэффициенты и земная наработка</legend>
+      fields.innerHTML = `<fieldset><legend>Коэффициенты наработки</legend>
         ${Object.keys(USAGE_TYPES).map((key) => `<label>${escapeHtml(usageRule(key).label)}<input name="${key}" type="number" min="0" step="any" value="${rule?.factors[key] ?? (state.usageRules ? usageRule(key).factor : aircraft.settings.landingCoefficients[key] ?? 1)}" required></label>`).join("")}
-        <label>Процент земли<input name="percent" type="number" min="0" max="100" step="any" value="${ground.groundPercent}" required></label>
-        <label>Шаг округления, минут<input name="step" type="number" min="1" step="1" value="${ground.groundRoundingMinutes}" required></label>
-        <label>Направление<select name="direction">${[["nearest","До ближайшего"],["up","Вверх"],["down","Вниз"]].map(([value, name]) => `<option value="${value}" ${ground.groundRoundingDirection === value ? "selected" : ""}>${name}</option>`).join("")}</select></label>
         <button class="primary-button" type="submit">Сохранить для типа</button>
         ${rule ? `<button class="secondary-button" type="button" id="remove-type-rule">Вернуть общие правила</button>` : ""}
       </fieldset>`;
@@ -2051,8 +2706,7 @@
       if (!aircraftTypes.has(type)) return;
       const next = (state.usageTypeOverrides ?? []).filter((entry) => entry.type !== type);
       next.push({ type, factors: Object.fromEntries(Object.keys(USAGE_TYPES).map((key) => [key, Number(data.get(key))])),
-        ground: { groundPercent: Number(data.get("percent")), groundRoundingMinutes: Number(data.get("step")),
-          groundRoundingDirection: String(data.get("direction")) } });
+        ground: state.usageTypeOverrides.find((entry) => entry.type === type)?.ground });
       saveRules(next);
     });
     fields.addEventListener("click", (event) => {
@@ -2067,7 +2721,6 @@
   }
 
   function renderUsageSettings() {
-    const ground = state.sharedGround ?? DEFAULT_AIRCRAFT_SETTINGS;
     const groups = [
       ["Наработка", ["flight", "ground", "maximum"]],
       ["Посадки и зацепы", OPTIONAL_USAGE_TYPES],
@@ -2094,12 +2747,7 @@
         <p class="field-help">Общие коэффициенты служат настройками по умолчанию. Если для типа сохранены свои правила, применяются они.</p>
         <p class="field-help" id="usage-save-status" role="status"></p>
         ${groups.map(([label, keys]) => `<section class="usage-group"><h2>${label}</h2>${usageRows(keys)}</section>`).join("")}
-        <fieldset><legend>Пересчёт земли для двигателей</legend>
-          <label>Процент от округлённой земли<input name="percent" type="number" min="0" max="100" step="any" value="${ground.groundPercent}" required></label>
-          <label>Шаг округления, минут<input name="step" type="number" min="1" step="1" value="${ground.groundRoundingMinutes}" required></label>
-          <label>Направление<select name="direction">${[["nearest","До ближайшего"],["up","Вверх"],["down","Вниз"]].map(([value, label]) => `<option value="${value}" ${ground.groundRoundingDirection === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
-          <p id="ground-example" class="field-help"></p>
-        </fieldset>
+        <p class="field-help">Процент и округление земной наработки задаются в формуляре двигателя.</p>
         <button class="primary-button" type="submit">Сохранить</button>
         <button class="secondary-button" type="button" id="usage-default">Восстановить по умолчанию</button>
       </form>`, { title: "Виды наработки", subtitle: "", back: true, settings: false });
@@ -2172,21 +2820,11 @@
           : "";
         if (key === "ground" && output.textContent) output.textContent += " (пример только для коэффициента)";
       }
-      const { percent, step, direction, groundFactor } = form.elements;
-      const output = document.getElementById("ground-example");
-      output.textContent = "";
-      if (![percent, step, groundFactor].every((field) => field.validity.valid)) return;
-      const example = calc.calculateGroundContribution(13, { stepMinutes: step.valueAsNumber, percent: percent.valueAsNumber, direction: direction.value });
-      const contribution = example.contributionMinutes * groundFactor.valueAsNumber;
-      output.textContent = `Ввод: 13 мин → округление: ${example.roundedMinutes} мин → ${example.percent}%: ${formatNumber(example.contributionMinutes)} мин → в наработку двигателя: ${formatNumber(contribution)} мин (с коэффициентом земли).`;
     }
     form.addEventListener("input", updateExamples);
     form.querySelector("#usage-default").addEventListener("click", () => {
       chooseLayoutAction("Восстановить стандартные виды и коэффициенты?", [["reset","Восстановить"],["cancel","Отмена"]], (action) => {
         if (action !== "reset") return;
-        form.elements.percent.value = DEFAULT_AIRCRAFT_SETTINGS.groundPercent;
-        form.elements.step.value = DEFAULT_AIRCRAFT_SETTINGS.groundRoundingMinutes;
-        form.elements.direction.value = DEFAULT_AIRCRAFT_SETTINGS.groundRoundingDirection;
         for (const [key, title] of Object.entries(USAGE_TYPES)) {
           const label = form.elements.namedItem(`${key}Label`);
           label.value = title;
@@ -2211,17 +2849,13 @@
       event.preventDefault();
       const data = new FormData(event.currentTarget);
       const previousRules = state.usageRules;
-      const previousGround = state.sharedGround;
       state.usageRules = Object.fromEntries(Object.keys(USAGE_TYPES).map((key) => [key, {
         label: String(data.get(`${key}Label`)).trim() || USAGE_TYPES[key],
         factor: Number(data.get(`${key}Factor`)),
         enabled: !OPTIONAL_USAGE_TYPES.includes(key) || data.get(`${key}Enabled`) === "true",
       }]));
-      state.sharedGround = { groundPercent: Number(data.get("percent")), groundRoundingMinutes: Number(data.get("step")),
-        groundRoundingDirection: String(data.get("direction")) };
       if (!saveState()) {
         state.usageRules = previousRules;
-        state.sharedGround = previousGround;
         showToast("Не удалось сохранить настройки на устройстве. Изменения остались в форме.");
         return;
       }
@@ -2294,7 +2928,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.26</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.27</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -2343,6 +2977,7 @@
       navigateTo(button.dataset.boardMenu);
     }));
     document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => {
+      if (button.dataset.view === "usage-map") state.mapShiftId = null;
       navigateTo(button.dataset.view);
     }));
     document.querySelectorAll("[data-aircraft-id]").forEach((button) => button.addEventListener("click", () => {
@@ -2368,6 +3003,7 @@
     if (addResource) addResource.addEventListener("click", () => {
       state.selectedResourceId = null;
       state.pendingResourceObject = addResource.dataset.resourceObject || null;
+      state.pendingResourceOwner = addResource.dataset.resourceOwner || null;
       state.pendingWork = addResource.dataset.work === "true";
       navigateTo("resource-editor");
     });
@@ -2380,6 +3016,10 @@
     document.querySelectorAll("[data-block-id]").forEach((button) => button.addEventListener("click", () => {
       state.selectedBlockId = button.dataset.blockId;
       navigateTo("block");
+    }));
+    document.querySelectorAll("[data-shift-id]").forEach((button) => button.addEventListener("click", () => {
+      state.selectedShiftId = button.dataset.shiftId;
+      navigateTo("shift-entry");
     }));
     bindResourceButtons();
   }
@@ -2402,9 +3042,11 @@
           <p class="field-help">Новый тип можно добавить в общих настройках.</p>
           <label>Бортовой номер<input name="boardNumber" type="text" required></label>
           <label>Заводской номер<input name="serialNumber" type="text"></label>
-          <label>RF<input name="rfNumber" type="text" placeholder="Например, 33738"></label>` : `
+          <label>RF<input name="rfNumber" type="text" placeholder="Например, 33738"></label>
+          <fieldset><legend>Показатели записи работы</legend>${sourceCheckboxes()}</fieldset>` : `
           <label>Название<input name="name" type="text" required></label>
           <label>Тип карточки<select name="kind"><option value="unit">Агрегат</option><option value="engine">Двигатель</option><option value="airframe">Планер</option></select></label>
+          <label>Номер агрегата<input name="serialNumber" type="text"></label>
           <label>Описание<input name="caption" type="text"></label>`}
         <p id="creation-error" role="alert"></p>
         <button class="primary-button" type="submit">${title}</button>
@@ -2416,12 +3058,12 @@
         document.getElementById("creation-error").textContent = "Заполни обязательные поля.";
         return;
       }
-      if (aircraftForm) createAircraft(data);
+      if (aircraftForm) createAircraft({ ...data, enabledUsageSources: enabledSourcesFromForm({}, new FormData(event.currentTarget)) });
       else createBlock(data);
     });
   }
 
-  function createAircraft({ type, boardNumber, serialNumber, rfNumber }) {
+  function createAircraft({ type, boardNumber, serialNumber, rfNumber, enabledUsageSources }) {
     const template = state.typeSettings.find((entry) => entry.type.toLowerCase() === type.toLowerCase());
     const sameType = state.aircraft.find((item) => item.type.toLowerCase() === type.toLowerCase());
     const id = `aircraft-${Date.now()}`;
@@ -2429,6 +3071,7 @@
       id,
       type: type.trim(),
       boardNumber: boardNumber.trim(),
+      enabledUsageSources,
       serialNumber: serialNumber || "Не указан",
       rfNumber: (rfNumber || "").replace(/^RF[\s-]*/i, ""),
       notifications: state.globalNotifications,
@@ -2456,12 +3099,13 @@
     showToast("Самолёт добавлен");
   }
 
-  function createBlock({ name, kind, caption }) {
+  function createBlock({ name, kind, caption, serialNumber }) {
     const aircraft = selectedAircraft();
     aircraft.blocks.push(normalizeBlock({
       id: `unit-${Date.now()}`,
       kind,
       name: name.trim(),
+      serialNumber,
       caption: caption.trim(),
       status: "ok",
       ...(kind === "engine" ? { sneMinutes: 0, starts: 0 } : {}),
