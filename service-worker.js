@@ -1,9 +1,10 @@
-const CACHE = "aviation-resource-prototype-v1";
+const CACHE = "aviation-resource-template-exp2";
 const ASSETS = [
   "./",
   "./index.html",
   "./src/styles.css",
   "./src/calculations.js",
+  "./src/aircraft-templates.js",
   "./src/app.js",
   "./manifest.webmanifest",
   "./media/app-icon.svg"

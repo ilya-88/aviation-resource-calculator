@@ -29,12 +29,15 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends Activity {
     private static final int PICK_BOARD_IMAGE = 1002;
     private static final int PICK_AIRCRAFT_TEMPLATE = 1003;
+    private static final int SAVE_AIRCRAFT_TEMPLATE = 1004;
     private static final int TEMPLATE_FILE_LIMIT = 256 * 1024;
+    private byte[] pendingTemplate;
     private android.webkit.ValueCallback<Uri[]> boardImagePicker;
     private static final String DIAGNOSTIC_PREFS = "touch_diagnostics";
     private static final String TOUCH_LOG = "events";
@@ -74,6 +77,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) pendingTemplate = savedInstanceState.getByteArray("pendingAircraftTemplate");
         getWindow().setStatusBarColor(Color.rgb(18, 38, 58));
         getWindow().setNavigationBarColor(Color.rgb(255, 255, 255));
         createNotificationChannel();
@@ -196,6 +200,12 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onSaveInstanceState(Bundle state) {
+        super.onSaveInstanceState(state);
+        if (pendingTemplate != null) state.putByteArray("pendingAircraftTemplate", pendingTemplate);
+    }
+
+    @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent result) {
         super.onActivityResult(requestCode, resultCode, result);
         if (requestCode == PICK_AIRCRAFT_TEMPLATE) {
@@ -203,11 +213,31 @@ public class MainActivity extends Activity {
             if (uri != null) new Thread(() -> readAircraftTemplate(uri)).start();
             return;
         }
+        if (requestCode == SAVE_AIRCRAFT_TEMPLATE) {
+            Uri uri = resultCode == RESULT_OK && result != null ? result.getData() : null;
+            byte[] data = pendingTemplate;
+            pendingTemplate = null;
+            if (uri != null && data != null) new Thread(() -> writeAircraftTemplate(uri, data)).start();
+            return;
+        }
         if (requestCode != PICK_BOARD_IMAGE || boardImagePicker == null) return;
         android.webkit.ValueCallback<Uri[]> callback = boardImagePicker;
         boardImagePicker = null;
         Uri uri = resultCode == RESULT_OK && result != null ? result.getData() : null;
         callback.onReceiveValue(uri != null ? new Uri[]{uri} : null);
+    }
+
+    private void writeAircraftTemplate(Uri uri, byte[] data) {
+        String message;
+        try (OutputStream output = getContentResolver().openOutputStream(uri, "wt")) {
+            if (output == null) throw new IOException("Missing output stream");
+            output.write(data);
+            message = "Файл шаблона сохранён";
+        } catch (IOException | SecurityException error) {
+            message = "Не удалось сохранить файл";
+        }
+        String status = message;
+        runOnUiThread(() -> Toast.makeText(this, status, Toast.LENGTH_SHORT).show());
     }
 
     private void readAircraftTemplate(Uri uri) {
@@ -242,6 +272,27 @@ public class MainActivity extends Activity {
     }
 
     public class AndroidBridge {
+        @JavascriptInterface
+        public void saveAircraftTemplate(String filename, String text) {
+            if (filename == null || !filename.matches("[a-z][a-z0-9-]{0,47}\\.json") || text == null) return;
+            byte[] data = text.getBytes(StandardCharsets.UTF_8);
+            if (data.length > TEMPLATE_FILE_LIMIT) return;
+            runOnUiThread(() -> {
+                if (pendingTemplate != null) return;
+                Intent picker = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                picker.addCategory(Intent.CATEGORY_OPENABLE);
+                picker.setType("application/json");
+                picker.putExtra(Intent.EXTRA_TITLE, filename);
+                pendingTemplate = data;
+                try {
+                    startActivityForResult(picker, SAVE_AIRCRAFT_TEMPLATE);
+                } catch (android.content.ActivityNotFoundException error) {
+                    pendingTemplate = null;
+                    Toast.makeText(MainActivity.this, "Файловый менеджер недоступен", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
         @JavascriptInterface
         public void pickAircraftTemplate() {
             runOnUiThread(() -> {

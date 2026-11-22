@@ -7,10 +7,10 @@
     { "id": "airframe", "kind": "airframe", "label": "Формуляр самолёта" },
     { "id": "engine-left", "kind": "engine", "label": "Левый двигатель", "model": "AL-31F · 3-я серия" },
     { "id": "engine-right", "kind": "engine", "label": "Правый двигатель", "model": "AL-31F · 3-я серия" },
-    { "id": "vka-1", "kind": "unit", "label": "ВКА № 1", "model": "Выносная коробка агрегатов" },
-    { "id": "vka-2", "kind": "unit", "label": "ВКА № 2", "model": "Выносная коробка агрегатов" },
-    { "id": "gtde-1", "kind": "unit", "label": "ГТД-Э № 1", "model": "Газотурбинный двигатель пусковой установки" },
-    { "id": "gtde-2", "kind": "unit", "label": "ГТД-Э № 2", "model": "Газотурбинный двигатель пусковой установки" }
+    { "id": "vka-1", "kind": "unit", "label": "Левая ВКА", "model": "Выносная коробка агрегатов", "engineLink": { "source": "engine-left", "counters": "all" } },
+    { "id": "vka-2", "kind": "unit", "label": "Правая ВКА", "model": "Выносная коробка агрегатов", "engineLink": { "source": "engine-right", "counters": "all" } },
+    { "id": "gtde-1", "kind": "unit", "label": "Левый ГТДЭ", "model": "Газотурбинный двигатель пусковой установки", "engineLink": { "source": "engine-left", "counters": ["starts"] } },
+    { "id": "gtde-2", "kind": "unit", "label": "Правый ГТДЭ", "model": "Газотурбинный двигатель пусковой установки", "engineLink": { "source": "engine-right", "counters": ["starts"] } }
   ],
   "repeatGroups": [
     { "id": "sorties", "scope": "board", "label": "Вылеты" },

@@ -8,6 +8,16 @@
   const landingRoles = ["runway", "carrier", "touch", "circuit", "arresterHooks"];
   const counterRoles = ["starts", "total", "flight", "ground", "or", "combat", "combined"];
   const scopes = ["board", "engine"];
+  const layoutTabs = ["works", "aggregates", "least-reliable"];
+  const navigationKeys = ["widget:board-tabs", "widget:board-aggregates", "widget:board-resources"];
+  const layoutKeys = ["flightSne", "flightPpr", "landingSne", "landingPpr", "widget:resources", "widget:shift",
+    "widget:add-block:aggregates", "widget:add-resource:works", "widget:add-resource:least-reliable", "widget:reports"];
+  const legacySu33Units = [
+    { id: "vka-1", oldLabel: "ВКА № 1", label: "Левая ВКА", source: "engine-left", counters: "all" },
+    { id: "vka-2", oldLabel: "ВКА № 2", label: "Правая ВКА", source: "engine-right", counters: "all" },
+    { id: "gtde-1", oldLabel: "ГТД-Э № 1", label: "Левый ГТДЭ", source: "engine-left", counters: ["starts"] },
+    { id: "gtde-2", oldLabel: "ГТД-Э № 2", label: "Правый ГТДЭ", source: "engine-right", counters: ["starts"] },
+  ];
 
   function requireValue(condition, message) {
     if (!condition) throw new Error(message);
@@ -44,7 +54,60 @@
     return { id, label: label(row.label, id), type, format: type === "duration" ? row.format : "count", scope };
   }
 
+  function upgradeLegacySu33(template) {
+    if (template?.id !== "su-33" || template.schemaVersion !== 1 || !Array.isArray(template.positions) ||
+        !legacySu33Units.every((unit) => template.positions.some((position) =>
+          position?.id === unit.id && position.kind === "unit" && position.label === unit.oldLabel && !position.engineLink))) return template;
+    return { ...template, positions: template.positions.map((position) => {
+      const unit = legacySu33Units.find((entry) => entry.id === position?.id);
+      if (!unit) return position;
+      return { ...position, label: unit.label, engineLink: { source: unit.source, counters: unit.counters } };
+    }) };
+  }
+
+  function positionCounters(template, position) {
+    if (position?.kind === "engine" || position?.engineLink?.counters === "all") return template.engineCounters;
+    if (!position?.engineLink) return [];
+    return template.engineCounters.filter((field) => position.engineLink.counters.includes(field.id));
+  }
+
+  function validateLayout(layout, positions) {
+    requireValue(layout && typeof layout === "object" && !Array.isArray(layout), "Некорректная раскладка карточек");
+    const validKeys = [...layoutKeys, ...positions.map((position) => `slot:${position.id}`)];
+    function tile(row, allowed) {
+      requireValue(Array.isArray(row.keys) && row.keys.length > 0 && row.keys.every((key) => allowed.includes(key)),
+        "Раскладка ссылается на неизвестную карточку");
+      const clean = { keys: [...row.keys], wide: row.wide === true };
+      for (const [key, min, max] of [["span", 2, 12], ["columnStart", 1, 120], ["height", 0, 10000], ["font", 0.65, 1.7]]) {
+        if (row[key] == null) continue;
+        requireValue(Number.isFinite(row[key]) && row[key] >= min && row[key] <= max &&
+          (key !== "columnStart" || Number.isInteger(row[key])), `Недопустимый размер или положение карточки: ${key}`);
+        clean[key] = row[key];
+      }
+      if (row.labels) clean.labels = Object.fromEntries(row.keys.filter((key) => Object.hasOwn(row.labels, key))
+        .map((key) => [key, label(row.labels[key], "подпись карточки")]));
+      return clean;
+    }
+    const tabs = Object.fromEntries(layoutTabs.filter((tab) => layout.tabs?.[tab] != null).map((tab) => {
+      const tiles = list(layout.tabs[tab], "карточки", (row) => tile(row, validKeys));
+      const keys = tiles.flatMap((row) => row.keys);
+      requireValue(new Set(keys).size === keys.length, "Карточка указана в раскладке дважды");
+      return [tab, tiles];
+    }));
+    const navigation = layout.navigation == null ? null : list(layout.navigation, "вкладки раскладки", (row) => {
+      requireValue(Number.isInteger(row.index) && row.index >= 0 && row.index <= 120 && row.tile, "Некорректное положение вкладки");
+      return { index: row.index, tile: tile(row.tile, navigationKeys) };
+    });
+    if (navigation) {
+      const keys = navigation.flatMap((row) => row.tile.keys);
+      requireValue(keys.length === navigationKeys.length && new Set(keys).size === navigationKeys.length,
+        "Раскладка должна содержать все вкладки по одному разу");
+    }
+    return { tabs, ...(navigation && { navigation }) };
+  }
+
   function validateTemplate(document) {
+    document = upgradeLegacySu33(document);
     requireValue(document && document.schemaVersion === 1, "Поддерживается версия шаблона 1");
     const id = identifier(document.id, "шаблон");
     const name = label(document.name, id);
@@ -52,7 +115,8 @@
       const position = identifier(row.id, "позиция");
       requireValue(position !== "board", "Идентификатор board занят данными самолёта");
       requireValue(["airframe", "engine", "unit"].includes(row.kind), `Неизвестный вид формуляра: ${position}`);
-      return { id: position, label: label(row.label, position), kind: row.kind, model: row.model ? label(row.model, position) : "" };
+      return { id: position, label: label(row.label, position), kind: row.kind, model: row.model ? label(row.model, position) : "",
+        ...(row.engineLink != null && { engineLink: row.engineLink }) };
     });
     unique(positions, "id", "позиции");
     requireValue(positions.filter((row) => row.kind === "airframe").length === 1, "Шаблону нужен один формуляр самолёта");
@@ -96,6 +160,16 @@
     });
     unique(counters, "id", "графы двигателя");
     unique(counters.filter((row) => row.role), "role", "счётчики двигателя");
+    for (const position of positions.filter((row) => row.engineLink != null)) {
+      const { source, counters: selected } = position.engineLink;
+      requireValue(position.kind === "unit" && positions.some((row) => row.id === source && row.kind === "engine"),
+        `Укажи двигатель для агрегата: ${position.id}`);
+      requireValue(selected === "all" ? counters.length > 0 : Array.isArray(selected) && selected.length > 0 &&
+        selected.length <= counters.length && new Set(selected).size === selected.length &&
+        selected.every((key) => counters.some((counter) => counter.id === key)),
+      `Укажи существующие графы для агрегата: ${position.id}`);
+      position.engineLink = { source, counters: selected === "all" ? selected : [...selected] };
+    }
     const engineInput = (key) => inputs.find((row) => row.id === key && row.scope === "engine");
     const rules = list(document.rules || [], "правила начисления", (row) => {
       const target = counters.find((counter) => counter.id === row.target);
@@ -122,8 +196,9 @@
     });
     requireValue(positions.some((row) => row.kind === "engine") || (counters.length === 0 && !inputs.some((row) => row.scope === "engine")),
       "Поля двигателя требуют хотя бы одну позицию двигателя");
+    const layout = document.layout == null ? null : validateLayout(document.layout, positions);
     return { schemaVersion: 1, id, name, workTitle: label(document.workTitle || "Исходные данные работы", "форма ввода"),
-      positions, repeatGroups: groups, inputs, engineCounters: counters, rules, checks };
+      positions, repeatGroups: groups, inputs, engineCounters: counters, rules, checks, ...(layout && { layout }) };
   }
 
   function parseValue(field, raw) {
@@ -191,5 +266,5 @@
     return { values, counters, steps };
   }
 
-  return { validateTemplate, calculate, formatValue };
+  return { validateTemplate, calculate, formatValue, positionCounters, upgradeLegacySu33, layoutKeys };
 });

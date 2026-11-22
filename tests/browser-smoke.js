@@ -106,9 +106,18 @@ async function main() {
       const types = board().blocks.reduce((counts, block) => ({ ...counts, [block.kind]: (counts[block.kind] || 0) + 1 }), {});
       const engine = slot => board().blocks.find(block => block.templateSlotId === slot);
       const openEngine = slot => click('[data-block-id="' + engine(slot).id + '"]');
+      const engineInputOrder = 'starts ground-b ground-b-ub flight-b flight-b-ub maximum-or maximum-or-b maximum-b-ub';
       function record(both) {
         click('[data-view="shift"]');
         const form = document.querySelector('#template-work-form');
+        const scopes = [...form.querySelectorAll('[data-template-scope]')];
+        const fieldOrder = scope => [...scope.querySelectorAll('[data-template-field]')].map(field => field.dataset.templateField).join(' ');
+        const orderedInputs = form.elements.date.compareDocumentPosition(scopes[0]) === Node.DOCUMENT_POSITION_FOLLOWING &&
+          fieldOrder(scopes[0]) === 'board-flight runway hooks' &&
+          scopes.slice(1).map(scope => scope.dataset.templateScope).join(' ') === 'engine-left engine-right' &&
+          scopes.slice(1).every(scope => fieldOrder(scope) === engineInputOrder &&
+            scope.querySelector('[data-template-field="ground-b-ub"]').getBoundingClientRect().top <
+            scope.querySelector('[data-template-field="flight-b"]').getBoundingClientRect().top);
         const set = (slot, key, value, row = 0) => {
           form.querySelectorAll('[data-template-scope="' + slot + '"] [data-template-field="' + key + '"]')[row].value = value;
         };
@@ -127,6 +136,10 @@ async function main() {
           })) set(slot, key, value);
         }
         if (both) {
+          click('[data-template-scope="engine-right"] [data-template-add]');
+          set('engine-right', 'starts', '2');
+          set('engine-right', 'ground-b', '00:00', 1);
+          set('engine-right', 'ground-b-ub', '00:00', 1);
           set('engine-right', 'flight-b-ub', '01:00');
           set('engine-left', 'maximum-b-ub', '00:00:06');
           form.dispatchEvent(new Event('input'));
@@ -136,7 +149,7 @@ async function main() {
         form.dispatchEvent(new Event('input'));
         const preview = document.querySelector('#template-preview').textContent;
         form.requestSubmit();
-        return { rowsRemoved, preview };
+        return { orderedInputs, rowsRemoved, preview };
       }
       const first = record(true);
       const firstWork = board().shifts.at(-1);
@@ -144,26 +157,65 @@ async function main() {
       const routed = pair[0].blockId === engine('engine-left').id && pair[1].blockId === engine('engine-right').id &&
         pair[0].counters['total-b'] === 43 * 60 && pair[0].counters['total-b-ub'] === 55 * 60 &&
         pair[1].counters['total-b-ub'] === 65 * 60 && firstWork.flightMinutes === 60;
-      const noUnitDefaults = board().blocks.filter(block => block.kind === 'unit').every(block => !block.sneMinutes && !block.sneLandings);
+      const pairedCounters = [
+        ['vka-1', 'Левая ВКА', 1, 55], ['vka-2', 'Правая ВКА', 2, 65],
+        ['gtde-1', 'Левый ГТДЭ', 1, undefined], ['gtde-2', 'Правый ГТДЭ', 2, undefined],
+      ].every(([slot, name, starts, minutes]) => {
+        const unit = engine(slot);
+        const entry = firstWork.templateWork.units.find(row => row.blockId === unit.id);
+        return unit.name === name && unit.starts === starts && unit.sneMinutes === minutes && !unit.sneLandings &&
+          entry.counters.starts === starts && (minutes != null || Object.keys(entry.counters).join() === 'starts');
+      });
       const maximas = Object.entries(pair[0].counters).filter(([key]) => key.startsWith('maximum')).map(([,value]) => value);
       openEngine('engine-left');
-      const rows = document.querySelector('.template-table').textContent.includes('00:00:03') &&
-        document.querySelector('.template-table').textContent.includes('00:55') &&
-        document.querySelector('.template-table').textContent.includes('Работа на заказ');
+      const logColumns = () => [...document.querySelectorAll('.template-table thead th')].map(header => header.textContent);
+      const orderedHeadings = [
+        'Дата работы', 'Запуски', 'Земля · Б', 'Земля · Б + УБ', 'Полёт · Б', 'Полёт · Б + УБ', 'Максимал · ОР',
+        'Максимал · ОР + Б', 'Максимал · Б + УБ', 'Итог · Б', 'Итог · Б + УБ', 'Работа на заказ',
+      ].join('|');
+      const logValues = () => [...document.querySelectorAll('.template-table tbody tr:first-child td')].map(cell => cell.textContent).join('|');
+      const leftLog = logColumns().join('|') === orderedHeadings &&
+        logValues() === '1 / 1|00:13|00:23|00:40|00:50|00:00:03|00:00:08|00:00:12|00:43|00:55|—';
+      const logBeforeSettings = document.querySelector('.template-table').compareDocumentPosition(document.querySelector('#block-form')) === Node.DOCUMENT_POSITION_FOLLOWING;
       const repair = document.querySelector('#block-event-form');
       repair.elements.type.value = 'repair';
       repair.requestSubmit();
       back();
       openEngine('engine-right');
+      const rightLog = logColumns().join('|') === orderedHeadings &&
+        logValues() === '2 / 2|00:13|00:23|00:40|01:00|00:00:03|00:00:08|00:00:12|00:43|01:05|—';
       const event = document.querySelector('#block-event-form');
       event.elements.type.value = 'dismantle';
       event.requestSubmit();
       back();
+      const vkaLogs = ['vka-1', 'vka-2'].every((slot, index) => {
+        openEngine(slot);
+        const match = logColumns().join('|') === orderedHeadings && logValues().split('|')[9] === ['00:55', '01:05'][index];
+        back();
+        return match;
+      });
+      const gtdeLogs = ['gtde-1', 'gtde-2'].every((slot, index) => {
+        openEngine(slot);
+        const match = logColumns().join('|') === 'Дата работы|Запуски|Сумма СНЭ|Сумма ППР' &&
+          logValues() === [index + 1, index + 1, '—'].join('|');
+        if (index === 0) {
+          const unitRepair = document.querySelector('#block-event-form');
+          unitRepair.elements.type.value = 'repair';
+          unitRepair.requestSubmit();
+        }
+        back();
+        return match;
+      });
       const pendingRecord = record(true);
       const pending = board().shifts.at(-1).templateWork.engines[1];
       openEngine('engine-left');
       const totals = [...document.querySelectorAll('.template-table tfoot tr')].map(row => row.textContent);
       const repairs = totals[0].includes('01:50') && totals[1].includes('ППР') && totals[1].includes('00:55');
+      back();
+      openEngine('gtde-1');
+      const gtdePpr = [...document.querySelectorAll('.template-table tbody tr')].map(row =>
+        [...row.querySelectorAll('td')].map(cell => cell.textContent).join('|')).join('/') === '1|1|—/1|2|1' &&
+        engine('gtde-1').pprStarts === 1 && engine('gtde-2').pprStarts == null;
       back();
       click('[data-aircraft-tab="works"]');
       click('[data-shift-id]');
@@ -180,15 +232,146 @@ async function main() {
       replacement.elements.serialNumber.value = 'TEST-02';
       replacement.requestSubmit();
       record(false);
-      const next = board().shifts.at(-1).templateWork.engines[1];
+      const latest = board().shifts.at(-1).templateWork;
+      const next = latest.engines[1];
       const replaces = next.blockId !== pair[1].blockId && next.serialNumber === 'TEST-02' &&
         board().shifts[0].templateWork.engines[1].blockId === pair[1].blockId;
-      return { empty, imported, types, routed, noUnitDefaults, maximas, rows, repairs, replaces, preview: first.preview.includes('00:43'),
+      const excludesUnpairedUnits = latest.units.length === 0 && engine('gtde-2').starts === 2;
+      return { empty, imported, types, routed, pairedCounters, vkaLogs, gtdeLogs, gtdePpr, excludesUnpairedUnits,
+        maximas, orderedInputs: first.orderedInputs, leftLog, rightLog,
+        logBeforeSettings, repairs, replaces, preview: first.preview.includes('00:43'),
         rowsRemoved: first.rowsRemoved, pending: pending.pending && !pending.blockId && pendingRecord.preview.includes('ожидает привязки'), showsRaw };
     })()`);
-    assert.deepEqual(experimental, { empty: true, imported: true, types: {airframe:1, engine:2, unit:4}, routed: true, noUnitDefaults: true,
-      maximas: [3,8,12], rows: true, repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
+    assert.deepEqual(experimental, { empty: true, imported: true, types: {airframe:1, engine:2, unit:4}, routed: true,
+      pairedCounters: true, vkaLogs: true, gtdeLogs: true, gtdePpr: true, excludesUnpairedUnits: true,
+      maximas: [3,8,12], orderedInputs: true, leftLog: true, rightLog: true, logBeforeSettings: true,
+      repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
     results.templateExperiment = "ok";
+    const portable = await evaluate(`(async () => {
+      const click = selector => {
+        const node = document.querySelector(selector);
+        if (!node) throw new Error('Не найдено: ' + selector);
+        node.click();
+      };
+      const back = () => window.handleAndroidBack();
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
+      const catalog = () => { click('[data-action="settings"]'); click('[data-view="aircraft-types"]'); };
+      function create(type, number) {
+        click('[data-action="add-aircraft"]');
+        const form = document.querySelector('#creation-form');
+        form.elements.type.value = type;
+        form.elements.type.dispatchEvent(new Event('change'));
+        form.elements.boardNumber.value = number;
+        form.requestSubmit();
+      }
+      back();
+      catalog();
+      click('#create-aircraft-template');
+      const blank = document.querySelector('#template-editor-form');
+      blank.elements.name.value = 'Шаблон с нуля';
+      blank.requestSubmit();
+      const blankSaved = read().templateCatalog.some(item => item.name === 'Шаблон с нуля' && item.positions.length === 1);
+      click('[data-copy-template="0"]');
+      const form = document.querySelector('#template-editor-form');
+      form.elements.name.value = 'Четыре двигателя';
+      form.elements.id.value = 'example-four';
+      const set = (index, values) => {
+        const row = form.querySelectorAll('[data-template-entry="positions"]')[index];
+        for (const [key, value] of Object.entries(values)) {
+          const input = row.querySelector('[data-property="' + key + '"]');
+          input.value = value;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      };
+      for (let index = 1; index <= 4; index++) {
+        if (index >= 3) click('[data-template-edit="add"][data-list="positions"]');
+        set(index < 3 ? index : index + 4, { id: 'motor-' + index, kind: 'engine', label: 'Двигатель ' + index });
+      }
+      for (let index = 3; index <= 6; index++) set(index, { linkSource: 'motor-' + (index % 2 === 1 ? 1 : 2) });
+      click('[data-template-edit="add"][data-list="positions"]');
+      set(9, { id: 'unit-four', kind: 'unit', label: 'Связанный агрегат 4', linkSource: 'motor-4', linkCounters: 'starts' });
+      form.requestSubmit();
+      const saved = read().templateCatalog.find(item => item.id === 'example-four');
+      if (!saved) throw new Error(document.querySelector('#template-editor-error').textContent);
+      back();
+      back();
+      create(saved.name, '401');
+      const board = () => read().aircraft.find(row => row.boardNumber === '401');
+      click('[data-view="shift"]');
+      const work = document.querySelector('#template-work-form');
+      for (let i = 1; i <= 4; i++) {
+        const scope = work.querySelector('[data-template-scope="motor-' + i + '"]');
+        const values = { starts: '1', 'ground-b': '00:13', 'ground-b-ub': '00:23', 'flight-b': '00:' + i + '0', 'flight-b-ub': '00:' + i + '0' };
+        for (const [key, value] of Object.entries(values)) scope.querySelector('[data-template-field="' + key + '"]').value = value;
+      }
+      work.requestSubmit();
+      const savedWork = board().shifts.at(-1).templateWork;
+      const fourTotals = savedWork.engines.map(row => row.counters['total-b-ub'] / 60).join(',') === '15,25,35,45' &&
+        savedWork.units.some(row => row.slotId === 'unit-four' && row.counters.starts === 1);
+      click('[data-aircraft-tab="works"]');
+      click('[data-view="reports"]');
+      const report = [...document.querySelectorAll('#report-results .accrual-items li strong')].map(element => element.textContent).join('|');
+      back();
+      click('[data-aircraft-tab="aggregates"]');
+      const oldId = board().blocks.find(block => block.templateSlotId === 'motor-4').id;
+      const target = document.querySelector('[data-block-id="' + oldId + '"]');
+      target.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [new Touch({ identifier: 1, target, clientX: 20, clientY: 20 })] }));
+      await new Promise(resolve => setTimeout(resolve, 750));
+      target.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true }));
+      const active = '.counter-tile-active';
+      const priorIndex = document.querySelector(active).dataset.counterIndex;
+      click(active + ' [data-layout-action="up"]');
+      const movedIndex = Number(document.querySelector(active).dataset.counterIndex);
+      click(active + ' [data-layout-action="size"]');
+      click(active + ' [data-layout-action="edit"]');
+      let dialog = document.querySelector('dialog[open]');
+      dialog.querySelector('input').value = 'Мой двигатель 4';
+      await new Promise(resolve => {
+        dialog.addEventListener('close', resolve, { once: true });
+        dialog.querySelector('[value="save"]').click();
+      });
+      click('#layout-save');
+      click('[data-action="settings"]');
+      let payload;
+      window.AndroidBridge = { saveAircraftTemplate(filename, json) { payload = { filename, json }; } };
+      click('#export-board-template');
+      delete window.AndroidBridge;
+      const exported = JSON.parse(payload.json);
+      const layout = exported.layout.tabs.aggregates;
+      const tile = layout.find(item => item.keys.includes('slot:motor-4'));
+      const exportOk = payload.filename === 'example-four.json' && movedIndex < Number(priorIndex) &&
+        tile.labels['slot:motor-4'] === 'Мой двигатель 4' && Boolean(tile.span) &&
+        !payload.json.includes(oldId) && !exported.shifts && !exported.boardNumber;
+      back();
+      back();
+      catalog();
+      exported.id = 'portable-four';
+      exported.name = 'Перенесённый шаблон';
+      const wrapper = new DataTransfer();
+      wrapper.items.add(new File([JSON.stringify(exported)], 'portable-four.json', { type:'application/json' }));
+      const picker = document.querySelector('#aircraft-template-file');
+      picker.files = wrapper.files;
+      picker.dispatchEvent(new Event('change'));
+      for (let attempt = 0; attempt < 30 && !document.querySelector('dialog[open]'); attempt++) await new Promise(resolve => setTimeout(resolve, 25));
+      dialog = document.querySelector('dialog[open]');
+      if (!dialog) throw new Error(document.querySelector('#template-import-status').textContent);
+      await new Promise(resolve => {
+        dialog.addEventListener('close', resolve, { once: true });
+        dialog.querySelector('[value="import"]').click();
+      });
+      back();
+      back();
+      create(exported.name, '402');
+      const instance = read().aircraft.find(row => row.boardNumber === '402');
+      const newId = instance.blocks.find(block => block.templateSlotId === 'motor-4').id;
+      const content = document.querySelector('[data-block-id="' + newId + '"]');
+      const remapped = instance.boardLayouts.aggregates[layout.indexOf(tile)].keys.includes('widget:' + newId) &&
+        content.textContent.includes('Мой двигатель 4') &&
+        instance.boardLayouts.aggregates[layout.indexOf(tile)].span === tile.span && !instance.shifts.length;
+      return { blankSaved, fourTotals, report, exportOk, remapped };
+    })()`);
+    assert.deepEqual(portable, { blankSaved: true, fourTotals: true, report: "Двигатель 1|Двигатель 2|Двигатель 3|Двигатель 4", exportOk: true, remapped: true });
+    results.portableFourEngineTemplate = "ok";
     if (process.argv.includes("--templates-only")) {
       process.stdout.write(`${JSON.stringify(results)}\n`);
       return;

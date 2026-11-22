@@ -238,6 +238,7 @@ button.setting-row { cursor: pointer; }
 .type-trash-row, .type-trash-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 #aircraft-template-file[hidden], #template-new-slot[hidden] { display: none; }
 .template-repeat, .template-rows { display: grid; gap: 8px; }
+.template-inputs > .template-repeat { grid-column: 1 / -1; }
 .template-row { border-inline-start: 2px solid var(--line); padding-inline-start: 10px; align-items: end; }
 .template-row [data-template-remove] { justify-self: start; }
 .template-scope .field-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -247,6 +248,10 @@ button.setting-row { cursor: pointer; }
 .template-table { width: max-content; }
 .template-table :is(td, th) { white-space: nowrap; padding: 8px 10px; }
 .template-table tfoot { font-weight: 700; }
+.template-editor-section > summary { cursor: pointer; font-weight: 650; margin-bottom: 8px; }
+.template-editor-section [data-template-list] { display: grid; gap: 8px; }
+.template-editor-section > button { margin-top: 8px; }
+.template-editor-entry [hidden] { display: none; }
 #aircraft-type-form label { width: 100%; }
 .settings-section-heading { margin-top: 28px; }
 .compact-metrics { margin: 4px 0 0; }

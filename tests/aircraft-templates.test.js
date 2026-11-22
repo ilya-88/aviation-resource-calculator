@@ -30,6 +30,39 @@ test("земля суммируется до округления, итог и �
   assert.throws(() => templates.calculate(parsed, data, "engine"), /количеством запусков/);
 });
 
+test("старый Су-33 сохраняет позиции и получает связи по сторонам", () => {
+  const legacy = structuredClone(su33);
+  ["ВКА № 1", "ВКА № 2", "ГТД-Э № 1", "ГТД-Э № 2"].forEach((label, index) => {
+    legacy.positions[3 + index].label = label;
+    delete legacy.positions[3 + index].engineLink;
+  });
+  const parsed = templates.validateTemplate(legacy);
+  assert.deepEqual(parsed, templates.validateTemplate(su33));
+  assert.deepEqual(parsed.positions.slice(3).map((position) => position.engineLink.source),
+    ["engine-left", "engine-right", "engine-left", "engine-right"]);
+  assert.deepEqual(templates.positionCounters(parsed, parsed.positions[3]), parsed.engineCounters);
+  assert.deepEqual(templates.positionCounters(parsed, parsed.positions[5]).map(({ id }) => id), ["starts"]);
+  legacy.positions = structuredClone(su33.positions);
+  legacy.positions[5].engineLink.source = "vka-1";
+  assert.throws(() => templates.validateTemplate(legacy), /Укажи двигатель для агрегата/);
+  legacy.positions[5].engineLink = { source: "engine-left", counters: ["unknown"] };
+  assert.throws(() => templates.validateTemplate(legacy), /Укажи существующие графы/);
+});
+
+test("раскладка принимает позицию шаблона, числовые размеры и подпись карточки", () => {
+  const document = structuredClone(su33);
+  const tile = { keys: ["slot:engine-left"], span: 4.3, height: 128, columnStart: 10, font: 0.87,
+    labels: { "slot:engine-left": "Свой двигатель" } };
+  document.layout = { tabs: { aggregates: [tile] } };
+  const parsed = templates.validateTemplate(document);
+  assert.deepEqual(parsed.layout.tabs.aggregates[0], { ...tile, wide: false });
+  tile.span = "4.3; color: red";
+  assert.throws(() => templates.validateTemplate(document), /Недопустимый размер/);
+  tile.span = 4;
+  tile.keys = ["slot:absent"];
+  assert.throws(() => templates.validateTemplate(document), /неизвестную карточку/);
+});
+
 test("неподдерживаемая операция и несовместимый тип отклоняются при импорте", () => {
   const copy = structuredClone(su33);
   copy.rules[0].operation = "unknown";
