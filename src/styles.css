@@ -334,6 +334,7 @@ button.setting-row { cursor: pointer; }
   stroke: #be6037;
   stroke-dasharray: 4 4;
 }
+.map-wire--counter { stroke-dasharray: 3 4; }
 
 .map-wire--selected {
   stroke: #428ce7;

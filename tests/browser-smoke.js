@@ -660,6 +660,11 @@ async function main() {
       click('[data-map-select="' + block.id + '"]');
       const map = document.querySelector('#map-details').textContent.includes('× 2');
       const connected = document.querySelector('[data-map-target="' + block.id + '"]').classList.contains('map-node--linked');
+      const pump = read().blocks.find(item => item.name === 'ВКА');
+      click('[data-map-select="' + pump.id + '"]');
+      const unlinkedWithCounters = document.querySelector('[data-map-target="' + pump.id + '"]').classList.contains('map-node--unlinked') &&
+        document.querySelector('#map-details').textContent.includes('Счётчик формуляра') &&
+        !document.querySelector('#map-details').textContent.includes('Списание ресурса');
       window.handleAndroidBack();
       click('[data-aircraft-tab="aggregates"]');
       openBlock('Правый двигатель');
@@ -697,14 +702,14 @@ async function main() {
       const shift = board.shifts.at(-1);
       const saved = board.resources.find(item => item.object === 'ГАК');
       const hook = board.blocks.find(item => item.name === 'ГАК');
-      return { map, connected, preview, copied, amount: shift.accruals.find(item => item.resourceId === saved.id).amount,
+      return { map, connected, unlinkedWithCounters, preview, copied, amount: shift.accruals.find(item => item.resourceId === saved.id).amount,
         remaining: saved.remaining, previous: shift.revisions[0].raw.arresterHooks, kind: shift.operationLabel,
         rightFlight: shift.engineAccruals.find(item => item.blockId === 'engine-right').flightMinutes,
         rightTotal: shift.engineAccruals.find(item => item.blockId === 'engine-right').minutes,
         historyBeforeRepair: hook.historicalRepairs[2].beforeRepair.sneMinutes, repairs: hook.repairs,
         hookPpr: hook.pprMinutes };
     })()`);
-    assert.deepEqual(routing, { map: true, connected: true, preview: true, copied: true, amount: 4, remaining: 46, previous: '1',
+    assert.deepEqual(routing, { map: true, connected: true, unlinkedWithCounters: true, preview: true, copied: true, amount: 4, remaining: 46, previous: '1',
       kind: 'Руление', rightFlight: 30, rightTotal: 36, historyBeforeRepair: 360, repairs: 2, hookPpr: 120 });
     results.resourceRouting = "ok";
 

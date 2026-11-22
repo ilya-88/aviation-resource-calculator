@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.27";
+  const APP_VERSION = "0.2.28";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -2152,23 +2152,46 @@
     const first = aircraft.blocks.find((block) => block.kind === "airframe");
     const boardNode = "__airframe";
     const resources = aircraft.resources.filter((resource) => resource.unit !== "дн.");
-    const edges = shift ? (shift.accruals || []).flatMap((entry) => entry.inputs.map((input) => ({
+    const resourceEdges = shift ? (shift.accruals || []).flatMap((entry) => entry.inputs.map((input) => ({
       ...input, target: entry.blockId || boardNode, name: entry.name, enabled: true, installed: true,
     }))) : resources.flatMap((resource) => {
       const owner = resourceOwner(aircraft, resource);
       if (!owner && resource.object !== "Самолёт") return [];
       return Object.entries(resourceInputs(resource, owner)).filter(([, factor]) => factor > 0).map(([key, factor]) => ({
         key, factor, target: owner?.kind === "airframe" || !owner ? boardNode : owner.id,
-        name: resource.name, enabled: sourceEnabled(aircraft, key), installed: owner?.installed !== false,
+        name: resource.name, enabled: sourceEnabled(aircraft, key), installed: owner?.installed !== false, installedDate: resource.installed,
       }));
     });
+    const landingKeys = OPTIONAL_USAGE_TYPES.filter((key) => key !== "arresterHooks");
+    const makeCounterEdge = (target, key, name, installed, condition) =>
+      ({ target, key, name, installed, condition, factor: 1, counter: true, enabled: sourceEnabled(aircraft, key) });
+    const pprCondition = "ППР начисляется после ремонта";
+    const counterEdges = shift ? [] : [
+      makeCounterEdge(boardNode, "flight", "Налёт СНЭ / ППР", true, pprCondition),
+      ...landingKeys.map((key) => makeCounterEdge(boardNode, key, "Посадки СНЭ / ППР", true, pprCondition)),
+      makeCounterEdge(boardNode, "arresterHooks", "Зацепы в формуляре", true),
+      ...blocks.flatMap((block) => {
+        const installed = block.installed !== false;
+        const minutes = block.kind === "engine" ? "engineMinutes" : "flight";
+        const condition = block.kind === "engine"
+          ? `Налёт двигателя берётся из записи работы, по умолчанию из налёта борта. Доля и округление земли задаются в формуляре двигателя. ${pprCondition}.`
+          : pprCondition;
+        const keys = block.kind === "engine" ? Object.keys(ENGINE_SOURCES).filter((key) => key !== "engineMinutes") : [];
+        return [
+          makeCounterEdge(block.id, minutes, "Наработка СНЭ / ППР", installed, condition),
+          ...landingKeys.map((key) => makeCounterEdge(block.id, key, "Посадки СНЭ / ППР", installed, pprCondition)),
+          ...keys.map((key) => makeCounterEdge(block.id, key, `${ENGINE_SOURCES[key]} · СНЭ / ППР`, installed, pprCondition)),
+        ];
+      }),
+    ];
+    const edges = [...resourceEdges, ...counterEdges];
     const sourceLabels = new Map(usageSources(aircraft, { kind: "engine" }).map(({ key, label }) => [key, label]));
     for (const [key, label] of Object.entries(shift?.sourceLabels || {})) sourceLabels.set(key, label);
     const sourceKeys = [...new Set([...(shift ? [] : usageSources(aircraft).filter(({ key }) => sourceEnabled(aircraft, key)).map(({ key }) => key)),
       ...edges.map(({ key }) => key)])];
     const node = (block) => {
-      const incoming = edges.filter(({ target }) => target === block.id);
-      const connected = incoming.some(({ enabled, installed }) => enabled && installed);
+      const connected = resourceEdges.some(({ target, enabled, installed, installedDate }) =>
+        target === block.id && enabled && installed && (!installedDate || installedDate <= todayIso()));
       const number = block.serialNumber || resourceOwnerNumber(block);
       return `<div class="map-node ${connected ? "map-node--linked" : "map-node--unlinked"}" data-map-target="${escapeHtml(block.id)}">
         <button type="button" class="map-node-caption" data-map-select="${escapeHtml(block.id)}"><strong>${escapeHtml(block.name)}</strong><small>${escapeHtml(number || "Номер не указан")}</small></button>
@@ -2197,7 +2220,8 @@
             <div class="map-targets">${nodes.slice(1).map(node).join("")}</div>
           </div>
         </div>
-        <section id="map-details" aria-live="polite"><p>Нажми на показатель или агрегат, чтобы увидеть его связи и множители.</p></section>
+        <section id="map-details" aria-live="polite"><p>Нажми на показатель или агрегат, чтобы увидеть его связи и множители.</p>
+        ${shift ? "" : `<p>Зелёный ореол — настроенный расход ресурса. Пунктир показывает связи со счётчиками или отключённые линии.</p>`}</section>
       </section>`, { title: "Карта наработки", back: true, settings: false });
     const canvas = document.querySelector(".usage-map-canvas");
     const zoom = document.getElementById("map-scale");
@@ -2214,19 +2238,24 @@
     };
     const draw = () => {
       wires.querySelectorAll("line").forEach((line) => line.remove());
-      const connect = (from, to, muted, emphasized) => {
+      const connect = (from, to, muted, emphasized, counter = false) => {
         const [x1, y1] = position(from, true);
         const [x2, y2] = position(to, false);
         const wire = document.createElementNS("http://www.w3.org/2000/svg", "line");
         for (const [key, value] of Object.entries({ x1, y1, x2, y2 })) wire.setAttribute(key, value);
-        wire.setAttribute("class", `map-wire ${muted ? "map-wire--muted" : ""} ${emphasized ? "map-wire--selected" : ""}`);
+        wire.setAttribute("class", `map-wire ${counter ? "map-wire--counter" : ""} ${muted ? "map-wire--muted" : ""} ${emphasized ? "map-wire--selected" : ""}`);
         wire.setAttribute("marker-end", "url(#map-arrow)");
         wires.append(wire);
       };
-      for (const [key, item] of sources) connect(targets.get(boardNode), item, !sourceEnabled(aircraft, key), active === key);
+      for (const [key, item] of sources) connect(targets.get(boardNode), item, !shift && !sourceEnabled(aircraft, key), active === key);
+      const drawn = new Set();
       for (const edge of edges) {
         if (edge.target === boardNode || !targets.has(edge.target) || !sources.has(edge.key)) continue;
-        connect(sources.get(edge.key), targets.get(edge.target), !edge.enabled || !edge.installed, active === edge.key || active === edge.target);
+        const pair = JSON.stringify([edge.key, edge.target]);
+        if (drawn.has(pair)) continue;
+        drawn.add(pair);
+        connect(sources.get(edge.key), targets.get(edge.target), !edge.enabled || !edge.installed ||
+          Boolean(edge.installedDate && edge.installedDate > todayIso()), active === edge.key || active === edge.target, edge.counter);
       }
     };
     function select(key, isSource) {
@@ -2238,9 +2267,12 @@
       const heading = isSource ? sourceLabels.get(key) || key : nodes.find((item) => item.id === key)?.name;
       details.innerHTML = `<h2>${escapeHtml(heading || "")}</h2>${matching.length ? `<ul class="accrual-items">${matching.map((edge) => `<li>
         <strong>${escapeHtml(sourceLabels.get(edge.key) || edge.key)} × ${formatNumber(edge.factor)} → ${escapeHtml(nodes.find((item) => item.id === edge.target)?.name || "")} · ${escapeHtml(edge.name)}</strong>
-        <small>${shift ? `${formatNumber(edge.input)} × ${formatNumber(edge.factor)} = ${formatNumber(edge.amount)}` : !edge.enabled ? "Источник отключён" :
-          !edge.installed ? "Агрегат демонтирован" : edge.target === boardNode ? "Начисляется на борт" : "Агрегат установлен на дату работы"}</small></li>`).join("")}</ul>`
-        : `<p>${isSource ? "Нет получателей." : "Связи с ресурсом по наработке нет."}</p>`}`;
+        <small>${shift ? `${formatNumber(edge.input)} × ${formatNumber(edge.factor)} = ${formatNumber(edge.amount)}` :
+          `${edge.counter ? "Счётчик формуляра" : "Списание ресурса"} · ${!edge.enabled ? "Источник отключён" :
+            !edge.installed ? "Агрегат демонтирован" : edge.target === boardNode ? "Начисляется на борт" : "Агрегат должен быть установлен на дату работы"}
+            ${edge.installedDate ? ` · с ${formatDate(edge.installedDate)}` : ""}
+            ${edge.condition ? ` · ${escapeHtml(edge.condition)}` : ""}`}</small></li>`).join("")}</ul>`
+        : `<p>${isSource ? "Нет получателей." : "Связей нет."}</p>`}`;
       draw();
     }
     sources.forEach((element, key) => element.addEventListener("click", () => select(key, true)));
@@ -2342,10 +2374,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.27</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.28</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.27", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.28", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -2928,7 +2960,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.27</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.28</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
