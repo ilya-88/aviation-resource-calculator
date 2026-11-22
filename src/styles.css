@@ -24,18 +24,25 @@
 * { box-sizing: border-box; }
 html, body { max-width: 100%; overflow-x: hidden; }
 body { margin: 0; min-width: 320px; background: var(--paper); }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { color: inherit; }
 
 .app-shell { width: 100%; min-height: 100vh; padding-bottom: 20px; }
 .topbar { position: sticky; top: 0; z-index: 20; color: #fff; background: rgba(18, 38, 58, .97); backdrop-filter: blur(18px); }
 .topbar__inner { width: min(100% - 28px, 940px); min-height: 72px; margin: auto; display: flex; align-items: center; gap: 12px; }
 .brand-mark, .icon-button { width: 44px; height: 44px; border: 0; border-radius: 14px; display: grid; place-items: center; }
+.topbar-spacer { width: 44px; height: 44px; flex: 0 0 44px; }
 .brand-mark { background: rgba(255,255,255,.12); font-size: 22px; }
 .icon-button { color: inherit; background: rgba(255,255,255,.1); font-size: 25px; cursor: pointer; }
 .icon-button:hover { background: rgba(255,255,255,.18); }
 .title-group { flex: 1; display: grid; gap: 2px; }
 .title-group strong { font-size: 17px; font-weight: 650; }
+.title-group { min-width: 0; }
+.compact-bort-title { margin: 0; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.aircraft-counters { width: 100%; margin-bottom: 12px; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.aircraft-counters :is(th, td) { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--line); }
+.confirm-dialog { width: min(420px, 90vw); border: 0; border-radius: 18px; padding: 20px; }
+.confirm-dialog::backdrop { background: rgb(0 0 0 / 45%); }
 .title-group span { font-size: 12px; color: rgba(255,255,255,.7); }
 .content { width: min(100% - 28px, 940px); margin: 0 auto; padding: 30px 0 44px; }
 
@@ -52,6 +59,7 @@ h2 { font-size: 19px; }
 .primary-button { color: #fff; background: var(--blue); box-shadow: 0 8px 20px rgba(25, 118, 210, .22); }
 .primary-button:hover { background: #1167ba; }
 .secondary-button { color: var(--blue); background: var(--blue-soft); }
+.aircraft-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .text-button { color: var(--blue); background: transparent; }
 .wide { width: 100%; }
 
@@ -74,10 +82,14 @@ h2 { font-size: 19px; }
 .quick-note div, .info-panel div { display: grid; gap: 4px; }
 .quick-note span, .info-panel p { color: var(--ink-soft); font-size: 13px; line-height: 1.4; }
 
-.metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 28px; }
+.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
 .metric { padding: 17px; border-radius: 17px; background: var(--surface); box-shadow: 0 5px 18px rgba(18,38,58,.05); display: grid; gap: 4px; }
 .metric span, .metric small { color: var(--ink-soft); font-size: 12px; }
 .metric strong { font-size: 23px; }
+.aircraft-tabs { margin: 0 0 22px; padding: 5px; border: 1px solid var(--line); border-radius: 16px; display: flex; gap: 5px; overflow-x: auto; background: var(--surface); }
+.aircraft-tab { flex: 1 0 auto; min-height: 44px; padding: 0 15px; border: 0; border-radius: 11px; color: var(--ink-soft); background: transparent; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.aircraft-tab.is-active { color: #fff; background: var(--navy); }
+.aircraft-tab-panel { min-height: 220px; }
 .section-heading { margin-bottom: 12px; display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; }
 .section-heading p { margin-top: 5px; color: var(--ink-soft); font-size: 13px; }
 .equipment-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
@@ -110,6 +122,7 @@ h2 { font-size: 19px; }
 .resource-row__top, .resource-row__meta { display: flex; justify-content: space-between; gap: 12px; }
 .resource-row__top div { display: grid; gap: 4px; }
 .resource-row__top div span, .resource-row__meta { color: var(--ink-soft); font-size: 12px; }
+.resource-edit-button { width: 100%; min-height: 38px; margin-top: 12px; border: 0; border-radius: 10px; color: var(--blue); background: var(--blue-soft); font-weight: 700; cursor: pointer; }
 .resource-value { font-size: 18px; font-weight: 750; white-space: nowrap; }
 .status-text-ok { color: var(--green); }.status-text-warning { color: var(--amber); }.status-text-danger { color: var(--red); }
 .progress-track { height: 8px; margin: 14px 0 10px; border-radius: 999px; overflow: hidden; background: #e9eef2; }
@@ -120,11 +133,14 @@ h2 { font-size: 19px; }
 fieldset { margin: 0; padding: 18px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); display: grid; gap: 14px; }
 legend { padding: 0 6px; font-weight: 750; }
 label { display: grid; gap: 7px; color: var(--ink-soft); font-size: 13px; }
-input[type="number"], input[type="date"], input[type="time"] { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid #cbd8e1; border-radius: 12px; color: var(--ink); background: #fbfcfd; }
+input[type="text"], input[type="number"], input[type="date"], input[type="time"], select { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid #cbd8e1; border-radius: 12px; color: var(--ink); background: #fbfcfd; }
 .field-pair, .landing-grid, .mode-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 11px; }
 .landing-grid, .mode-grid { grid-template-columns: repeat(4, 1fr); }
 .mode-grid { grid-template-columns: repeat(3, 1fr); }
 .field-help { color: var(--ink-soft); font-size: 13px; }
+.checkbox-row { min-height: 44px; padding: 0 12px; border: 1px solid #cbd8e1; border-radius: 12px; display: flex; align-items: center; gap: 10px; background: #fbfcfd; }
+.checkbox-row input { width: 22px; height: 22px; accent-color: var(--blue); }
+.event-form { margin-top: 14px; }
 .input-with-unit { display: flex; align-items: center; gap: 8px; }
 .input-with-unit span { min-width: 28px; }
 .calculation-preview { margin-top: -7px; padding: 9px 12px; border-radius: 10px; color: var(--blue); background: var(--blue-soft); font-size: 13px; font-weight: 650; }
@@ -140,6 +156,13 @@ button.setting-row { cursor: pointer; }
 .setting-row small { color: var(--ink-soft); }
 .setting-row input[type="checkbox"] { width: 46px; height: 25px; accent-color: var(--blue); }
 .prototype-badge { padding: 6px 9px; border-radius: 999px; color: var(--ink-soft); background: #edf2f5; font-size: 12px; }
+.settings-form { margin-top: 18px; }
+.settings-section-heading { margin-top: 28px; }
+.compact-metrics { margin: 4px 0 0; }
+.block-setting-row { align-items: flex-start; }
+.inline-actions { display: flex !important; grid-auto-flow: column; gap: 7px !important; }
+.small-button { min-height: 36px; padding: 0 11px; border: 0; border-radius: 10px; color: var(--blue); background: var(--blue-soft); cursor: pointer; }
+.danger-button { color: var(--red); background: var(--red-soft); }
 
 .empty-state { padding: 32px; border: 1px dashed #b9c8d3; border-radius: 18px; text-align: center; }
 .empty-state p { margin-top: 7px; color: var(--ink-soft); }
@@ -154,14 +177,20 @@ button.setting-row { cursor: pointer; }
   .aircraft-card__status { grid-column: 2 / 4; justify-self: start; }
   .aircraft-card__chevron { grid-column: 3; grid-row: 1; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
-  .metric:first-child { grid-column: 1 / -1; }
+  .metric:first-child { grid-column: auto; }
   .equipment-list { grid-template-columns: 1fr; }
   .search-field { width: 100%; }
   .landing-grid, .mode-grid { grid-template-columns: repeat(2, 1fr); }
   .resource-row__meta { flex-direction: column; gap: 3px; }
+  .block-setting-row { flex-direction: column; }
+  .inline-actions { width: 100%; }
+  .small-button { flex: 1; }
 }
 
 @media (max-width: 420px) {
+  .aircraft-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .aircraft-tab { white-space: normal; }
+  .aircraft-tab:last-child { grid-column: 1 / -1; }
   .topbar__inner, .content { width: min(100% - 20px, 940px); }
   .aircraft-card__metrics { flex-direction: column; gap: 3px; }
   .metric-grid, .field-pair, .landing-grid, .mode-grid { grid-template-columns: 1fr; }
