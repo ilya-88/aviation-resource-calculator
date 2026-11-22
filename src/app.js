@@ -88,7 +88,10 @@
         aircraft: state.aircraft,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
-    } catch (_) {}
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   function normalizeState(raw) {
@@ -137,7 +140,14 @@
     render();
   }
 
+  let leaveUsageSettings;
   function navigateBack() {
+    if (state.view === "usage-settings" && leaveUsageSettings?.()) return;
+    if (state.view === "aircraft-layout" && leaveAircraftLayout?.()) return;
+    finishBackNavigation();
+  }
+
+  function finishBackNavigation() {
     const fallback = state.view === "aircraft" ? "home" : "aircraft";
     state.view = viewStack.pop() || fallback;
     render();
@@ -179,6 +189,7 @@
     else if (state.view === "reports") renderReports();
     else if (state.view === "settings") renderSettings();
     else if (state.view === "usage-settings") renderUsageSettings();
+    else if (state.view === "aircraft-layout") renderAircraftLayout();
     else if (state.view === "about") renderAbout();
     else renderHome();
     bindCommonActions();
@@ -306,15 +317,208 @@
         <button class="secondary-button" data-view="resources">${icon("resource")} Остатки ресурсов</button>
         <button class="primary-button" data-view="shift">${icon("log")} Внести лётную смену</button>
       </div>
-      <table class="aircraft-counters" aria-label="Наработка борта">
+      <button class="text-button" data-view="aircraft-layout">Настроить раскладку</button>
+      ${aircraft.counterLayout ? counterTiles(aircraft, aircraft.counterLayout) : `<table class="aircraft-counters" aria-label="Наработка борта">
         <thead><tr><th scope="col">Показатель</th><th scope="col">СНЭ</th><th scope="col">ППР</th></tr></thead>
         <tbody>
           <tr><th scope="row">${escapeHtml(usageRule("flight").label)}</th><td>${calc.formatDuration(aircraft.totalFlightMinutes)}</td><td>${aircraft.pprFlightMinutes == null ? "Не задано" : calc.formatDuration(aircraft.pprFlightMinutes)}</td></tr>
           <tr><th scope="row">Посадки</th><td>${aircraft.actualLandings}</td><td>${aircraft.pprLandings ?? "Не задано"}</td></tr>
         </tbody>
-      </table>
+      </table>`}
       <section class="aircraft-tab-panel">${tabContent}</section>
     `, { title: `${aircraft.type} · Борт ${aircraft.boardNumber}`, subtitle: "", singleLine: true, back: true, settingsScope: "aircraft" });
+  }
+
+  const defaultCounterLayout = [
+    { keys: ["flightSne", "flightPpr"], wide: true },
+    { keys: ["landingSne", "landingPpr"], wide: true },
+  ];
+  let leaveAircraftLayout;
+
+  function chooseLayoutAction(title, choices, onChoose) {
+    const dialog = document.createElement("dialog");
+    dialog.className = "confirm-dialog";
+    dialog.innerHTML = `<form method="dialog"><h2>${title}</h2>
+      ${choices.map(([value, label]) => `<button class="secondary-button" value="${value}">${label}</button>`).join("")}</form>`;
+    app.append(dialog);
+    dialog.addEventListener("close", () => {
+      const value = dialog.returnValue;
+      dialog.remove();
+      onChoose(value);
+    }, { once: true });
+    dialog.showModal();
+  }
+
+  function counterTiles(aircraft, layout, editing = false) {
+    const name = escapeHtml(usageRule("flight").label);
+    const values = {
+      flightSne: [name + " СНЭ", calc.formatDuration(aircraft.totalFlightMinutes)],
+      flightPpr: [name + " ППР", aircraft.pprFlightMinutes == null ? "Не задано" : calc.formatDuration(aircraft.pprFlightMinutes)],
+      landingSne: ["Посадки СНЭ", aircraft.actualLandings],
+      landingPpr: ["Посадки ППР", aircraft.pprLandings ?? "Не задано"],
+    };
+    return `<section class="counter-tiles" aria-label="Наработка борта">${layout.map((tile, index) => `
+      <article class="counter-tile ${tile.wide ? "counter-tile-wide" : ""}">
+        ${editing ? `<button type="button" class="counter-drag-handle" data-drag-index="${index}" aria-label="Перетащить карточку">⠿</button>` : ""}
+        ${tile.keys.map((key) => `<div>${values[key][0]} <strong>${values[key][1]}</strong></div>`).join("")}
+        ${editing ? `<div class="counter-controls">
+          ${[["up","↑","Вверх"],["down","↓","Вниз"],["left","←","Влево"],["right","→","Вправо"],["size",tile.wide ? "Сузить" : "Расширить","Изменить ширину"],
+            ...(index + 1 < layout.length ? [["merge","Объединить","Объединить со следующей карточкой"]] : []),
+            ...(tile.keys.length > 1 ? [["split","Разделить","Разделить показатели"]] : []),
+          ].map(([action, label, title]) => `<button class="secondary-button" type="button" data-layout-action="${action}" data-index="${index}" aria-label="${title}">${label}</button>`).join("")}
+        </div>` : ""}
+      </article>`).join("")}</section>`;
+  }
+
+  function renderAircraftLayout() {
+    const aircraft = selectedAircraft();
+    let draft = structuredClone(aircraft.counterLayout ?? defaultCounterLayout);
+    const initial = JSON.stringify(draft);
+    app.innerHTML = shell(`<h1>Раскладка карточки</h1>
+      <p class="field-help">Потяни карточку за ручку ⠿. Порядок, ширина и группировка сохраняются для этого борта.</p>
+      <div id="counter-preview"></div>
+      <div class="aircraft-actions"><button class="primary-button" id="layout-save">Сохранить</button>
+      <button class="secondary-button" id="layout-default">Восстановить по умолчанию</button></div>`,
+    { title: "Раскладка карточки", subtitle: "", back: true, settings: false });
+    const preview = document.getElementById("counter-preview");
+    const paint = () => { preview.innerHTML = counterTiles(aircraft, draft, true); };
+    let drag;
+    let hold;
+    function clearDrag() {
+      preview.querySelector(".counter-dragging")?.classList.remove("counter-dragging");
+      preview.querySelector(".counter-drop-target")?.classList.remove("counter-drop-target");
+      drag = null;
+    }
+    preview.addEventListener("pointerdown", (event) => {
+      const handle = event.target.closest("[data-drag-index]");
+      if (!handle || !event.isPrimary || event.button !== 0) return;
+      handle.setPointerCapture(event.pointerId);
+      drag = { pointer: event.pointerId, source: Number(handle.dataset.dragIndex), target: null };
+      handle.closest(".counter-tile").classList.add("counter-dragging");
+    });
+    preview.addEventListener("pointermove", (event) => {
+      if (drag?.pointer !== event.pointerId) return;
+      markDropTarget(event.clientX, event.clientY);
+    });
+    function markDropTarget(x, y) {
+      const cards = [...preview.querySelectorAll(".counter-tile")];
+      const underPointer = document.elementFromPoint(x, y)?.closest(".counter-tile");
+      const target = cards.indexOf(underPointer);
+      drag.target = target >= 0 && target !== drag.source ? target : null;
+      cards.forEach((card, index) => card.classList.toggle("counter-drop-target", index === drag.target));
+    }
+    preview.addEventListener("pointerup", (event) => {
+      if (drag?.pointer !== event.pointerId) return;
+      dropCard();
+    });
+    function dropCard() {
+      const { source, target } = drag;
+      clearDrag();
+      if (target == null) return;
+      [draft[source], draft[target]] = [draft[target], draft[source]];
+      paint();
+    }
+    function cancelPointerDrag(event) {
+      if (drag?.pointer === event.pointerId) clearDrag();
+    }
+    preview.addEventListener("pointercancel", cancelPointerDrag);
+    preview.addEventListener("lostpointercapture", cancelPointerDrag);
+    function cancelHold() {
+      if (hold) clearTimeout(hold.timer);
+      hold = null;
+    }
+    preview.addEventListener("touchstart", (event) => {
+      if (hold && drag?.touch === hold.id) clearDrag();
+      cancelHold();
+      const card = event.target.closest(".counter-tile");
+      if (drag || !card || event.target.closest("button") || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      hold = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
+      hold.timer = setTimeout(() => {
+        if (!card.isConnected) return;
+        const cards = [...preview.querySelectorAll(".counter-tile")];
+        drag = { touch: hold.id, source: cards.indexOf(card), target: null };
+        card.classList.add("counter-dragging");
+      }, 450);
+    }, { passive: true });
+    preview.addEventListener("touchmove", (event) => {
+      if (!hold) return;
+      const touch = [...event.touches].find((item) => item.identifier === hold.id);
+      if (!touch) return;
+      if (drag?.touch === hold.id) {
+        if (event.cancelable) event.preventDefault();
+        markDropTarget(touch.clientX, touch.clientY);
+      } else if (Math.hypot(touch.clientX - hold.x, touch.clientY - hold.y) > 8) {
+        cancelHold();
+      }
+    }, { passive: false });
+    preview.addEventListener("touchend", (event) => {
+      if (!hold || ![...event.changedTouches].some((item) => item.identifier === hold.id)) return;
+      if (drag?.touch === hold.id) {
+        if (event.cancelable) event.preventDefault();
+        dropCard();
+      }
+      cancelHold();
+    });
+    preview.addEventListener("touchcancel", () => {
+      if (hold && drag?.touch === hold.id) clearDrag();
+      cancelHold();
+    });
+    preview.addEventListener("contextmenu", (event) => {
+      if (event.target.closest(".counter-tile")) event.preventDefault();
+    });
+    function save() {
+      const previous = aircraft.counterLayout;
+      aircraft.counterLayout = JSON.stringify(draft) === JSON.stringify(defaultCounterLayout) ? undefined : structuredClone(draft);
+      if (saveState()) finishBackNavigation();
+      else {
+        aircraft.counterLayout = previous;
+        showToast("Не удалось сохранить раскладку");
+      }
+    }
+    leaveAircraftLayout = () => {
+      if (JSON.stringify(draft) === initial) return false;
+      chooseLayoutAction("Сохранить изменения раскладки?", [["save","Сохранить"],["discard","Выйти без сохранения"],["cancel","Остаться"]], (action) => {
+        if (action === "save") save();
+        if (action === "discard") finishBackNavigation();
+      });
+      return true;
+    };
+    preview.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-layout-action]");
+      if (!button) return;
+      const index = Number(button.dataset.index);
+      const action = button.dataset.layoutAction;
+      const tile = draft[index];
+      if (action === "size") tile.wide = !tile.wide;
+      else if (action === "split") draft.splice(index, 1, ...tile.keys.map((key) => ({ keys: [key], wide: false })));
+      else if (action === "merge") {
+        tile.keys.push(...draft[index + 1].keys);
+        tile.wide = true;
+        draft.splice(index + 1, 1);
+      } else {
+        const cards = [...preview.querySelectorAll(".counter-tile")];
+        const reference = cards[index].getBoundingClientRect();
+        const horizontal = action === "left" || action === "right";
+        const sign = action === "left" || action === "up" ? -1 : 1;
+        const [candidate] = cards.map((card, target) => {
+          const rect = card.getBoundingClientRect();
+          return { target, dx: rect.left - reference.left, dy: rect.top - reference.top };
+        }).filter(({ dx, dy }) => horizontal ? Math.abs(dy) < 1 && dx * sign > 0 : dy * sign > 0)
+          .sort((a, b) => horizontal ? Math.abs(a.dx) - Math.abs(b.dx) : Math.abs(a.dy) - Math.abs(b.dy) || Math.abs(a.dx) - Math.abs(b.dx));
+        if (candidate) [draft[index], draft[candidate.target]] = [draft[candidate.target], draft[index]];
+      }
+      paint();
+    });
+    document.getElementById("layout-save").onclick = save;
+    document.getElementById("layout-default").onclick = () => {
+      chooseLayoutAction("Восстановить стандартную раскладку?", [["reset","Восстановить"],["cancel","Отмена"]], (action) => {
+        if (action !== "reset") return;
+        draft = structuredClone(defaultCounterLayout);
+        paint();
+      });
+    };
+    paint();
   }
 
   function renderResources() {
@@ -879,10 +1083,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.5</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.6</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.5", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.6", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1068,8 +1272,33 @@
           <p id="ground-example" class="field-help"></p>
         </fieldset>
         <button class="primary-button" type="submit">Сохранить</button>
+        <button class="secondary-button" type="button" id="usage-default">Восстановить по умолчанию</button>
       </form>`, { title: "Виды наработки", subtitle: "", back: true, settings: false });
     const form = document.getElementById("usage-settings-form");
+    const formSnapshot = () => JSON.stringify([...new FormData(form)]);
+    const initialSnapshot = formSnapshot();
+    leaveUsageSettings = () => {
+      if (formSnapshot() === initialSnapshot) return false;
+      if (app.querySelector("dialog[open]")) return true;
+      const dialog = document.createElement("dialog");
+      dialog.className = "confirm-dialog";
+      dialog.innerHTML = `<form method="dialog">
+        <h2>Сохранить изменения?</h2>
+        <p>Настройки видов наработки ещё не сохранены.</p>
+        <button class="primary-button" value="save">Сохранить</button>
+        <button class="secondary-button" value="discard">Выйти без сохранения</button>
+        <button class="secondary-button" value="cancel" autofocus>Остаться</button>
+      </form>`;
+      app.append(dialog);
+      dialog.addEventListener("close", () => {
+        const action = dialog.returnValue;
+        dialog.remove();
+        if (action === "save") form.requestSubmit();
+        if (action === "discard") finishBackNavigation();
+      }, { once: true });
+      dialog.showModal();
+      return true;
+    };
     const hiddenPanel = form.querySelector("#hidden-usage");
     const hiddenButton = form.querySelector(".usage-hidden-button");
     function updateHiddenCount() {
@@ -1086,6 +1315,13 @@
       const { usageToggle: key, enable } = button.dataset;
       form.elements.namedItem(`${key}Enabled`).value = enable;
       const row = form.querySelector(`[data-usage-row="${key}"]`);
+      if (enable === "false") {
+        const rule = usageRule(key);
+        const label = form.elements.namedItem(`${key}Label`);
+        const factor = form.elements.namedItem(`${key}Factor`);
+        if (!label.validity.valid) label.value = rule.label;
+        if (!factor.validity.valid) factor.value = rule.factor;
+      }
       row.hidden = enable === "false";
       form.querySelector(`[data-usage-restore="${key}"]`).hidden = enable === "true";
       updateHiddenCount();
@@ -1110,6 +1346,22 @@
       output.textContent = `Ввод: 13 мин → округление: ${example.roundedMinutes} мин → ${example.percent}%: ${formatNumber(example.contributionMinutes)} мин → в наработку двигателя: ${formatNumber(contribution)} мин (с коэффициентом земли).`;
     }
     form.addEventListener("input", updateExamples);
+    form.querySelector("#usage-default").addEventListener("click", () => {
+      chooseLayoutAction("Восстановить стандартные виды и коэффициенты?", [["reset","Восстановить"],["cancel","Отмена"]], (action) => {
+        if (action !== "reset") return;
+        form.elements.percent.value = DEFAULT_AIRCRAFT_SETTINGS.groundPercent;
+        form.elements.step.value = DEFAULT_AIRCRAFT_SETTINGS.groundRoundingMinutes;
+        form.elements.direction.value = DEFAULT_AIRCRAFT_SETTINGS.groundRoundingDirection;
+        for (const [key, title] of Object.entries(USAGE_TYPES)) {
+          const label = form.elements.namedItem(`${key}Label`);
+          label.value = title;
+          form.elements.namedItem(`${key}Factor`).value = DEFAULT_AIRCRAFT_SETTINGS.landingCoefficients[key] ?? 1;
+          label.dispatchEvent(new Event("input", { bubbles: true }));
+          if (OPTIONAL_USAGE_TYPES.includes(key)) form.querySelector(`[data-usage-toggle="${key}"][data-enable="true"]`).click();
+        }
+        updateExamples();
+      });
+    });
     form.addEventListener("input", (event) => {
       const row = event.target.closest("[data-usage-row]");
       if (!row || event.target.name !== `${row.dataset.usageRow}Label`) return;
@@ -1123,6 +1375,8 @@
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
+      const previousRules = state.usageRules;
+      const previousGround = state.sharedGround;
       state.usageRules = Object.fromEntries(Object.keys(USAGE_TYPES).map((key) => [key, {
         label: String(data.get(`${key}Label`)).trim() || USAGE_TYPES[key],
         factor: Number(data.get(`${key}Factor`)),
@@ -1130,8 +1384,13 @@
       }]));
       state.sharedGround = { groundPercent: Number(data.get("percent")), groundRoundingMinutes: Number(data.get("step")),
         groundRoundingDirection: String(data.get("direction")) };
-      saveState();
-      navigateBack();
+      if (!saveState()) {
+        state.usageRules = previousRules;
+        state.sharedGround = previousGround;
+        showToast("Не удалось сохранить настройки на устройстве. Изменения остались в форме.");
+        return;
+      }
+      finishBackNavigation();
       showToast("Виды наработки сохранены для всех бортов");
     });
   }
@@ -1153,7 +1412,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.5</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.6</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });

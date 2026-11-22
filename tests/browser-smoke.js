@@ -354,6 +354,50 @@ async function main() {
     })()`);
     assert.deepEqual(typeSettings, { template: 25, newAircraft: 25 });
     results.typeSettings = "ok";
+    const savedUsageName = await evaluate(`(async () => {
+      document.querySelector('[data-action="back"]').click();
+      document.querySelector('[data-action="settings"]').click();
+      document.querySelector('[data-view="usage-settings"]').click();
+      document.querySelector('#usage-settings-form').elements.flightLabel.value = 'Полётное время';
+      window.handleAndroidBack();
+      const dialog = document.querySelector('dialog[open]');
+      await new Promise(resolve => {
+        dialog.addEventListener('close', resolve, { once: true });
+        dialog.querySelector('[value="save"]').click();
+      });
+      document.querySelector('[data-view="usage-settings"]').click();
+      return document.querySelector('#usage-settings-form').elements.flightLabel.value;
+    })()`);
+    assert.equal(savedUsageName, "Полётное время");
+    results.usageSettingsBackSave = "ok";
+    const layoutResult = await evaluate(`(async () => {
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      document.querySelector('[data-aircraft-id]').click();
+      document.querySelector('[data-view="aircraft-layout"]').click();
+      document.querySelector('[data-layout-action="split"]').click();
+      document.querySelector('[data-layout-action="right"][data-index="0"]').click();
+      document.querySelector('[data-layout-action="merge"]').click();
+      const count = document.querySelectorAll('.counter-tile').length;
+      window.handleAndroidBack();
+      let dialog = document.querySelector('dialog[open]');
+      await new Promise(resolve => {
+        dialog.addEventListener('close', resolve, { once: true });
+        dialog.querySelector('[value="save"]').click();
+      });
+      const persisted = Boolean(document.querySelector('.counter-tile'));
+      document.querySelector('[data-view="aircraft-layout"]').click();
+      document.querySelector('#layout-default').click();
+      dialog = document.querySelector('dialog[open]');
+      await new Promise(resolve => {
+        dialog.addEventListener('close', resolve, { once: true });
+        dialog.querySelector('[value="reset"]').click();
+      });
+      document.querySelector('#layout-save').click();
+      return { count, persisted, restored: Boolean(document.querySelector('.aircraft-counters')) };
+    })()`);
+    assert.deepEqual(layoutResult, { count: 2, persisted: true, restored: true });
+    results.aircraftLayout = "ok";
 
     process.stdout.write(`${JSON.stringify(results)}\n`);
   } finally {
