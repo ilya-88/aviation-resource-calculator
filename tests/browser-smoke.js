@@ -377,7 +377,7 @@ async function main() {
       const hold = async (target) => {
         target.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [new Touch({ identifier: 1, target, clientX: 20, clientY: 20 })] }));
         if (target.dispatchEvent(new Event('selectstart', { bubbles: true, cancelable: true }))) throw new Error('Включилось выделение текста');
-        await new Promise(resolve => setTimeout(resolve, 2100));
+        await new Promise(resolve => setTimeout(resolve, 900));
         if (!target.closest('.counter-tile').classList.contains('counter-tile-active')) throw new Error('Плитка не выделилась при удержании');
         target.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true }));
       };
