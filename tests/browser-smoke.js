@@ -857,7 +857,7 @@ async function main() {
     })()`);
     const tileAudit = {};
     for (const tab of ["works", "aggregates", "least-reliable"]) {
-      tileAudit[tab] = await evaluate(`(async () => {
+      const audit = evaluate(`(async () => {
         const tab = ${JSON.stringify(tab)};
         const grid = () => document.querySelector('#counter-preview .counter-tiles');
         const all = () => [...grid().querySelectorAll(':scope > .counter-tile')];
@@ -942,38 +942,113 @@ async function main() {
           const reopened = byKey(key)?.getBoundingClientRect();
           if (!reopened || !close(rect.width, reopened.width) || !close(rect.height, reopened.height)) fail(key, 'размер потерян после повторного открытия борта');
         }
-        const [first, second] = all().filter(tile => !tile.dataset.tileKey.startsWith('widget:board-') &&
-          tile.querySelectorAll('.counter-value').length === 1).map(tile => tile.dataset.tileKey);
-        const closeDialog = async (choice) => {
+        const closeDialog = async (key, choice) => {
           const dialog = document.querySelector('dialog[open]');
-          if (!dialog) fail(first, 'не открылось окно выбора');
+          if (!dialog) fail(key, 'не открылось окно выбора');
+          const button = [...dialog.querySelectorAll('button')].find(item => item.value === choice);
+          if (!button) fail(key, 'нет действия ' + choice);
           await new Promise(resolve => {
             dialog.addEventListener('close', resolve, { once: true });
-            dialog.querySelector('button[value="' + choice + '"]').click();
+            button.click();
           });
         };
-        await hold(first);
-        document.querySelector('.counter-tile-active [data-layout-action="edit"]').click();
-        document.querySelector('dialog[open] input').value = 'Проверка подписи';
-        await closeDialog('save');
-        if (!active().textContent.includes('Проверка подписи')) fail(first, 'подпись не применилась');
-        const previousCount = all().length;
-        const secondIndex = byKey(second).dataset.counterIndex;
-        document.querySelector('#layout-group').click();
-        await closeDialog(secondIndex);
-        if (all().length !== previousCount - 1 || active().querySelectorAll('.counter-value').length !== 2) fail(first, 'группировка не сработала');
-        document.querySelector('#layout-group').click();
-        if (all().length !== previousCount) fail(first, 'разделение не сработало');
-        document.querySelector('#layout-default').click();
-        await closeDialog('reset');
-        if (byKey(first).style.getPropertyValue('--tile-height') !== '0px') fail(first, 'сброс размера не убрал высоту');
-        window.handleAndroidBack();
-        await closeDialog('discard');
-        if (byKey(first).textContent.includes('Проверка подписи') ||
-            !close(byKey(first).getBoundingClientRect().height, saved.get(first).height) ||
-            !close(byKey(second).getBoundingClientRect().width, saved.get(second).width)) fail(first, 'выход без сохранения изменил раскладку');
-        return keys.length;
+        const count = { tiles: keys.length, openedActions: 0 };
+        for (const key of keys) {
+          await hold(key);
+          const toolbar = () => document.querySelector('.counter-gesture-toolbar').getBoundingClientRect();
+          const startToolbar = toolbar();
+          const grip = document.querySelector('.counter-toolbar-handle').getBoundingClientRect();
+          const delta = startToolbar.right + 30 < innerWidth - 8 ? 25 : -25;
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Перетаскивание панели не завершилось')), 5000);
+            window.tileToolbarDrag = { x: grip.left + grip.width / 2, y: grip.top + grip.height / 2, delta, done: () => { clearTimeout(timeout); resolve(); } };
+          });
+          if (Math.abs(toolbar().left - startToolbar.left) < 12 || toolbar().left < 0 || toolbar().right > innerWidth) fail(key, 'панель не переместилась внутри экрана');
+          document.querySelector('.counter-tile-active [data-layout-action="edit"]').click();
+          const alias = 'Проверка подписи';
+          document.querySelector('dialog[open] input').value = alias;
+          await closeDialog(key, 'save');
+          if (!active().textContent.includes(alias)) fail(key, 'подпись не применилась');
+          document.querySelector('[data-gesture="move"]').click();
+          const sourceIndex = Number(active().dataset.counterIndex);
+          const candidates = all().filter(tile => tile !== active()).map(tile => {
+            const rect = tile.getBoundingClientRect();
+            return { tile, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+          });
+          const target = candidates.find(({tile,x,y}) => document.elementFromPoint(x,y)?.closest('.counter-tile') === tile);
+          if (!target) fail(key, 'нет видимой цели для перемещения');
+          const pos = active().getBoundingClientRect();
+          const x = pos.left + pos.width / 2;
+          const y = pos.top + 10;
+          const node = active();
+          const startingColumn = node.style.getPropertyValue('--tile-start');
+          touch(node, 'touchstart', x, y, 82);
+          touch(node, 'touchmove', target.x, target.y, 82);
+          touch(node, 'touchcancel', target.x, target.y, 82, true);
+          if (node.style.getPropertyValue('--tile-start') !== startingColumn || all().some(tile => tile.style.order)) {
+            fail(key, 'отмена перемещения сдвинула плитки');
+          }
+          touch(node, 'touchstart', x, y, 82);
+          touch(node, 'touchmove', target.x, target.y, 82);
+          if (!target.tile.style.order) fail(key, 'соседние плитки не перестроились при жесте');
+          touch(node, 'touchend', target.x, target.y, 82, true);
+          if (Number(active().dataset.counterIndex) === sourceIndex || active().dataset.tileKey !== key) fail(key, 'перемещение не закрепилось в редакторе');
+          const originalCount = all().length;
+          const members = active().querySelectorAll('.counter-value').length;
+          if (members === 1) {
+            document.querySelector('#layout-group').click();
+            const option = document.querySelector('dialog[open] button:not([value="cancel"])');
+            if (!option) fail(key, 'нет совместимой плитки для группировки');
+            await closeDialog(key, option.value);
+            if (all().length !== originalCount - 1 || active().querySelectorAll('.counter-value').length < 2) fail(key, 'группировка не сработала');
+          }
+          const groupMembers = active().querySelectorAll('.counter-value').length;
+          const groupedCount = all().length;
+          document.querySelector('#layout-group').click();
+          if (all().length !== groupedCount + groupMembers - 1) fail(key, 'разделение не сработало');
+          document.querySelector('#layout-default').click();
+          await closeDialog(key, 'reset');
+          if (byKey(key).style.getPropertyValue('--tile-height') !== '0px') fail(key, 'сброс размера не убрал высоту');
+          window.handleAndroidBack();
+          await closeDialog(key, 'discard');
+          if (byKey(key).textContent.includes(alias) || !close(byKey(key).getBoundingClientRect().height, saved.get(key).height) ||
+              Number(byKey(key).dataset.counterIndex) !== sourceIndex) fail(key, 'выход без сохранения изменил раскладку');
+          const actions = [...byKey(key).querySelectorAll('.counter-value button')].map(button => ({ ...button.dataset }));
+          for (const attrs of actions) {
+            const button = [...byKey(key).querySelectorAll('.counter-value button')].find(item =>
+              Object.entries(attrs).every(([name, value]) => item.dataset[name] === value));
+            const visible = (selector) => Boolean(document.querySelector(selector));
+            button.click();
+            if (attrs.aircraftTab) {
+              if (!visible('[data-aircraft-tab="' + attrs.aircraftTab + '"][aria-selected="true"]')) fail(key, 'вкладка не переключилась');
+              document.querySelector('[data-aircraft-tab="' + tab + '"]').click();
+            } else {
+              const screen = attrs.blockId ? '#block-form' : attrs.resourceId || attrs.action === 'add-resource' ? '#resource-form' :
+                attrs.shiftId ? '#open-shift-map' : attrs.action === 'add-block' ? '#creation-form' :
+                { shift: '#shift-form', resources: '#resource-list', reports: '#report-form' }[attrs.view];
+              if (!screen || !visible(screen)) fail(key, 'действие не открыло нужный экран');
+              window.handleAndroidBack();
+            }
+            count.openedActions += 1;
+          }
+        }
+        return count;
       })()`);
+      let finished = false;
+      audit.then(() => { finished = true; }, () => { finished = true; });
+      while (!finished) {
+        const drag = await evaluate("window.tileToolbarDrag && {x:window.tileToolbarDrag.x,y:window.tileToolbarDrag.y,delta:window.tileToolbarDrag.delta}");
+        if (drag) {
+          const { x, y, delta } = drag;
+          await command("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+          await command("Input.dispatchMouseEvent", { type: "mouseMoved", x: x + delta, y, button: "left", buttons: 1 });
+          await command("Input.dispatchMouseEvent", { type: "mouseReleased", x: x + delta, y, button: "left", clickCount: 1 });
+          await evaluate("(() => { const request = window.tileToolbarDrag; delete window.tileToolbarDrag; request.done(); })()");
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 75));
+        }
+      }
+      tileAudit[tab] = await audit;
     }
     results.tileResizeAudit = tileAudit;
 
