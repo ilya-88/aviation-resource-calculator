@@ -402,6 +402,13 @@ async function main() {
       const persisted = tile.getBoundingClientRect().width < tile.parentElement.clientWidth &&
         JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].boardLayouts.aggregates[0].span === 6;
       await hold(document.querySelector('[data-block-id]'));
+      document.querySelector('.counter-tile-active [data-layout-action="edit"]').click();
+      dialog = document.querySelector('dialog[open]');
+      dialog.querySelector('input').value = 'Планер · моя подпись';
+      await new Promise(resolve => {
+        dialog.addEventListener('close', resolve, { once: true });
+        dialog.querySelector('[value="save"]').click();
+      });
       document.querySelector('#layout-default').click();
       dialog = document.querySelector('dialog[open]');
       await new Promise(resolve => {
@@ -409,10 +416,13 @@ async function main() {
         dialog.querySelector('[value="reset"]').click();
       });
       document.querySelector('#layout-save').click();
-      return { count, persisted, selectedAction, restored: document.querySelectorAll('.counter-tile').length === baseCount &&
+      const saved = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0];
+      const captionOnly = document.querySelector('[data-block-id]').textContent.includes('Планер · моя подпись') &&
+        saved.blocks[0].name === 'Формуляр самолёта' && !document.querySelector('[data-action="edit-blocks"]');
+      return { count, persisted, selectedAction, captionOnly, restored: document.querySelectorAll('.counter-tile').length === baseCount &&
         JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].boardLayouts.aggregates[0].span === 6 };
     })()`);
-    assert.deepEqual(layoutResult, { count: 0, persisted: true, selectedAction: true, restored: true });
+    assert.deepEqual(layoutResult, { count: 0, persisted: true, selectedAction: true, captionOnly: true, restored: true });
     results.aircraftLayout = "ok";
     const liveReflow = await evaluate(`(async () => {
       const source = document.querySelector('[data-tile-key="widget:board-tabs"] .aircraft-tab');

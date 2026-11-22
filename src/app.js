@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.22";
+  const APP_VERSION = "0.2.23";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -327,7 +327,7 @@
       <button class="add-block-button" data-view="reports">Отчёты по сменам</button>`;
 
     const aggregatesTab = `
-      <div class="section-heading"><div><h2>Агрегаты</h2><p>Формуляры, двигатели и агрегаты самолёта.</p></div><button class="text-button" data-action="edit-blocks">Изменить</button></div>
+      <div class="section-heading"><div><h2>Агрегаты</h2><p>Формуляры, двигатели и агрегаты самолёта.</p></div></div>
       <section class="equipment-list">${blocks || `<div class="empty-state compact-empty"><p>Агрегатов пока нет.</p></div>`}</section>
       <button class="add-block-button" data-action="add-block">${icon("plus")} Добавить агрегат или формуляр</button>`;
 
@@ -360,7 +360,7 @@
     preview.id = "counter-preview";
     panel.prepend(preview);
     const catalog = new Map();
-    const items = app.querySelectorAll(".aircraft-tabs, .aircraft-actions > button, .aircraft-tab-panel .equipment-block, .aircraft-tab-panel .resource-row, .aircraft-tab-panel .history-row, .aircraft-tab-panel button.add-block-button, .aircraft-tab-panel [data-action='edit-blocks']");
+    const items = app.querySelectorAll(".aircraft-tabs, .aircraft-actions > button, .aircraft-tab-panel .equipment-block, .aircraft-tab-panel .resource-row, .aircraft-tab-panel .history-row, .aircraft-tab-panel button.add-block-button");
     for (const [index, item] of [...items].entries()) {
       const resource = item.querySelector("[data-resource-id]");
       const key = "widget:" + (item.matches(".aircraft-tabs") ? "board-tabs" : item.dataset.view || item.dataset.blockId || resource?.dataset.resourceId ||
@@ -513,9 +513,11 @@
           <button type="button" data-gesture="move" aria-label="Переместить" aria-pressed="${counterGesture === "move"}">✥</button>
           <button type="button" data-gesture="resize" aria-label="Изменить размер" aria-pressed="${counterGesture === "resize"}">↔</button>
           <button type="button" data-gesture="font" aria-label="Размер текста" aria-pressed="${counterGesture === "font"}">Aa</button>
-          ${values[tile.keys[0]] ? `<button type="button" data-layout-action="edit" data-index="${index}" aria-label="Изменить подпись">✎</button>` : ""}
+          <button type="button" data-layout-action="edit" data-index="${index}" aria-label="Изменить подпись">✎</button>
         </div><svg class="counter-edit-outline" aria-hidden="true"><rect pathLength="100" rx="22"/></svg>` : ""}
-        ${tile.keys.map((key) => `<div class="counter-value">${catalog.get(key) ?? `${tile.labels?.[key] ? escapeHtml(tile.labels[key]) : values[key][0]} <strong>${values[key][1]}</strong>`}</div>`).join("")}
+        ${tile.keys.map((key) => `<div class="counter-value">${catalog.has(key)
+          ? labelledWidget(catalog.get(key), tile.labels?.[key])
+          : `<span data-tile-caption>${tile.labels?.[key] ? escapeHtml(tile.labels[key]) : values[key][0]}</span> <strong>${values[key][1]}</strong>`}</div>`).join("")}
         ${editing ? `<div class="counter-controls" hidden>
           ${[["up","↑","Вверх"],["down","↓","Вниз"],["left","←","Влево"],["right","→","Вправо"],["size",(tile.span ?? (tile.wide ? 12 : 6)) > 6 ? "Сузить" : "Расширить","Изменить ширину"],
             ...(index + 1 < layout.length && values[tile.keys[0]] && values[layout[index + 1].keys[0]] ? [["merge","Объединить","Объединить со следующей карточкой"]] : []),
@@ -523,6 +525,24 @@
           ].map(([action, label, title]) => `<button class="secondary-button" type="button" data-layout-action="${action}" data-index="${index}" aria-label="${title}">${label}</button>`).join("")}
         </div>` : ""}
       </article>`).join("")}</section>`;
+  }
+
+  function labelledWidget(markup, label) {
+    if (!label) return markup;
+    const template = document.createElement("template");
+    template.innerHTML = markup;
+    const widget = template.content.firstElementChild;
+    const caption = widget.querySelector(".equipment-block__body strong, .resource-row__top strong, .history-row strong");
+    if (caption) {
+      caption.textContent = label;
+    } else if (widget.matches("button")) {
+      widget.textContent = label;
+    } else {
+      const heading = document.createElement("strong");
+      heading.textContent = label;
+      template.content.prepend(heading);
+    }
+    return template.innerHTML;
   }
 
   function renderAircraftLayout(existingBoard) {
@@ -830,8 +850,13 @@
         dialog.className = "confirm-dialog";
         const captions = [...button.closest(".counter-tile").querySelectorAll(".counter-value")];
         dialog.innerHTML = `<form method="dialog" class="shift-form"><h2>Названия показателей</h2>
-          ${tile.keys.map((key, offset) => `<label>${escapeHtml(captions[offset].firstChild.textContent.trim())}
-            <input name="${key}" type="text" value="${escapeHtml(tile.labels?.[key] ?? "")}" placeholder="Стандартное название"></label>`).join("")}
+          ${tile.keys.map((key, offset) => {
+            const caption = captions[offset];
+            const heading = caption.querySelector("[data-tile-caption], strong, button");
+            const title = tile.labels?.[key] ?? (key === "widget:board-tabs" ? "Панель вкладок" : (heading ?? caption).textContent.trim());
+            return `<label>${escapeHtml(title)}
+            <input name="${key}" type="text" value="${escapeHtml(tile.labels?.[key] ?? "")}" placeholder="Стандартное название"></label>`;
+          }).join("")}
           <button class="primary-button" value="save">Применить</button><button class="secondary-button" value="cancel">Отмена</button></form>`;
         dialog.addEventListener("close", () => {
           if (dialog.returnValue === "save") {
@@ -1454,10 +1479,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.22</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.23</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.22", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.23", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1948,7 +1973,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.22</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.23</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -2021,8 +2046,6 @@
       state.pendingWork = addResource.dataset.work === "true";
       navigateTo("resource-editor");
     });
-    const editBlocks = document.querySelector("[data-action='edit-blocks']");
-    if (editBlocks) editBlocks.addEventListener("click", renameBlock);
     const calendar = document.querySelector("[data-action='calendar-settings']");
     if (calendar) calendar.addEventListener("click", addNearestWorkToCalendar);
     const notificationTest = document.querySelector("[data-action='notification-test']");
@@ -2120,22 +2143,6 @@
     saveState();
     navigateBack();
     showToast("Блок добавлен");
-  }
-
-  function renameBlock() {
-    const aircraft = selectedAircraft();
-    const numbered = aircraft.blocks.map((block, index) => `${index + 1}. ${block.name}`).join("\n");
-    const selected = Number(window.prompt(`Какой блок переименовать?\n${numbered}`, "1"));
-    if (!Number.isInteger(selected) || selected < 1 || selected > aircraft.blocks.length) return;
-    const block = aircraft.blocks[selected - 1];
-    const name = window.prompt("Новое название", block.name);
-    if (!name) return;
-    const oldName = block.name;
-    block.name = name.trim();
-    aircraft.resources.forEach((resource) => { if (resource.object === oldName) resource.object = block.name; });
-    saveState();
-    render();
-    showToast("Название блока сохранено");
   }
 
   function renameBlockById(blockId) {
