@@ -156,7 +156,7 @@ async function main() {
         const fields = {
           title: document.querySelector('h1')?.textContent,
           form: Boolean(document.querySelector('#block-form')),
-          engine: Boolean(document.querySelector('[name="sneMinutes"]')),
+          engine: Boolean(document.querySelector('#block-form [name="starts"]')),
           hasModel: Boolean(document.querySelector('#block-form [name="model"]')),
           hasSerial: Boolean(document.querySelector('#block-form [name="serialNumber"]')),
           boardSerial: document.querySelector('#block-form output')?.textContent,
@@ -185,7 +185,6 @@ async function main() {
       const engineFields = Boolean(document.querySelector('[name="sneMinutes"]'));
       const blockForm = document.querySelector('#block-form');
       blockForm.elements.sneMinutes.value = '600';
-      blockForm.elements.pprMinutes.value = '120';
       blockForm.requestSubmit();
       document.querySelector('#block-event-form').requestSubmit();
       const history = document.querySelector('.history-list').textContent;
@@ -197,7 +196,8 @@ async function main() {
     assert.equal(addedBlock.engineFields, true);
     assert.equal(addedBlock.sne, "600");
     assert.equal(addedBlock.ppr, "0");
-    assert.match(addedBlock.history, /До ремонта: СНЭ 10:00 · ППР 2:00/);
+    assert.match(addedBlock.history, /До ремонта: СНЭ 10:00/);
+    assert.doesNotMatch(addedBlock.history, /ППР/);
     results.addEngineForm = "ok";
     await evaluate(`document.querySelector('[data-aircraft-tab="least-reliable"]').click()`);
 
@@ -547,6 +547,64 @@ async function main() {
     })()`);
     assert.deepEqual(boardImage, { previewWidth: 320, updatedRF: true, airframeSections: true, shownOnMain: true });
     results.boardImage = "ok";
+
+    const repairUsage = await evaluate(`(() => {
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft.find(board => board.boardNumber === '42');
+      document.querySelector('[data-aircraft-id="' + read().id + '"]').click();
+      const engine = board => board.blocks.find(block => block.id === 'engine-left');
+      const repair = id => {
+        document.querySelector('[data-aircraft-tab="aggregates"]').click();
+        document.querySelector('[data-block-id="' + id + '"]').click();
+        document.querySelector('#block-event-form').requestSubmit();
+        window.handleAndroidBack();
+      };
+      document.querySelector('[data-aircraft-tab="aggregates"]').click();
+      document.querySelector('[data-block-id="engine-left"]').click();
+      const initialPpr = document.querySelector('#block-form [name="pprMinutes"]');
+      const emptyBeforeRepair = initialPpr.disabled && initialPpr.value === '';
+      window.handleAndroidBack();
+      repair('airframe');
+      repair('engine-left');
+      const before = read();
+      document.querySelector('[data-aircraft-tab="works"]').click();
+      document.querySelector('[data-view="shift"]').click();
+      const form = document.querySelector('#shift-form');
+      form.elements.flightHours.value = '1';
+      form.elements.flightMinutes.value = '0';
+      form.elements.leftGround.value = '13';
+      form.elements.runway.value = '1';
+      form.elements.leftMaximum.value = '21';
+      form.elements.leftAfterburner.value = '7';
+      form.elements.extraEngine0Ground.value = '13';
+      form.elements.extraEngine0Afterburner.value = '9';
+      form.requestSubmit();
+      const after = read();
+      repair('engine-left');
+      const reset = engine(read());
+      const unit = board => board.blocks.find(block => block.name === 'Гидронасос');
+      return {
+        emptyBeforeRepair,
+        airframePpr: after.pprFlightMinutes,
+        airframeLandings: after.pprLandings,
+        enginePpr: engine(after).pprMinutes,
+        engineSneAdded: engine(after).sneMinutes - (engine(before).sneMinutes || 0),
+        enginePprLandings: engine(after).pprLandings,
+        afterburner: engine(after).pprAfterburnerSeconds,
+        maximum: engine(after).pprMaximumSeconds,
+        extraEngine: after.shifts.at(-1).otherEngines.map(entry => [entry.minutes, entry.afterburnerSeconds]),
+        unitPprAdded: unit(after).pprMinutes - unit(before).pprMinutes,
+        resetPpr: reset.pprMinutes,
+        resetModes: [reset.pprMaximumSeconds, reset.pprAfterburnerSeconds],
+        keepsSne: reset.sneMinutes === engine(after).sneMinutes,
+        previousPpr: reset.events.at(-1).beforeRepair.pprMinutes,
+      };
+    })()`);
+    assert.deepEqual(repairUsage, {
+      emptyBeforeRepair: true, airframePpr: 60, airframeLandings: 1, enginePpr: 63,
+      engineSneAdded: 63, enginePprLandings: 1, afterburner: 7, maximum: 21,
+      extraEngine: [[63, 9]], unitPprAdded: 60, resetPpr: 0, resetModes: [0, 0], keepsSne: true, previousPpr: 63,
+    });
+    results.repairUsage = "ok";
 
     process.stdout.write(`${JSON.stringify(results)}\n`);
   } finally {

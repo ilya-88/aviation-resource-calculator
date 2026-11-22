@@ -69,7 +69,8 @@ test("формуляр агрегата поддерживает жизненн�
     assert.ok(app.includes(`value="${eventType}"`), `Нет события: ${eventType}`);
   }
   assert.match(app, /block\.events\.push\(item\)/);
-  assert.match(app, /if \(block\.hasPpr\) block\.pprMinutes = 0/);
+  assert.match(app, /block\.pprMinutes = 0/);
+  assert.doesNotMatch(app, /name="has(?:Sne|Ppr)"/);
   assert.match(app, /block\.installed = false/);
   assert.match(app, /block\.installed = true/);
 });

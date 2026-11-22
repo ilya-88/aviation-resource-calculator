@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.25";
+  const APP_VERSION = "0.2.26";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -139,7 +139,11 @@
       equivalentLandings: Number(aircraft.equivalentLandings) || 0,
       arresterHooks: Number(aircraft.arresterHooks) || 0,
       shifts: Array.isArray(aircraft.shifts) ? aircraft.shifts : [],
-      blocks: Array.isArray(aircraft.blocks) ? aircraft.blocks.map(normalizeBlock) : [],
+      blocks: Array.isArray(aircraft.blocks) ? aircraft.blocks.map((block) => normalizeBlock({
+        ...block,
+        repairs: block.kind === "airframe" && (aircraft.pprFlightMinutes != null || aircraft.pprLandings != null)
+          ? Math.max(1, Number(block.repairs) || 0) : block.repairs,
+      })) : [],
       resources: Array.isArray(aircraft.resources) ? aircraft.resources.map(normalizeResource) : [],
       settings: {
         ...structuredClone(DEFAULT_AIRCRAFT_SETTINGS),
@@ -1045,6 +1049,12 @@
     }).join("");
   }
 
+  function additionalShiftEngines(aircraft) {
+    return aircraft.blocks.filter((block) => block.kind === "engine" && block.installed &&
+      block.id !== "engine-left" && block.id !== "engine-right")
+      .map((block, index) => [`extraEngine${index}`, block]);
+  }
+
   function renderShift() {
     const aircraft = selectedAircraft();
     const typeRule = usageTypeOverride(aircraft);
@@ -1083,6 +1093,7 @@
         </fieldset>
         <fieldset><legend>${escapeHtml(usageRule("maximum").label)}</legend>
           <div class="field-pair"><label>Левый двигатель, секунды<input name="leftMaximum" type="number" min="0" value="0"></label><label>Правый двигатель, секунды<input name="rightMaximum" type="number" min="0" value="0"></label></div>
+          <div class="field-pair"><label>Форсаж левого двигателя, секунды<input name="leftAfterburner" type="number" min="0" value="0"></label><label>Форсаж правого двигателя, секунды<input name="rightAfterburner" type="number" min="0" value="0"></label></div>
         </fieldset>
         <fieldset><legend>Режимы левого двигателя</legend>
           <p class="field-help">Вложенные счётчики сохраняются отдельно: Б уже включает ОР, а Б + УБ уже включает Б и ОР.</p>
@@ -1091,6 +1102,18 @@
         <fieldset><legend>Режимы правого двигателя</legend>
           <div class="mode-grid"><label><span>ОР</span><input name="rightOrMode" type="time" step="1" value="00:00:00"></label><label><span>Б, включая ОР</span><input name="rightCombatMode" type="time" step="1" value="00:00:00"></label><label><span>Б + УБ, включая Б и ОР</span><input name="rightCombinedMode" type="time" step="1" value="00:00:00"></label></div>
         </fieldset>
+        ${additionalShiftEngines(aircraft).map(([prefix, block]) => `
+          <fieldset><legend>${escapeHtml(block.name)}</legend>
+            <label>${escapeHtml(usageRule("ground").label)}, минут<input name="${prefix}Ground" type="number" min="0" value="0"></label>
+            <label>Запуски<input name="${prefix}Starts" type="number" min="0" value="0"></label>
+            <label>${escapeHtml(usageRule("maximum").label)}, секунды<input name="${prefix}Maximum" type="number" min="0" value="0"></label>
+            <label>Форсаж, секунды<input name="${prefix}Afterburner" type="number" min="0" value="0"></label>
+            <div class="mode-grid">
+              <label>ОР<input name="${prefix}OrMode" type="time" step="1" value="00:00:00"></label>
+              <label>Б, включая ОР<input name="${prefix}CombatMode" type="time" step="1" value="00:00:00"></label>
+              <label>Б + УБ, включая Б и ОР<input name="${prefix}CombinedMode" type="time" step="1" value="00:00:00"></label>
+            </div>
+          </fieldset>`).join("")}
         <section id="shift-summary" class="shift-summary"></section>
         <button type="submit" class="primary-button wide">Рассчитать и сохранить смену</button>
       </form>
@@ -1101,6 +1124,7 @@
   function bindShiftForm() {
     const form = document.getElementById("shift-form");
     const aircraft = selectedAircraft();
+    const extraEngines = additionalShiftEngines(aircraft);
     const override = usageTypeOverride(aircraft);
     const ground = override?.ground ?? state.sharedGround ?? aircraft.settings;
     const factor = (key) => override?.factors[key] ?? usageRule(key).factor;
@@ -1131,7 +1155,8 @@
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(form);
-      const modeError = validateNestedModes(data, "left", "левого") || validateNestedModes(data, "right", "правого");
+      const modeError = validateNestedModes(data, "left", "левого") || validateNestedModes(data, "right", "правого") ||
+        extraEngines.map(([prefix, block]) => validateNestedModes(data, prefix, block.name)).find(Boolean);
       if (modeError) {
         showToast(modeError);
         return;
@@ -1155,32 +1180,48 @@
       if (aircraft.pprLandings != null) aircraft.pprLandings += actualLandings;
       aircraft.equivalentLandings = Math.round((aircraft.equivalentLandings + equivalent) * 1e6) / 1e6;
       aircraft.arresterHooks += arresterHooks;
+      const airframe = aircraft.blocks.find((block) => block.kind === "airframe");
+      if (airframe?.repairs > 0) {
+        aircraft.pprFlightMinutes ??= flight;
+        aircraft.pprLandings ??= actualLandings;
+      }
       const leftBlock = aircraft.blocks.find((block) => block.id === "engine-left");
       const rightBlock = aircraft.blocks.find((block) => block.id === "engine-right");
-      if (leftBlock?.installed) {
-        if (leftBlock.hasSne) leftBlock.sneMinutes = (leftBlock.sneMinutes || 0) + left.totalMinutes;
-        if (leftBlock.hasPpr) leftBlock.pprMinutes = (leftBlock.pprMinutes || 0) + left.totalMinutes;
-        leftBlock.starts = (leftBlock.starts || 0) + Number(data.get("leftStarts"));
-        accumulateModes(leftBlock, data, "left");
-        leftBlock.maximumSeconds = (leftBlock.maximumSeconds ?? 0) + Number(data.get("leftMaximum")) * factor("maximum");
+      const engineUsage = new Map();
+      const engineEntries = [["left", leftBlock, left], ["right", rightBlock, right],
+        ...extraEngines.map(([prefix, block]) => [prefix, block, engineIncrement(flight, Number(data.get(`${prefix}Ground`)))])];
+      for (const [side, block, increment] of engineEntries) {
+        if (!block?.installed) continue;
+        const starts = Number(data.get(`${side}Starts`));
+        const maximum = Number(data.get(`${side}Maximum`)) * factor("maximum");
+        const afterburner = Number(data.get(`${side}Afterburner`));
+        const modes = readModes(data, side);
+        engineUsage.set(block, { minutes: increment.totalMinutes, starts, maximumSeconds: maximum, afterburnerSeconds: afterburner, modes });
+        addBlockUsage(block, increment.totalMinutes, actualLandings);
+        block.starts = (block.starts || 0) + starts;
+        block.maximumSeconds = (block.maximumSeconds || 0) + maximum;
+        block.afterburnerSeconds = (block.afterburnerSeconds || 0) + afterburner;
+        accumulateModes(block.modesSeconds ??= {}, modes);
+        if (block.repairs > 0) {
+          block.pprStarts = (block.pprStarts || 0) + starts;
+          block.pprMaximumSeconds = (block.pprMaximumSeconds || 0) + maximum;
+          block.pprAfterburnerSeconds = (block.pprAfterburnerSeconds || 0) + afterburner;
+          accumulateModes(block.pprModesSeconds ??= {}, modes);
+        }
       }
-      if (rightBlock?.installed) {
-        if (rightBlock.hasSne) rightBlock.sneMinutes = (rightBlock.sneMinutes || 0) + right.totalMinutes;
-        if (rightBlock.hasPpr) rightBlock.pprMinutes = (rightBlock.pprMinutes || 0) + right.totalMinutes;
-        rightBlock.starts = (rightBlock.starts || 0) + Number(data.get("rightStarts"));
-        accumulateModes(rightBlock, data, "right");
-        rightBlock.maximumSeconds = (rightBlock.maximumSeconds ?? 0) + Number(data.get("rightMaximum")) * factor("maximum");
+      for (const block of aircraft.blocks) {
+        if (block.installed && block.kind === "unit") addBlockUsage(block, flight, actualLandings);
       }
       aircraft.resources.forEach((resource) => {
         const owner = aircraft.blocks.find((block) => block.name === resource.object);
         if (owner?.installed === false) return;
-        const side = owner === leftBlock && leftBlock ? "left" : owner === rightBlock && rightBlock ? "right" : null;
+        const usage = engineUsage.get(owner);
         let spent;
         if (resource.unit === "ч") {
-          if (owner?.kind === "engine" && !side) return;
-          spent = (side === "left" ? left.totalMinutes : side === "right" ? right.totalMinutes : flight) / 60;
-        } else if (resource.unit === "зап." && side) {
-          spent = Number(data.get(`${side}Starts`));
+          if (owner?.kind === "engine" && !usage) return;
+          spent = (usage?.minutes ?? flight) / 60;
+        } else if (resource.unit === "зап." && usage) {
+          spent = usage.starts;
         } else {
           return;
         }
@@ -1200,6 +1241,9 @@
         weightedHooks: arresterHooks * factor("arresterHooks"),
         leftMaximumSeconds: Number(data.get("leftMaximum")),
         rightMaximumSeconds: Number(data.get("rightMaximum")),
+        leftAfterburnerSeconds: Number(data.get("leftAfterburner")),
+        rightAfterburnerSeconds: Number(data.get("rightAfterburner")),
+        otherEngines: extraEngines.map(([, block]) => ({ blockId: block.id, ...engineUsage.get(block) })),
         actualLandings,
         equivalentLandings: equivalent,
         arresterHooks,
@@ -1241,12 +1285,17 @@
     return "";
   }
 
-  function accumulateModes(block, data, side) {
-    const modes = readModes(data, side);
-    block.modesSeconds = block.modesSeconds || { or: 0, combat: 0, combined: 0 };
-    block.modesSeconds.or += modes.or;
-    block.modesSeconds.combat += modes.combat;
-    block.modesSeconds.combined += modes.combined;
+  function addBlockUsage(block, minutes, landings) {
+    block.sneMinutes = (block.sneMinutes || 0) + minutes;
+    block.sneLandings = (block.sneLandings || 0) + landings;
+    if (block.repairs > 0) {
+      block.pprMinutes = (block.pprMinutes || 0) + minutes;
+      block.pprLandings = (block.pprLandings || 0) + landings;
+    }
+  }
+
+  function accumulateModes(totals, modes) {
+    for (const [key, seconds] of Object.entries(modes)) totals[key] = (totals[key] || 0) + seconds;
   }
 
   function renderAircraftSettings() {
@@ -1510,22 +1559,31 @@
       renderAircraft();
       return;
     }
-    const engineFields = block.kind === "engine" ? `
-      <fieldset><legend>Наработка двигателя</legend>
-        <div class="field-pair"><label class="checkbox-row"><input name="hasSne" type="checkbox" ${block.hasSne ? "checked" : ""}><span>Вести СНЭ</span></label><label class="checkbox-row"><input name="hasPpr" type="checkbox" ${block.hasPpr ? "checked" : ""}><span>Вести ППР</span></label></div>
+    const repaired = block.repairs > 0;
+    const ppr = (value) => repaired && value != null ? value : "—";
+    const modeRow = (label, total, sinceRepair, format) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${format(total || 0)} / ${ppr(sinceRepair == null ? null : format(sinceRepair))}</strong></div>`;
+    const blockFields = block.kind !== "airframe" ? `
+      <fieldset><legend>Наработка</legend>
         <div class="field-pair">
           <label><span>СНЭ, минут</span><input name="sneMinutes" type="number" min="0" step="0.01" value="${block.sneMinutes || 0}"></label>
-          <label><span>ППР, минут</span><input name="pprMinutes" type="number" min="0" step="0.01" value="${block.pprMinutes || 0}"></label>
+          <label><span>ППР, минут</span><input name="pprMinutes" type="number" min="0" step="0.01" value="${repaired ? block.pprMinutes ?? "" : ""}" ${repaired ? "" : "disabled"}></label>
         </div>
-        <label><span>Количество запусков</span><input name="starts" type="number" min="0" step="1" value="${block.starts || 0}"></label>
+        <div class="field-pair">
+          <label>Посадки СНЭ<input name="sneLandings" type="number" min="0" step="1" value="${block.sneLandings || 0}"></label>
+          <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${repaired ? block.pprLandings ?? "" : ""}" ${repaired ? "" : "disabled"}></label>
+        </div>
+        ${block.kind === "engine" ? `<label><span>Количество запусков СНЭ</span><input name="starts" type="number" min="0" step="1" value="${block.starts || 0}"></label>
+        <p>Порядок значений: СНЭ / ППР</p>
         <div class="metric-grid compact-metrics">
           <div class="metric"><span>СНЭ</span><strong>${calc.formatDuration(block.sneMinutes || 0)}</strong></div>
-          <div class="metric"><span>ППР</span><strong>${calc.formatDuration(block.pprMinutes || 0)}</strong></div>
-          <div class="metric"><span>ОР</span><strong>${formatSeconds(block.modesSeconds?.or || 0)}</strong></div>
-          <div class="metric"><span>Б, включая ОР</span><strong>${formatSeconds(block.modesSeconds?.combat || 0)}</strong></div>
-          <div class="metric"><span>Б + УБ</span><strong>${formatSeconds(block.modesSeconds?.combined || 0)}</strong></div>
-          <div class="metric"><span>${escapeHtml(usageRule("maximum").label)}</span><strong>${formatSeconds(block.maximumSeconds ?? 0)}</strong></div>
-        </div>
+          <div class="metric"><span>ППР</span><strong>${ppr(block.pprMinutes == null ? null : calc.formatDuration(block.pprMinutes))}</strong></div>
+          ${modeRow("Запуски", block.starts, block.pprStarts, formatNumber)}
+          ${modeRow("ОР", block.modesSeconds?.or, block.pprModesSeconds?.or, formatSeconds)}
+          ${modeRow("Б, включая ОР", block.modesSeconds?.combat, block.pprModesSeconds?.combat, formatSeconds)}
+          ${modeRow("Б + УБ", block.modesSeconds?.combined, block.pprModesSeconds?.combined, formatSeconds)}
+          ${modeRow(usageRule("maximum").label, block.maximumSeconds, block.pprMaximumSeconds, formatSeconds)}
+          ${modeRow("Форсаж", block.afterburnerSeconds, block.pprAfterburnerSeconds, formatSeconds)}
+        </div>` : ""}
       </fieldset>` : "";
     const relatedResources = aircraft.resources.filter((resource) =>
       resource.object === block.name || (block.kind === "airframe" && resource.object === "Самолёт")
@@ -1543,8 +1601,8 @@
         <div class="metric"><span>Зацепы</span><strong>${aircraft.arresterHooks}</strong></div>
       </section>
       <fieldset><legend>ППР планера</legend>
-        <label>${escapeHtml(usageRule("flight").label)} ППР, минут<input name="pprFlightMinutes" type="number" min="0" step="1" value="${aircraft.pprFlightMinutes ?? ""}"></label>
-        <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}"></label>
+        <label>${escapeHtml(usageRule("flight").label)} ППР, минут<input name="pprFlightMinutes" type="number" min="0" step="1" value="${aircraft.pprFlightMinutes ?? ""}" ${repaired ? "" : "disabled"}></label>
+        <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}" ${repaired ? "" : "disabled"}></label>
       </fieldset>` : "";
     const installations = block.kind === "airframe" ? `
       <section class="section-stack settings-section-heading">
@@ -1589,10 +1647,10 @@
           <label><span>Заводской/обычный номер</span><input name="serialNumber" type="text" value="${escapeHtml(block.serialNumber || "")}"></label>
           <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(block.drawingNumber || "")}"></label>
           <label><span>Состояние установки</span><select name="installed"><option value="true" ${block.installed ? "selected" : ""}>Установлен</option><option value="false" ${!block.installed ? "selected" : ""}>Демонтирован</option></select></label>`}
-          <label><span>Количество ремонтов</span><input name="repairs" type="number" min="0" step="1" value="${block.repairs || 0}"></label>
+          <label>Количество ремонтов<output>${block.repairs}</output></label>
         </fieldset>
         ${airframeFields}
-        ${engineFields}
+        ${blockFields}
         <button type="submit" class="primary-button wide">Сохранить формуляр</button>
       </form>
       ${installations}
@@ -1622,17 +1680,17 @@
         block.drawingNumber = String(data.get("drawingNumber") || "").trim();
         block.installed = data.get("installed") === "true";
       }
-      block.repairs = Number(data.get("repairs"));
-      if (block.kind === "airframe") {
+      if (block.kind === "airframe" && repaired) {
         aircraft.pprFlightMinutes = data.get("pprFlightMinutes") === "" ? null : Number(data.get("pprFlightMinutes"));
         aircraft.pprLandings = data.get("pprLandings") === "" ? null : Number(data.get("pprLandings"));
-      }
-      if (block.kind === "engine") {
-        block.hasSne = data.get("hasSne") === "on";
-        block.hasPpr = data.get("hasPpr") === "on";
+      } else if (block.kind !== "airframe") {
         block.sneMinutes = Number(data.get("sneMinutes"));
-        block.pprMinutes = Number(data.get("pprMinutes"));
-        block.starts = Number(data.get("starts"));
+        block.sneLandings = Number(data.get("sneLandings"));
+        if (repaired) {
+          block.pprMinutes = data.get("pprMinutes") === "" ? null : Number(data.get("pprMinutes"));
+          block.pprLandings = data.get("pprLandings") === "" ? null : Number(data.get("pprLandings"));
+        }
+        if (block.kind === "engine") block.starts = Number(data.get("starts"));
       }
       aircraft.resources.forEach((resource) => { if (resource.object === oldName) resource.object = block.name; });
       saveState();
@@ -1647,13 +1705,34 @@
       const item = { id: `event-${Date.now()}`, type, date: String(data.get("date")), note: String(data.get("note") || "").trim() };
       if (type === "repair") {
         item.beforeRepair = {
-          sneMinutes: block.hasSne ? block.sneMinutes ?? 0 : null,
-          pprMinutes: block.hasPpr ? block.pprMinutes ?? 0 : null,
+          sneMinutes: block.kind === "airframe" ? aircraft.totalFlightMinutes : block.sneMinutes ?? 0,
+          pprMinutes: repaired ? (block.kind === "airframe" ? aircraft.pprFlightMinutes : block.pprMinutes) ?? null : null,
+          sneLandings: block.kind === "airframe" ? aircraft.actualLandings : block.sneLandings ?? 0,
+          pprLandings: block.kind === "airframe" ? aircraft.pprLandings ?? null : block.pprLandings ?? null,
           starts: block.starts ?? null,
+          pprStarts: block.pprStarts ?? null,
+          maximumSeconds: block.maximumSeconds ?? null,
+          pprMaximumSeconds: block.pprMaximumSeconds ?? null,
+          afterburnerSeconds: block.afterburnerSeconds ?? null,
+          pprAfterburnerSeconds: block.pprAfterburnerSeconds ?? null,
+          modesSeconds: structuredClone(block.modesSeconds ?? null),
+          pprModesSeconds: structuredClone(block.pprModesSeconds ?? null),
           repairs: block.repairs,
         };
         block.repairs += 1;
-        if (block.hasPpr) block.pprMinutes = 0;
+        if (block.kind === "airframe") {
+          aircraft.pprFlightMinutes = 0;
+          aircraft.pprLandings = 0;
+        } else {
+          block.pprMinutes = 0;
+          block.pprLandings = 0;
+          if (block.kind === "engine") {
+            block.pprStarts = 0;
+            block.pprMaximumSeconds = 0;
+            block.pprAfterburnerSeconds = 0;
+            block.pprModesSeconds = { or: 0, combat: 0, combined: 0 };
+          }
+        }
       } else if (type === "dismantle") {
         block.installed = false;
       } else if (type === "install") {
@@ -1716,10 +1795,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.25</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.26</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.25", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.26", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -2215,7 +2294,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.25</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.26</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -2385,7 +2464,7 @@
       name: name.trim(),
       caption: caption.trim(),
       status: "ok",
-      ...(kind === "engine" ? { sneMinutes: 0, pprMinutes: 0, starts: 0, modesSeconds: { or: 0, combat: 0, combined: 0 } } : {}),
+      ...(kind === "engine" ? { sneMinutes: 0, starts: 0 } : {}),
     }));
     saveState();
     navigateBack();
@@ -2519,17 +2598,17 @@
   }
 
   function normalizeBlock(block) {
+    const { hasSne, hasPpr, ...fields } = block;
+    const events = Array.isArray(block.events) ? block.events : [];
     return {
       model: "",
       serialNumber: "",
       drawingNumber: "",
-      repairs: 0,
       installed: true,
-      hasSne: block.kind === "engine",
-      hasPpr: block.kind === "engine",
-      events: [],
-      ...block,
-      events: Array.isArray(block.events) ? block.events : [],
+      ...fields,
+      repairs: Math.max(Number(block.repairs) || 0, events.filter((event) => event.type === "repair").length,
+        Number(block.pprMinutes > 0 || block.pprLandings > 0)),
+      events,
     };
   }
 
