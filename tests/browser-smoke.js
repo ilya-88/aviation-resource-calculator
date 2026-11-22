@@ -411,6 +411,27 @@ async function main() {
     })()`);
     assert.deepEqual(layoutResult, { count: 0, persisted: true, selectedAction: true, restored: true });
     results.aircraftLayout = "ok";
+    const liveReflow = await evaluate(`(async () => {
+      const source = document.querySelector('.counter-tile .counter-value');
+      source.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [new Touch({ identifier: 1, target: source })] }));
+      await new Promise(resolve => setTimeout(resolve, 900));
+      source.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true }));
+      document.querySelector('[data-gesture="move"]').click();
+      const [first, second] = document.querySelectorAll('#counter-preview .counter-tile');
+      const dragTarget = first.querySelector('.counter-value');
+      first.scrollIntoView({ block: 'center' });
+      const a = first.getBoundingClientRect();
+      const b = second.getBoundingClientRect();
+      const touch = (x, y) => new Touch({ identifier: 2, target: dragTarget, clientX: x, clientY: y });
+      dragTarget.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [touch(a.left + 20, a.top + 10)] }));
+      dragTarget.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, cancelable: true, touches: [touch(b.left + 20, b.top + 10)] }));
+      const movedBeforeRelease = second.getBoundingClientRect().top < b.top;
+      dragTarget.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, changedTouches: [touch(b.left + 20, b.top + 10)] }));
+      document.querySelector('#layout-save').click();
+      return movedBeforeRelease;
+    })()`);
+    assert.equal(liveReflow, true);
+    results.liveTileReflow = "ok";
     const journal = await evaluate(`(() => {
       window.handleAndroidBack();
       document.querySelector('[data-action="settings"]').click();

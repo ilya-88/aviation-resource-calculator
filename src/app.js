@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.18";
+  const APP_VERSION = "0.2.19";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -400,6 +400,10 @@
             const rect = toolbar.getBoundingClientRect();
             const visible = rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth;
             recordDiagnostic("layout.toolbar", `visible=${visible} size=${Math.round(rect.width)}x${Math.round(rect.height)} viewport=${innerWidth}x${innerHeight}`);
+            requestAnimationFrame(() => {
+              if (!toolbar.isConnected) return;
+              try { navigator.vibrate?.(18); } catch (_) {}
+            });
           }
         } catch (error) {
           recordDiagnostic("layout.open.error", error.name);
@@ -423,7 +427,6 @@
           start.ready = true;
           tile.classList.add("counter-tile-active");
           recordDiagnostic("layout.hold.ready");
-          try { navigator.vibrate?.(25); } catch (_) {}
         }, 650);
       }
       function finishHold(event) {
@@ -545,6 +548,7 @@
     }
     function clearDrag() {
       drag?.ghost?.remove();
+      preview.querySelectorAll(".counter-tile").forEach((card) => { card.style.order = ""; });
       preview.querySelector(".counter-dragging")?.classList.remove("counter-dragging");
       preview.querySelector(".counter-drop-target")?.classList.remove("counter-drop-target");
       drag = null;
@@ -564,20 +568,28 @@
       const cards = [...preview.querySelectorAll(".counter-tile")];
       const underPointer = document.elementFromPoint(x, y)?.closest(".counter-tile");
       const target = cards.indexOf(underPointer);
-      drag.target = target >= 0 && target !== drag.source ? target : null;
-      cards.forEach((card, index) => card.classList.toggle("counter-drop-target", index === drag.target));
+      if (target < 0 || target === drag.source) return;
+      if (drag.lastMove && Math.hypot(x - drag.lastMove.x, y - drag.lastMove.y) < 14) return;
+      const order = drag.order ?? cards.map((_, index) => index);
+      const from = order.indexOf(drag.source);
+      const to = order.indexOf(target);
+      if (from === to) return;
+      order.splice(from, 1);
+      order.splice(to, 0, drag.source);
+      drag.order = order;
+      drag.lastMove = { x, y };
+      order.forEach((index, position) => { cards[index].style.order = String(position); });
     }
     preview.addEventListener("pointerup", (event) => {
       if (drag?.pointer !== event.pointerId) return;
       dropCard();
     });
     function dropCard() {
-      const { source, target } = drag;
+      const { source, order } = drag;
       clearDrag();
-      if (target == null) return;
-      const [moved] = draft.splice(source, 1);
-      draft.splice(target, 0, moved);
-      activeCounterIndex = target;
+      if (!order) return;
+      draft = order.map((index) => draft[index]);
+      activeCounterIndex = order.indexOf(source);
       paint();
     }
     function cancelPointerDrag(event) {
@@ -602,6 +614,9 @@
         const values = [...card.querySelectorAll(".counter-value")];
         pinch = { card, index, origin: fingerSpan(event.touches), width: tile.span ?? (tile.wide ? 12 : 6),
           height: tile.height ?? Math.max(...values.map((value) => value.offsetHeight)), font: tile.font ?? 1 };
+        pinch.feedbackWidth = pinch.width;
+        pinch.feedbackHeight = pinch.height;
+        pinch.lastFeedback = -Infinity;
         card.classList.add("counter-tile-active");
         return;
       }
@@ -641,6 +656,14 @@
         card.style.setProperty("--tile-span", tile.span);
         card.style.setProperty("--tile-height", `${tile.height}px`);
         card.style.setProperty("--tile-font", `${tile.font}rem`);
+        const now = performance.now();
+        if (now - pinch.lastFeedback >= 120 &&
+            (tile.span !== pinch.feedbackWidth || Math.abs(tile.height - pinch.feedbackHeight) >= 8)) {
+          pinch.lastFeedback = now;
+          pinch.feedbackWidth = tile.span;
+          pinch.feedbackHeight = tile.height;
+          try { navigator.vibrate?.(9); } catch (_) {}
+        }
         return;
       }
       if (!hold) return;
@@ -1344,10 +1367,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.18</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.19</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.18", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.19", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1838,7 +1861,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.18</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.19</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
