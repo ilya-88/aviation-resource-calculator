@@ -42,8 +42,8 @@ button { color: inherit; }
 .aircraft-counters { width: 100%; margin-bottom: 12px; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .aircraft-counters :is(th, td) { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--line); }
 .counter-tiles { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-flow: row dense; align-items: start; gap: 6px; margin: 10px 0; }
-.counter-tile { grid-column: span var(--tile-span, 6); min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow-wrap: anywhere; }
-.counter-value { font-size: var(--tile-font, 1rem); min-height: var(--tile-height, 0px); }
+.counter-tile { grid-column: span var(--tile-span, 6); min-width: 0; min-height: var(--tile-height, 0px); padding: 9px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow-wrap: anywhere; }
+.counter-value { font-size: var(--tile-font, 1rem); }
 #counter-preview .counter-tile { position: relative; }
 #counter-preview .counter-tile, #counter-preview .counter-tile * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .counter-resize-surface, .counter-move-surface .counter-tile-active { touch-action: none; user-select: none; }
@@ -63,6 +63,7 @@ button { color: inherit; }
 .counter-tile-active { outline: 2px dashed #427fc7; outline-offset: -3px; }
 .counter-edit-button { float: left; min-width: 44px; min-height: 44px; }
 @media (prefers-reduced-motion: no-preference) {
+  .counter-resize-surface .counter-tile { transition: min-height 100ms ease-out; }
   .counter-edit-outline rect { animation: counter-edit-run 1.2s linear infinite; }
   @keyframes counter-edit-run { to { stroke-dashoffset: -10; } }
 }

@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.19";
+  const APP_VERSION = "0.2.20";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -508,6 +508,7 @@
         ${editing && activeCounterIndex === index ? `<div class="counter-gesture-toolbar">
           <button type="button" data-gesture="move" aria-label="Переместить" aria-pressed="${counterGesture === "move"}">✥</button>
           <button type="button" data-gesture="resize" aria-label="Изменить размер" aria-pressed="${counterGesture === "resize"}">↔</button>
+          <button type="button" data-layout-action="font" data-index="${index}" aria-label="Размер текста">Aa</button>
           ${values[tile.keys[0]] ? `<button type="button" data-layout-action="edit" data-index="${index}" aria-label="Изменить подпись">✎</button>` : ""}
         </div><svg class="counter-edit-outline" aria-hidden="true"><rect pathLength="100" rx="22"/></svg>` : ""}
         ${tile.keys.map((key) => `<div class="counter-value">${catalog.get(key) ?? `${tile.labels?.[key] ? escapeHtml(tile.labels[key]) : values[key][0]} <strong>${values[key][1]}</strong>`}</div>`).join("")}
@@ -532,7 +533,7 @@
     const surface = preview.closest("main");
     const controls = document.createElement("div");
     controls.className = "counter-save-bar";
-    controls.innerHTML = `<button class="secondary-button" id="layout-default">По умолчанию</button><button class="primary-button" id="layout-save">Готово</button>`;
+    controls.innerHTML = `<button class="secondary-button" id="layout-default">Сбросить размер плитки</button><button class="primary-button" id="layout-save">Готово</button>`;
     surface.after(controls);
     surface.querySelectorAll("button").forEach((button) => { button.disabled = true; });
     const boardSettings = app.querySelector('[data-action="settings"]');
@@ -542,10 +543,7 @@
     };
     let drag;
     let hold;
-    let pinch;
-    function fingerSpan(touches) {
-      return { x: Math.abs(touches[0].clientX - touches[1].clientX), y: Math.abs(touches[0].clientY - touches[1].clientY) };
-    }
+    let resize;
     function clearDrag() {
       drag?.ghost?.remove();
       preview.querySelectorAll(".counter-tile").forEach((card) => { card.style.order = ""; });
@@ -578,7 +576,18 @@
       order.splice(to, 0, drag.source);
       drag.order = order;
       drag.lastMove = { x, y };
+      const before = cards.map((card) => card.getBoundingClientRect());
       order.forEach((index, position) => { cards[index].style.order = String(position); });
+      if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        cards.forEach((card, index) => {
+          if (index === drag.source) return;
+          card.getAnimations?.().forEach((animation) => animation.cancel());
+          const after = card.getBoundingClientRect();
+          const dx = before[index].left - after.left;
+          const dy = before[index].top - after.top;
+          if (dx || dy) card.animate?.([{ transform: `translate(${dx}px,${dy}px)` }, { transform: "none" }], { duration: 150, easing: "ease-out" });
+        });
+      }
     }
     preview.addEventListener("pointerup", (event) => {
       if (drag?.pointer !== event.pointerId) return;
@@ -605,19 +614,18 @@
       if (hold && drag?.touch === hold.id) clearDrag();
       cancelHold();
       const card = event.target.closest(".counter-tile");
-      if (counterGesture === "resize" && event.touches.length === 2) {
+      if (counterGesture === "resize" && event.touches.length === 1 && !event.target.closest("button")) {
         event.preventDefault();
         clearDrag();
+        const finger = event.touches[0];
         const index = activeCounterIndex;
         const card = preview.querySelector(`[data-counter-index="${index}"]`);
         const tile = draft[index];
-        const values = [...card.querySelectorAll(".counter-value")];
-        pinch = { card, index, origin: fingerSpan(event.touches), width: tile.span ?? (tile.wide ? 12 : 6),
-          height: tile.height ?? Math.max(...values.map((value) => value.offsetHeight)), font: tile.font ?? 1 };
-        pinch.feedbackWidth = pinch.width;
-        pinch.feedbackHeight = pinch.height;
-        pinch.lastFeedback = -Infinity;
-        card.classList.add("counter-tile-active");
+        resize = { card, index, finger: finger.identifier, x: finger.clientX, y: finger.clientY,
+          width: tile.span ?? (tile.wide ? 12 : 6), height: card.offsetHeight,
+          column: card.parentElement.clientWidth / 12, axis: null, lastFeedback: -Infinity };
+        resize.feedbackWidth = resize.width;
+        resize.feedbackHeight = resize.height;
         return;
       }
       if (counterGesture !== "move" || drag || !card || Number(card.dataset.counterIndex) !== activeCounterIndex || event.target.closest("button") || event.touches.length !== 1) return;
@@ -637,31 +645,29 @@
       card.classList.add("counter-dragging");
     }, { passive: false });
     surface.addEventListener("touchmove", (event) => {
-      if (pinch && event.touches.length === 2) {
+      if (resize) {
+        const finger = [...event.touches].find((item) => item.identifier === resize.finger);
+        if (!finger) return;
         if (event.cancelable) event.preventDefault();
-        const current = fingerSpan(event.touches);
-        const { origin, card, index } = pinch;
-        const x = (current.x + 12) / (origin.x + 12);
-        const y = (current.y + 12) / (origin.y + 12);
-        const dx = Math.abs(current.x - origin.x);
-        const dy = Math.abs(current.y - origin.y);
-        const diagonal = Math.min(dx, dy) >= 0.4 * Math.max(dx, dy);
-        const scale = Math.hypot(current.x, current.y) / Math.max(1, Math.hypot(origin.x, origin.y));
-        const sx = diagonal ? scale : dx >= dy ? x : 1;
-        const sy = diagonal ? scale : dy > dx ? y : 1;
+        const { card, index } = resize;
+        const dx = finger.clientX - resize.x;
+        const dy = finger.clientY - resize.y;
+        if (!resize.axis && Math.hypot(dx, dy) < 8) return;
+        resize.axis ??= Math.abs(dx) >= Math.abs(dy) ? "width" : "height";
         const tile = draft[index];
-        tile.span = Math.min(12, Math.max(2, Math.round(pinch.width * sx)));
-        tile.height = Math.min(260, Math.max(32, Math.round(pinch.height * sy)));
-        tile.font = Math.min(1.7, Math.max(0.75, Math.round(pinch.font * Math.sqrt(sx * sy) * 100) / 100));
-        card.style.setProperty("--tile-span", tile.span);
-        card.style.setProperty("--tile-height", `${tile.height}px`);
-        card.style.setProperty("--tile-font", `${tile.font}rem`);
+        if (resize.axis === "width") {
+          tile.span = Math.min(12, Math.max(2, Math.round(resize.width + dx / resize.column)));
+          card.style.setProperty("--tile-span", tile.span);
+        } else {
+          tile.height = Math.min(260, Math.max(0, Math.round(resize.height + dy)));
+          card.style.setProperty("--tile-height", `${tile.height}px`);
+        }
         const now = performance.now();
-        if (now - pinch.lastFeedback >= 120 &&
-            (tile.span !== pinch.feedbackWidth || Math.abs(tile.height - pinch.feedbackHeight) >= 8)) {
-          pinch.lastFeedback = now;
-          pinch.feedbackWidth = tile.span;
-          pinch.feedbackHeight = tile.height;
+        if (now - resize.lastFeedback >= 120 &&
+            (resize.axis === "width" ? tile.span !== resize.feedbackWidth : Math.abs(tile.height - resize.feedbackHeight) >= 8)) {
+          resize.lastFeedback = now;
+          resize.feedbackWidth = tile.span;
+          resize.feedbackHeight = tile.height ?? resize.height;
           try { navigator.vibrate?.(9); } catch (_) {}
         }
         return;
@@ -678,9 +684,8 @@
       }
     }, { passive: false });
     surface.addEventListener("touchend", (event) => {
-      if (pinch) {
-        activeCounterIndex = pinch.index;
-        pinch = null;
+      if (resize && [...event.changedTouches].some((item) => item.identifier === resize.finger)) {
+        resize = null;
         paint();
         return;
       }
@@ -692,7 +697,7 @@
       cancelHold();
     });
     surface.addEventListener("touchcancel", () => {
-      if (pinch) { pinch = null; paint(); }
+      if (resize) { resize = null; paint(); }
       if (hold && drag?.touch === hold.id) clearDrag();
       cancelHold();
     });
@@ -744,6 +749,24 @@
       const action = button.dataset.layoutAction;
       const tile = draft[index];
       activeCounterIndex = index;
+      if (action === "font") {
+        const dialog = document.createElement("dialog");
+        dialog.className = "confirm-dialog";
+        dialog.innerHTML = `<form method="dialog" class="shift-form"><h2>Размер текста</h2>
+          <label>Масштаб текста <output>${Math.round((tile.font ?? 1) * 100)}%</output>
+            <input name="font" type="range" min="65" max="170" step="5" value="${Math.round((tile.font ?? 1) * 100)}"></label>
+          <button class="primary-button" value="save">Применить</button>
+          <button class="secondary-button" value="cancel">Отмена</button></form>`;
+        const slider = dialog.querySelector("input");
+        slider.addEventListener("input", () => { dialog.querySelector("output").value = slider.value + "%"; });
+        dialog.addEventListener("close", () => {
+          if (dialog.returnValue === "save") { tile.font = slider.valueAsNumber / 100; paint(); }
+          dialog.remove();
+        }, { once: true });
+        app.append(dialog);
+        dialog.showModal();
+        return;
+      }
       if (action === "edit") {
         const dialog = document.createElement("dialog");
         dialog.className = "confirm-dialog";
@@ -790,10 +813,12 @@
     });
     document.getElementById("layout-save").onclick = save;
     document.getElementById("layout-default").onclick = () => {
-      chooseLayoutAction("Восстановить стандартную раскладку?", [["reset","Восстановить"],["cancel","Отмена"]], (action) => {
+      chooseLayoutAction("Сбросить размер выбранной плитки?", [["reset","Сбросить"],["cancel","Отмена"]], (action) => {
         if (action !== "reset") return;
-        draft = structuredClone([...defaultCounterLayout, ...[...catalog.keys()].map((key) => ({ keys: [key], wide: false }))]);
-        activeCounterIndex = 0;
+        const tile = draft[activeCounterIndex];
+        tile.wide = tile.keys.length > 1;
+        delete tile.span;
+        delete tile.height;
         paint();
       });
     };
@@ -1367,10 +1392,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.19</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.20</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.19", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.20", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1861,7 +1886,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.19</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.20</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });

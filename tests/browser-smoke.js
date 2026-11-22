@@ -407,7 +407,7 @@ async function main() {
       });
       document.querySelector('#layout-save').click();
       return { count, persisted, selectedAction, restored: document.querySelectorAll('.counter-tile').length === baseCount &&
-        JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].boardLayouts.aggregates[0].span == null };
+        JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].boardLayouts.aggregates[0].span === 6 };
     })()`);
     assert.deepEqual(layoutResult, { count: 0, persisted: true, selectedAction: true, restored: true });
     results.aircraftLayout = "ok";
@@ -425,6 +425,7 @@ async function main() {
       const touch = (x, y) => new Touch({ identifier: 2, target: dragTarget, clientX: x, clientY: y });
       dragTarget.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [touch(a.left + 20, a.top + 10)] }));
       dragTarget.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, cancelable: true, touches: [touch(b.left + 20, b.top + 10)] }));
+      await new Promise(resolve => setTimeout(resolve, 180));
       const movedBeforeRelease = second.getBoundingClientRect().top < b.top;
       dragTarget.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, changedTouches: [touch(b.left + 20, b.top + 10)] }));
       document.querySelector('#layout-save').click();
