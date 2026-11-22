@@ -37,6 +37,11 @@ button { color: inherit; }
 .icon-button:hover { background: rgba(255,255,255,.18); }
 .title-group { flex: 1; display: grid; gap: 2px; }
 .title-group strong { font-size: 17px; font-weight: 650; }
+.board-identifiers { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
+.board-identifiers > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.board-identifiers > span:last-child { flex: none; }
+.board-image { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: cover; border-radius: inherit; }
+.board-image-contain { object-fit: contain; }
 .title-group { min-width: 0; }
 .compact-bort-title { margin: 0; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .aircraft-counters { width: 100%; margin-bottom: 12px; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
@@ -62,6 +67,9 @@ button { color: inherit; }
 .counter-value > .aircraft-tabs { margin: 0; border: 0; padding: 0; display: flex; flex-wrap: wrap; overflow: visible; }
 .counter-value .aircraft-tab { flex: 1 1 0; min-width: 0; font-size: inherit; white-space: normal; overflow-wrap: anywhere; padding-inline: 8px; }
 .counter-value .aircraft-tab:last-child { flex-basis: 100%; }
+.board-navigation-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.board-navigation-group > :nth-child(3) { grid-column: 1 / -1; }
+.counter-group { display: grid; gap: 4px; }
 #counter-preview .counter-value button:disabled { pointer-events: none; }
 .counter-value > .equipment-block { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; min-height: 48px; padding: 5px; }
 .counter-value .equipment-block__icon, .counter-value .equipment-block > :last-child { display: none; }

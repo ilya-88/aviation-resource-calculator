@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.23";
+  const APP_VERSION = "0.2.24";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -70,6 +70,7 @@
         type: "Су-33",
         boardNumber: "85",
         serialNumber: "49051002905",
+        rfNumber: "33738",
         notifications: true,
         totalFlightMinutes: 742 * 60 + 18,
         actualLandings: 386,
@@ -245,7 +246,8 @@
           ${back ? `<button class="icon-button" data-action="back" aria-label="Назад">${icon("back")}</button>` : `<div class="brand-mark">${icon("plane")}</div>`}
           <div class="title-group">
             ${options?.singleLine ? `<h1 class="compact-bort-title">${escapeHtml(title)}</h1>` : `<strong>${escapeHtml(title)}</strong>`}
-            ${subtitle ? `<span>${escapeHtml(subtitle)}</span>` : ""}
+            ${options?.boardIds ? `<span class="board-identifiers"><span>Зав. № ${escapeHtml(options.boardIds.serialNumber || "—")}</span><span>RF ${escapeHtml(options.boardIds.rfNumber || "—")}</span></span>`
+              : subtitle ? `<span>${escapeHtml(subtitle)}</span>` : ""}
           </div>
           ${settingsControl}
         </div>
@@ -258,7 +260,7 @@
       const urgent = aircraft.resources.filter((resource) => resource.status !== "ok").length;
       return `
         <button class="aircraft-card" data-aircraft-id="${aircraft.id}">
-          <span class="aircraft-card__visual">${icon("plane")}</span>
+          <span class="aircraft-card__visual">${aircraft.cardImage?.data ? `<img alt="" class="board-image ${aircraft.cardImage.fit === "contain" ? "board-image-contain" : ""}" src="${escapeHtml(aircraft.cardImage.data)}">` : icon("plane")}</span>
           <span class="aircraft-card__body">
             <span class="aircraft-card__title">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</span>
             <span class="aircraft-card__meta">Зав. № ${escapeHtml(aircraft.serialNumber)}</span>
@@ -354,31 +356,39 @@
         <button class="primary-button" data-view="shift">${icon("log")} Внести лётную смену</button>
       </div>
       <section class="aircraft-tab-panel">${tabContent}</section>
-    `, { title: `${aircraft.type} · Борт ${aircraft.boardNumber}`, subtitle: "", singleLine: true, back: true, settings: !layoutEditing, settingsScope: "aircraft" });
+    `, { title: `${aircraft.type} · Борт ${aircraft.boardNumber}`, subtitle: "", boardIds: aircraft,
+      singleLine: true, back: true, settings: !layoutEditing, settingsScope: "aircraft" });
     const panel = app.querySelector(".aircraft-tab-panel");
     const preview = document.createElement("div");
     preview.id = "counter-preview";
     panel.prepend(preview);
     const catalog = new Map();
-    const items = app.querySelectorAll(".aircraft-tabs, .aircraft-actions > button, .aircraft-tab-panel .equipment-block, .aircraft-tab-panel .resource-row, .aircraft-tab-panel .history-row, .aircraft-tab-panel button.add-block-button");
+    const navigation = app.querySelector(".aircraft-tabs");
+    [...navigation.children].forEach((item, index) => catalog.set(boardNavigationKeys[index], item.outerHTML));
+    navigation.remove();
+    const items = app.querySelectorAll(".aircraft-actions > button, .aircraft-tab-panel .equipment-block, .aircraft-tab-panel .resource-row, .aircraft-tab-panel .history-row, .aircraft-tab-panel button.add-block-button");
     for (const [index, item] of [...items].entries()) {
       const resource = item.querySelector("[data-resource-id]");
-      const key = "widget:" + (item.matches(".aircraft-tabs") ? "board-tabs" : item.dataset.view || item.dataset.blockId || resource?.dataset.resourceId ||
+      const key = "widget:" + (item.dataset.view || item.dataset.blockId || resource?.dataset.resourceId ||
         (item.dataset.action ? item.dataset.action + ":" + activeTab : activeTab + ":" + index));
       catalog.set(key, item.outerHTML);
       item.remove();
     }
     const preferred = aircraft.boardLayouts?.[activeTab] ?? [
       ...(aircraft.counterLayout ?? defaultCounterLayout),
-      ...[...catalog.keys()].filter((key) => key !== "widget:board-tabs").map((key) => ({ keys: [key], wide: false })),
+      ...[...catalog.keys()].filter((key) => !boardNavigationKeys.includes(key)).map((key) => ({ keys: [key], wide: false })),
     ];
-    const layout = preferred.filter((tile) => tile.keys[0] !== "widget:board-tabs" &&
-      (!tile.keys[0].startsWith("widget:") || catalog.has(tile.keys[0])));
+    const layout = preferred.map((tile) => ({ ...tile, keys: tile.keys.filter((key) =>
+      !boardNavigationKeys.includes(key) && (!key.startsWith("widget:") || catalog.has(key))) })).filter((tile) => tile.keys.length);
     for (const key of catalog.keys()) {
-      if (key !== "widget:board-tabs" && !layout.some((tile) => tile.keys.includes(key))) layout.push({ keys: [key], wide: false });
+      if (!boardNavigationKeys.includes(key) && !layout.some((tile) => tile.keys.includes(key))) layout.push({ keys: [key], wide: false });
     }
-    const tabsLayout = aircraft.boardTabsLayout;
-    layout.splice(tabsLayout?.index ?? 0, 0, tabsLayout?.tile ?? { keys: ["widget:board-tabs"], wide: true });
+    const legacy = aircraft.boardTabsLayout;
+    const navigationLayout = aircraft.boardNavigationLayout ?? [{
+      index: legacy?.index ?? 0,
+      tile: { ...legacy?.tile, keys: [...boardNavigationKeys], wide: legacy?.tile?.wide ?? true },
+    }];
+    for (const entry of navigationLayout) layout.splice(entry.index, 0, entry.tile);
     if (!layoutEditing) {
       preview.innerHTML = counterTiles(aircraft, layout, false, catalog);
       const tiles = preview.querySelector(".counter-tiles");
@@ -476,6 +486,8 @@
     return { layout, catalog, activeTab };
   }
 
+  const boardNavigationKeys = ["widget:board-tabs", "widget:board-aggregates", "widget:board-resources"];
+  const isNavigationTile = (tile) => tile.keys.every((key) => boardNavigationKeys.includes(key));
   const defaultCounterLayout = [
     { keys: ["flightSne", "flightPpr"], wide: true },
     { keys: ["landingSne", "landingPpr"], wide: true },
@@ -515,9 +527,10 @@
           <button type="button" data-gesture="font" aria-label="Размер текста" aria-pressed="${counterGesture === "font"}">Aa</button>
           <button type="button" data-layout-action="edit" data-index="${index}" aria-label="Изменить подпись">✎</button>
         </div><svg class="counter-edit-outline" aria-hidden="true"><rect pathLength="100" rx="22"/></svg>` : ""}
+        <div class="${isNavigationTile(tile) && tile.keys.length > 1 ? "board-navigation-group" : "counter-group"}">
         ${tile.keys.map((key) => `<div class="counter-value">${catalog.has(key)
           ? labelledWidget(catalog.get(key), tile.labels?.[key])
-          : `<span data-tile-caption>${tile.labels?.[key] ? escapeHtml(tile.labels[key]) : values[key][0]}</span> <strong>${values[key][1]}</strong>`}</div>`).join("")}
+          : `<span data-tile-caption>${tile.labels?.[key] ? escapeHtml(tile.labels[key]) : values[key][0]}</span> <strong>${values[key][1]}</strong>`}</div>`).join("")}</div>
         ${editing ? `<div class="counter-controls" hidden>
           ${[["up","↑","Вверх"],["down","↓","Вниз"],["left","←","Влево"],["right","→","Вправо"],["size",(tile.span ?? (tile.wide ? 12 : 6)) > 6 ? "Сузить" : "Расширить","Изменить ширину"],
             ...(index + 1 < layout.length && values[tile.keys[0]] && values[layout[index + 1].keys[0]] ? [["merge","Объединить","Объединить со следующей карточкой"]] : []),
@@ -557,7 +570,8 @@
     const surface = preview.closest("main");
     const controls = document.createElement("div");
     controls.className = "counter-save-bar";
-    controls.innerHTML = `<button class="secondary-button" id="layout-default">Сбросить размер плитки</button>
+    controls.innerHTML = `<button class="secondary-button" id="layout-default">Сброс размера</button>
+      <button class="secondary-button" id="layout-group">Группа</button>
       <button class="secondary-button counter-font-reset" id="counter-font-reset" aria-label="Стандартный текст 100%" hidden>● <span id="counter-font-percent">100%</span></button>
       <button class="primary-button" id="layout-save">Готово</button>`;
     surface.after(controls);
@@ -583,6 +597,8 @@
       fontReset.hidden = counterGesture !== "font";
       controls.classList.toggle("counter-font-mode", counterGesture === "font");
       fontPercent.textContent = Math.round((draft[activeCounterIndex]?.font ?? 1) * 100) + "%";
+      controls.querySelector("#layout-group").hidden = counterGesture === "font";
+      controls.querySelector("#layout-group").textContent = draft[activeCounterIndex]?.keys.length > 1 ? "Разделить" : "Группа";
     }
     const paint = () => { preview.innerHTML = counterTiles(aircraft, draft, true, catalog);
       preview.querySelectorAll(".counter-value button").forEach((button) => { button.disabled = true; });
@@ -798,10 +814,9 @@
     });
     function save() {
       const previous = aircraft.boardLayouts;
-      const previousTabs = aircraft.boardTabsLayout;
-      const tabsIndex = draft.findIndex((tile) => tile.keys[0] === "widget:board-tabs");
-      aircraft.boardTabsLayout = { index: tabsIndex, tile: structuredClone(draft[tabsIndex]) };
-      aircraft.boardLayouts = { ...previous, [activeTab]: structuredClone(draft.filter((tile) => tile.keys[0] !== "widget:board-tabs")) };
+      const previousTabs = aircraft.boardNavigationLayout;
+      aircraft.boardNavigationLayout = draft.flatMap((tile, index) => isNavigationTile(tile) ? [{ index, tile: structuredClone(tile) }] : []);
+      aircraft.boardLayouts = { ...previous, [activeTab]: structuredClone(draft.filter((tile) => !isNavigationTile(tile))) };
       if (saveState()) {
         recordDiagnostic("layout.save.ok");
         const currentScroll = window.scrollY;
@@ -811,7 +826,7 @@
       else {
         recordDiagnostic("layout.save.error");
         aircraft.boardLayouts = previous;
-        aircraft.boardTabsLayout = previousTabs;
+        aircraft.boardNavigationLayout = previousTabs;
         showToast("Не удалось сохранить раскладку");
       }
     }
@@ -898,11 +913,40 @@
       paint();
     });
     document.getElementById("layout-save").onclick = save;
+    document.getElementById("layout-group").onclick = () => {
+      const index = activeCounterIndex;
+      const tile = draft[index];
+      if (tile.keys.length > 1) {
+        draft.splice(index, 1, ...tile.keys.map((key) => ({ keys: [key], wide: false,
+          ...(tile.labels?.[key] ? { labels: { [key]: tile.labels[key] } } : {}) })));
+        paint();
+        return;
+      }
+      const choices = draft.flatMap((candidate, position) => {
+        if (position === index || isNavigationTile(tile) !== isNavigationTile(candidate)) return [];
+        const node = preview.querySelector(`[data-counter-index="${position}"] .counter-value`);
+        return [[String(position), escapeHtml(node.textContent.trim().replace(/\s+/g, " ").slice(0, 70))]];
+      });
+      if (!choices.length) { showToast("Нет других плиток для этой группы"); return; }
+      chooseLayoutAction("Добавить плитку в группу", [...choices, ["cancel","Отмена"]], (action) => {
+        if (!/^\d+$/.test(action)) return;
+        const position = Number(action);
+        const other = draft[position];
+        tile.keys.push(...other.keys);
+        tile.labels = { ...tile.labels, ...other.labels };
+        tile.wide = true;
+        delete tile.span;
+        delete tile.columnStart;
+        draft.splice(position, 1);
+        activeCounterIndex = draft.indexOf(tile);
+        paint();
+      });
+    };
     document.getElementById("layout-default").onclick = () => {
       chooseLayoutAction("Сбросить размер выбранной плитки?", [["reset","Сбросить"],["cancel","Отмена"]], (action) => {
         if (action !== "reset") return;
         const tile = draft[activeCounterIndex];
-        tile.wide = tile.keys.length > 1 || tile.keys[0] === "widget:board-tabs";
+        tile.wide = tile.keys.length > 1;
         delete tile.span;
         delete tile.columnStart;
         delete tile.height;
@@ -1199,6 +1243,16 @@
       </div>`).join("");
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>Настройки самолёта</h1></div></section>
+      <form id="board-image-form" class="shift-form settings-form">
+        <fieldset><legend>Картинка борта</legend>
+          <span class="aircraft-card__visual" id="board-image-preview">${icon("plane")}</span>
+          <label>Фото или эмблема<input name="picture" type="file" accept="image/*"></label>
+          <label>Как показывать<select name="fit"><option value="cover">Заполнить рамку с обрезкой</option><option value="contain">Показать целиком</option></select></label>
+          <p class="field-help" role="status" id="board-image-status"></p>
+          <div class="aircraft-actions"><button class="primary-button" type="submit">Сохранить картинку</button>
+          <button type="button" class="secondary-button" id="board-image-remove">Убрать картинку</button></div>
+        </fieldset>
+      </form>
       <section class="settings-list">
         <label class="setting-row"><span><strong>Уведомления этого самолёта</strong><small>${state.globalNotifications ? "Работы и ресурсы выбранного борта" : "Общие уведомления приложения выключены"}</small></span><input id="aircraft-notifications" type="checkbox" ${aircraft.notifications ? "checked" : ""} ${!state.globalNotifications ? "disabled" : ""}></label>
       </section>
@@ -1240,6 +1294,7 @@
       <button class="add-block-button" data-action="add-block">${icon("plus")} Добавить блок</button>
     `, { title: "Настройки самолёта", subtitle: `${aircraft.type} · борт ${aircraft.boardNumber}`, back: true, settings: false });
 
+    bindBoardImageForm(aircraft);
     document.getElementById("aircraft-notifications").addEventListener("change", (event) => {
       aircraft.notifications = state.globalNotifications && event.target.checked;
       saveState();
@@ -1296,6 +1351,69 @@
     document.querySelectorAll("[data-remove-block-id]").forEach((button) => button.addEventListener("click", () => removeBlock(button.dataset.removeBlockId)));
   }
 
+  function bindBoardImageForm(aircraft) {
+    const form = document.getElementById("board-image-form");
+    const preview = document.getElementById("board-image-preview");
+    const status = document.getElementById("board-image-status");
+    let data = aircraft.cardImage?.data ?? "";
+    let selection = 0;
+    form.elements.fit.value = aircraft.cardImage?.fit ?? "cover";
+    function showPreview() {
+      preview.innerHTML = data ? `<img class="board-image ${form.elements.fit.value === "contain" ? "board-image-contain" : ""}" src="${escapeHtml(data)}" alt="">` : icon("plane");
+    }
+    form.elements.fit.addEventListener("change", showPreview);
+    form.elements.picture.addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      if (!file.type.startsWith("image/") || file.size > 15 * 1024 * 1024) {
+        status.textContent = "Выбери изображение размером до 15 МБ.";
+        return;
+      }
+      const current = ++selection;
+      const save = form.querySelector('[type="submit"]');
+      save.disabled = true;
+      const url = URL.createObjectURL(file);
+      try {
+        const picture = new Image();
+        picture.src = url;
+        await picture.decode();
+        if (selection !== current) return;
+        const scale = Math.min(1, 320 / Math.max(picture.naturalWidth, picture.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(picture.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(picture.naturalHeight * scale));
+        canvas.getContext("2d").drawImage(picture, 0, 0, canvas.width, canvas.height);
+        data = canvas.toDataURL("image/webp", 0.84);
+        showPreview();
+        status.textContent = "Картинка готова. Нажми «Сохранить картинку».";
+      } catch (_) {
+        if (selection === current) status.textContent = "Не удалось открыть выбранное изображение.";
+      } finally {
+        URL.revokeObjectURL(url);
+        if (selection === current) save.disabled = false;
+      }
+    });
+    document.getElementById("board-image-remove").onclick = () => {
+      selection += 1;
+      form.querySelector('[type="submit"]').disabled = false;
+      form.elements.picture.value = "";
+      data = "";
+      showPreview();
+      status.textContent = "Нажми «Сохранить картинку», чтобы убрать её с карточки.";
+    };
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const previous = aircraft.cardImage;
+      aircraft.cardImage = data ? { data, fit: form.elements.fit.value } : undefined;
+      if (saveState()) status.textContent = "Картинка сохранена.";
+      else {
+        aircraft.cardImage = previous;
+        status.textContent = "Не удалось сохранить картинку. Проверь свободное место.";
+      }
+    });
+    showPreview();
+  }
+
   function renderBlock() {
     const aircraft = selectedAircraft();
     const block = aircraft.blocks.find((item) => item.id === state.selectedBlockId);
@@ -1331,7 +1449,10 @@
         <div class="metric"><span>Зацепы</span><strong>${aircraft.arresterHooks}</strong></div>
       </section>
       <fieldset><legend>ППР планера</legend>
-        <p>Заводской № ${escapeHtml(aircraft.serialNumber)}</p>
+        <div class="field-pair">
+          <label>Заводской номер<input name="aircraftSerialNumber" type="text" value="${escapeHtml(aircraft.serialNumber || "")}"></label>
+          <label>RF<input name="rfNumber" type="text" value="${escapeHtml(aircraft.rfNumber || "")}"></label>
+        </div>
         <label>${escapeHtml(usageRule("flight").label)} ППР, минут<input name="pprFlightMinutes" type="number" min="0" step="1" value="${aircraft.pprFlightMinutes ?? ""}"></label>
         <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}"></label>
       </fieldset>` : "";
@@ -1387,6 +1508,8 @@
       block.repairs = Number(data.get("repairs"));
       block.installed = data.get("installed") === "true";
       if (block.kind === "airframe") {
+        aircraft.serialNumber = String(data.get("aircraftSerialNumber") ?? "").trim();
+        aircraft.rfNumber = String(data.get("rfNumber") ?? "").trim().replace(/^RF[\s-]*/i, "");
         aircraft.pprFlightMinutes = data.get("pprFlightMinutes") === "" ? null : Number(data.get("pprFlightMinutes"));
         aircraft.pprLandings = data.get("pprLandings") === "" ? null : Number(data.get("pprLandings"));
       }
@@ -1479,10 +1602,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.23</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.24</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.23", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.24", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1973,7 +2096,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.23</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.24</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -2077,7 +2200,8 @@
           <label>Тип самолёта<input name="type" type="text" list="known-aircraft-types" required></label>
           <datalist id="known-aircraft-types">${knownTypes.map((type) => `<option value="${escapeHtml(type)}"></option>`).join("")}</datalist>
           <label>Бортовой номер<input name="boardNumber" type="text" required></label>
-          <label>Заводской номер<input name="serialNumber" type="text"></label>` : `
+          <label>Заводской номер<input name="serialNumber" type="text"></label>
+          <label>RF<input name="rfNumber" type="text" placeholder="Например, 33738"></label>` : `
           <label>Название<input name="name" type="text" required></label>
           <label>Тип карточки<select name="kind"><option value="unit">Агрегат</option><option value="engine">Двигатель</option><option value="airframe">Планер</option></select></label>
           <label>Описание<input name="caption" type="text"></label>`}
@@ -2096,7 +2220,7 @@
     });
   }
 
-  function createAircraft({ type, boardNumber, serialNumber }) {
+  function createAircraft({ type, boardNumber, serialNumber, rfNumber }) {
     const template = state.typeSettings.find((entry) => entry.type.toLowerCase() === type.toLowerCase());
     const sameType = state.aircraft.find((item) => item.type.toLowerCase() === type.toLowerCase());
     const id = `aircraft-${Date.now()}`;
@@ -2105,6 +2229,7 @@
       type: type.trim(),
       boardNumber: boardNumber.trim(),
       serialNumber: serialNumber || "Не указан",
+      rfNumber: (rfNumber || "").replace(/^RF[\s-]*/i, ""),
       notifications: state.globalNotifications,
       totalFlightMinutes: 0,
       actualLandings: 0,

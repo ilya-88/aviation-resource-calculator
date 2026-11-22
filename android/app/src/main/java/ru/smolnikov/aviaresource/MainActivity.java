@@ -26,6 +26,8 @@ import android.widget.FrameLayout;
 import android.widget.Toast;
 
 public class MainActivity extends Activity {
+    private static final int PICK_BOARD_IMAGE = 1002;
+    private android.webkit.ValueCallback<Uri[]> boardImagePicker;
     private static final String DIAGNOSTIC_PREFS = "touch_diagnostics";
     private static final String TOUCH_LOG = "events";
 
@@ -134,7 +136,25 @@ public class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
 
         webView.setWebViewClient(new WebViewClient());
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view, android.webkit.ValueCallback<Uri[]> callback,
+                    FileChooserParams params) {
+                if (boardImagePicker != null) boardImagePicker.onReceiveValue(null);
+                boardImagePicker = callback;
+                Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                picker.addCategory(Intent.CATEGORY_OPENABLE);
+                picker.setType("image/*");
+                try {
+                    startActivityForResult(picker, PICK_BOARD_IMAGE);
+                } catch (android.content.ActivityNotFoundException error) {
+                    boardImagePicker = null;
+                    callback.onReceiveValue(null);
+                    Toast.makeText(MainActivity.this, "Нет приложения для выбора изображения", Toast.LENGTH_SHORT).show();
+                }
+                return true;
+            }
+        });
         webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
         setContentView(root);
         root.requestApplyInsets();
@@ -165,6 +185,16 @@ public class MainActivity extends Activity {
                     if (!"true".equals(handled)) MainActivity.super.onBackPressed();
                 }
         );
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent result) {
+        super.onActivityResult(requestCode, resultCode, result);
+        if (requestCode != PICK_BOARD_IMAGE || boardImagePicker == null) return;
+        android.webkit.ValueCallback<Uri[]> callback = boardImagePicker;
+        boardImagePicker = null;
+        Uri uri = resultCode == RESULT_OK && result != null ? result.getData() : null;
+        callback.onReceiveValue(uri != null ? new Uri[]{uri} : null);
     }
 
     public class AndroidBridge {

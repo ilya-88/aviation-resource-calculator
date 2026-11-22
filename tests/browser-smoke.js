@@ -387,7 +387,7 @@ async function main() {
       await hold(document.querySelector('[data-view="shift"]'));
       const baseCount = document.querySelectorAll('.counter-tile').length;
       const selectedAction = Boolean(document.querySelector('.counter-tile-active [data-view="shift"]'));
-      document.querySelector('[data-layout-action="split"]').click();
+      document.querySelector('[data-tile-key="flightSne"] [data-layout-action="split"]').click();
       document.querySelector('[data-layout-action="right"][data-index="1"]').click();
       document.querySelector('[data-layout-action="merge"]').click();
       document.querySelector('[data-layout-action="size"][data-index="1"]').click();
@@ -426,6 +426,11 @@ async function main() {
     results.aircraftLayout = "ok";
     const liveReflow = await evaluate(`(async () => {
       const source = document.querySelector('[data-tile-key="widget:board-tabs"] .aircraft-tab');
+      const identifiers = document.querySelector('.board-identifiers');
+      const [serial, rf] = identifiers.children;
+      const numbersInOneRow = serial.textContent.includes('49051002905') && rf.textContent === 'RF 33738' &&
+        Math.abs(serial.getBoundingClientRect().top - rf.getBoundingClientRect().top) < 1 &&
+        serial.getBoundingClientRect().left < rf.getBoundingClientRect().left;
       source.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [new Touch({ identifier: 1, target: source })] }));
       await new Promise(resolve => setTimeout(resolve, 900));
       source.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true }));
@@ -464,13 +469,22 @@ async function main() {
       const gentleResize = before.width - after.width > 0 && before.width - after.width <= 14 && Math.abs(before.left - after.left) <= 1;
       content.dispatchEvent(new TouchEvent('touchend', { bubbles: true, changedTouches: [dragSize(171)] }));
       document.querySelector('#layout-save').click();
-      const savedTabPosition = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].boardTabsLayout.index;
+      const savedTabPosition = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].boardNavigationLayout[0].index;
       document.querySelector('[data-aircraft-tab="works"]').click();
       const tabsStillWork = document.querySelector('[data-aircraft-tab="works"]').getAttribute('aria-selected') === 'true' &&
         document.querySelectorAll('.counter-tile')[savedTabPosition].dataset.tileKey === 'widget:board-tabs';
-      return { movedBeforeRelease, fontGrowsInline, fontReset, toolbarFits, gentleResize, tabsStillWork };
+      const tab = document.querySelector('[data-aircraft-tab="works"]');
+      tab.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [new Touch({ identifier: 5, target: tab })] }));
+      await new Promise(resolve => setTimeout(resolve, 900));
+      tab.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true }));
+      document.querySelector('#layout-group').click();
+      const splitTabs = new Set([...document.querySelectorAll('[data-aircraft-tab]')].map(button => button.closest('.counter-tile'))).size === 3;
+      document.querySelector('#layout-save').click();
+      document.querySelector('[data-aircraft-tab="aggregates"]').click();
+      const splitPersisted = new Set([...document.querySelectorAll('[data-aircraft-tab]')].map(button => button.closest('.counter-tile'))).size === 3;
+      return { movedBeforeRelease, fontGrowsInline, fontReset, toolbarFits, gentleResize, tabsStillWork, numbersInOneRow, splitTabs, splitPersisted };
     })()`);
-    assert.deepEqual(liveReflow, { movedBeforeRelease: true, fontGrowsInline: true, fontReset: true, toolbarFits: true, gentleResize: true, tabsStillWork: true });
+    assert.deepEqual(liveReflow, { movedBeforeRelease: true, fontGrowsInline: true, fontReset: true, toolbarFits: true, gentleResize: true, tabsStillWork: true, numbersInOneRow: true, splitTabs: true, splitPersisted: true });
     results.liveTileReflow = "ok";
     const journal = await evaluate(`(() => {
       window.handleAndroidBack();
@@ -483,6 +497,31 @@ async function main() {
     assert.match(journal, /layout\.save\.ok/);
     assert.doesNotMatch(journal, /Су-33|49051002905|742:18/);
     results.diagnosticJournal = "ok";
+    const boardImage = await evaluate(`(async () => {
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      document.querySelector('[data-aircraft-id]').click();
+      document.querySelector('[data-action="settings"]').click();
+      const form = document.querySelector('#board-image-form');
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([blob], 'emblem.png', { type: 'image/png' }));
+      form.elements.picture.files = transfer.files;
+      form.elements.picture.dispatchEvent(new Event('change'));
+      const preview = document.querySelector('#board-image-preview');
+      for (let i = 0; i < 50 && !preview.querySelector('img')?.naturalWidth; i++) await new Promise(resolve => setTimeout(resolve, 20));
+      const previewWidth = preview.querySelector('img')?.naturalWidth;
+      form.elements.fit.value = 'contain';
+      form.requestSubmit();
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      return { previewWidth, shownOnMain: Boolean(document.querySelector('.aircraft-card .board-image-contain')) };
+    })()`);
+    assert.deepEqual(boardImage, { previewWidth: 320, shownOnMain: true });
+    results.boardImage = "ok";
 
     process.stdout.write(`${JSON.stringify(results)}\n`);
   } finally {
