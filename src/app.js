@@ -15,9 +15,13 @@
     runway: "БВПП", carrier: "Корабельные посадки", touch: "Касания",
     circuit: "Конвейер", arresterHooks: "Зацепы за аэрофинишер",
   };
+  const OPTIONAL_USAGE_TYPES = ["runway", "carrier", "touch", "circuit", "arresterHooks"];
 
   function usageRule(key) {
-    return state.usageRules?.[key] ?? { label: USAGE_TYPES[key], factor: 1 };
+    return state.usageRules?.[key] ?? {
+      label: USAGE_TYPES[key],
+      factor: DEFAULT_AIRCRAFT_SETTINGS.landingCoefficients[key] ?? 1,
+    };
   }
   const DEFAULT_NOTIFICATION_CONFIG = {
     mode: "all",
@@ -212,7 +216,7 @@
             <span class="aircraft-card__title">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</span>
             <span class="aircraft-card__meta">Зав. № ${escapeHtml(aircraft.serialNumber)}</span>
             <span class="aircraft-card__metrics">
-              <span><b>${calc.formatDuration(aircraft.totalFlightMinutes)}</b> налёт</span>
+              <span><b>${calc.formatDuration(aircraft.totalFlightMinutes)}</b> ${escapeHtml(usageRule("flight").label)}</span>
               <span><b>${aircraft.actualLandings}</b> посадок</span>
             </span>
           </span>
@@ -305,7 +309,7 @@
       <table class="aircraft-counters" aria-label="Наработка борта">
         <thead><tr><th scope="col">Показатель</th><th scope="col">СНЭ</th><th scope="col">ППР</th></tr></thead>
         <tbody>
-          <tr><th scope="row">Налёт</th><td>${calc.formatDuration(aircraft.totalFlightMinutes)}</td><td>${aircraft.pprFlightMinutes == null ? "Не задано" : calc.formatDuration(aircraft.pprFlightMinutes)}</td></tr>
+          <tr><th scope="row">${escapeHtml(usageRule("flight").label)}</th><td>${calc.formatDuration(aircraft.totalFlightMinutes)}</td><td>${aircraft.pprFlightMinutes == null ? "Не задано" : calc.formatDuration(aircraft.pprFlightMinutes)}</td></tr>
           <tr><th scope="row">Посадки</th><td>${aircraft.actualLandings}</td><td>${aircraft.pprLandings ?? "Не задано"}</td></tr>
         </tbody>
       </table>
@@ -393,9 +397,9 @@
         </fieldset>
         <fieldset><legend>Посадки</legend>
           <div class="landing-grid">
-            ${["runway", "carrier", "touch", "circuit"].map((key) => `<label><span>${escapeHtml(usageRule(key).label)}</span><input name="${key}" type="number" min="0" value="${key === "runway" ? 1 : 0}"></label>`).join("")}
+            ${OPTIONAL_USAGE_TYPES.filter((key) => key !== "arresterHooks" && usageRule(key).enabled !== false).map((key) => `<label><span>${escapeHtml(usageRule(key).label)}</span><input name="${key}" type="number" min="0" value="${key === "runway" ? 1 : 0}"></label>`).join("")}
           </div>
-          <label><span>${escapeHtml(usageRule("arresterHooks").label)}</span><input name="arresterHooks" type="number" min="0" value="0"></label>
+          ${usageRule("arresterHooks").enabled !== false ? `<label><span>${escapeHtml(usageRule("arresterHooks").label)}</span><input name="arresterHooks" type="number" min="0" value="0"></label>` : ""}
         </fieldset>
         <fieldset><legend>${escapeHtml(usageRule("ground").label)}</legend>
           <p class="field-help">Шаг округления: ${ground.groundRoundingMinutes} мин. В наработку двигателя идёт ${ground.groundPercent}% от округлённого времени.</p>
@@ -450,7 +454,7 @@
       const equivalent = calc.calculateEquivalentLandings({ runway: data.get("runway"), carrier: data.get("carrier"), touch: data.get("touch"), circuit: data.get("circuit") }, coefficients);
       document.getElementById("left-calculation").textContent = `${left.ground.actualMinutes} → ${left.ground.roundedMinutes} мин → ${left.ground.percent}% = ${formatNumber(left.ground.contributionMinutes)} мин`;
       document.getElementById("right-calculation").textContent = `${right.ground.actualMinutes} → ${right.ground.roundedMinutes} мин → ${right.ground.percent}% = ${formatNumber(right.ground.contributionMinutes)} мин`;
-      document.getElementById("shift-summary").innerHTML = `<span>Будет начислено</span><strong>Левый: ${calc.formatDuration(left.totalMinutes)} · Правый: ${calc.formatDuration(right.totalMinutes)}</strong><small>Приведённые посадки: ${equivalent.toFixed(1)}</small>`;
+      document.getElementById("shift-summary").innerHTML = `<span>Будет начислено</span><strong>Левый: ${calc.formatDuration(left.totalMinutes)} · Правый: ${calc.formatDuration(right.totalMinutes)}</strong><small>Зачёт посадок: ${equivalent.toLocaleString("ru-RU", { maximumFractionDigits: 6 })}</small>`;
     };
     form.addEventListener("input", update);
     form.addEventListener("submit", (event) => {
@@ -478,7 +482,7 @@
       aircraft.actualLandings += actualLandings;
       if (aircraft.pprFlightMinutes != null) aircraft.pprFlightMinutes += flight;
       if (aircraft.pprLandings != null) aircraft.pprLandings += actualLandings;
-      aircraft.equivalentLandings = Math.round((aircraft.equivalentLandings + equivalent) * 10) / 10;
+      aircraft.equivalentLandings = Math.round((aircraft.equivalentLandings + equivalent) * 1e6) / 1e6;
       aircraft.arresterHooks += arresterHooks;
       const leftBlock = aircraft.blocks.find((block) => block.id === "engine-left");
       const rightBlock = aircraft.blocks.find((block) => block.id === "engine-right");
@@ -720,13 +724,13 @@
     );
     const airframeFields = block.kind === "airframe" ? `
       <section class="metric-grid" aria-label="Наработка планера">
-        <div class="metric"><span>Налёт</span><strong>${calc.formatDuration(aircraft.totalFlightMinutes)}</strong></div>
+        <div class="metric"><span>${escapeHtml(usageRule("flight").label)}</span><strong>${calc.formatDuration(aircraft.totalFlightMinutes)}</strong></div>
         <div class="metric"><span>Фактические посадки</span><strong>${aircraft.actualLandings}</strong></div>
         <div class="metric"><span>Зацепы</span><strong>${aircraft.arresterHooks}</strong></div>
       </section>
       <fieldset><legend>ППР планера</legend>
         <p>Заводской № ${escapeHtml(aircraft.serialNumber)}</p>
-        <label>Налёт ППР, минут<input name="pprFlightMinutes" type="number" min="0" step="1" value="${aircraft.pprFlightMinutes ?? ""}"></label>
+        <label>${escapeHtml(usageRule("flight").label)} ППР, минут<input name="pprFlightMinutes" type="number" min="0" step="1" value="${aircraft.pprFlightMinutes ?? ""}"></label>
         <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}"></label>
       </fieldset>` : "";
     const eventLabels = { repair: "Ремонт", dismantle: "Демонтаж", install: "Установка", extension: "Продление ресурса", correction: "Корректировка" };
@@ -873,10 +877,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.3</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.4</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.3", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.4", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1035,23 +1039,59 @@
       <h1>Виды наработки</h1>
       <form id="usage-settings-form" class="shift-form settings-form">
         <p>Применяется ко всем бортам. Фактические посадки и зацепы сохраняются в том количестве, в котором их ввели.</p>
-        ${Object.entries(USAGE_TYPES).map(([key, title]) => `<fieldset><legend>${title}</legend><div class="field-pair">
+        ${Object.entries(USAGE_TYPES).map(([key, title]) => `<fieldset data-usage-row="${key}" ${usageRule(key).enabled === false ? "hidden" : ""}><legend>${title}</legend><div class="field-pair">
           <label>Наименование<input type="text" name="${key}Label" value="${escapeHtml(usageRule(key).label)}" required></label>
           <label>Коэффициент<input type="number" name="${key}Factor" value="${usageRule(key).factor}" min="0" step="any" required></label>
-        </div></fieldset>`).join("")}
+        </div>
+        ${OPTIONAL_USAGE_TYPES.includes(key) ? `<input type="hidden" name="${key}Enabled" value="${usageRule(key).enabled !== false}"><button type="button" class="secondary-button" data-usage-toggle="${key}" data-enable="false">Убрать</button>` : ""}
+        <p class="field-help" data-usage-example="${key}"></p></fieldset>`).join("")}
+        <details><summary>Вернуть убранный вид</summary>
+          ${OPTIONAL_USAGE_TYPES.map((key) => `<div data-usage-restore="${key}" ${usageRule(key).enabled !== false ? "hidden" : ""}><button type="button" class="secondary-button" data-usage-toggle="${key}" data-enable="true">Вернуть «${escapeHtml(usageRule(key).label)}»</button></div>`).join("")}
+        </details>
         <fieldset><legend>Пересчёт земли для двигателей</legend>
           <label>Процент от округлённой земли<input name="percent" type="number" min="0" max="100" step="any" value="${ground.groundPercent}" required></label>
           <label>Шаг округления, минут<input name="step" type="number" min="1" step="1" value="${ground.groundRoundingMinutes}" required></label>
           <label>Направление<select name="direction">${[["nearest","До ближайшего"],["up","Вверх"],["down","Вниз"]].map(([value, label]) => `<option value="${value}" ${ground.groundRoundingDirection === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+          <p id="ground-example" class="field-help"></p>
         </fieldset>
         <button class="primary-button" type="submit">Сохранить</button>
       </form>`, { title: "Виды наработки", subtitle: "", back: true, settings: false });
-    document.getElementById("usage-settings-form").addEventListener("submit", (event) => {
+    const form = document.getElementById("usage-settings-form");
+    form.querySelectorAll("[data-usage-toggle]").forEach((button) => button.addEventListener("click", () => {
+      const { usageToggle: key, enable } = button.dataset;
+      form.elements.namedItem(`${key}Enabled`).value = enable;
+      const row = form.querySelector(`[data-usage-row="${key}"]`);
+      row.hidden = enable === "false";
+      form.querySelector(`[data-usage-restore="${key}"]`).hidden = enable === "true";
+    }));
+    function updateExamples() {
+      for (const output of form.querySelectorAll("[data-usage-example]")) {
+        const key = output.dataset.usageExample;
+        const factor = form.elements.namedItem(`${key}Factor`).valueAsNumber;
+        const input = key === "flight" ? 60 : key === "ground" ? 13 : key === "maximum" ? 30 : key === "arresterHooks" ? 2 : 1;
+        const unit = key === "flight" || key === "ground" ? " мин" : key === "maximum" ? " с" : "";
+        output.textContent = Number.isFinite(factor) && factor >= 0
+          ? `Ввод: ${input}${unit} → после коэффициента: ${formatNumber(input * factor)}${unit}`
+          : "";
+        if (key === "ground" && output.textContent) output.textContent += " (пример только для коэффициента)";
+      }
+      const { percent, step, direction, groundFactor } = form.elements;
+      const output = document.getElementById("ground-example");
+      output.textContent = "";
+      if (![percent, step, groundFactor].every((field) => field.validity.valid)) return;
+      const example = calc.calculateGroundContribution(13, { stepMinutes: step.valueAsNumber, percent: percent.valueAsNumber, direction: direction.value });
+      const contribution = example.contributionMinutes * groundFactor.valueAsNumber;
+      output.textContent = `Ввод: 13 мин → округление: ${example.roundedMinutes} мин → ${example.percent}%: ${formatNumber(example.contributionMinutes)} мин → в наработку двигателя: ${formatNumber(contribution)} мин (с коэффициентом земли).`;
+    }
+    form.addEventListener("input", updateExamples);
+    updateExamples();
+    form.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
       state.usageRules = Object.fromEntries(Object.keys(USAGE_TYPES).map((key) => [key, {
         label: String(data.get(`${key}Label`)).trim() || USAGE_TYPES[key],
         factor: Number(data.get(`${key}Factor`)),
+        enabled: !OPTIONAL_USAGE_TYPES.includes(key) || data.get(`${key}Enabled`) === "true",
       }]));
       state.sharedGround = { groundPercent: Number(data.get("percent")), groundRoundingMinutes: Number(data.get("step")),
         groundRoundingDirection: String(data.get("direction")) };
@@ -1078,7 +1118,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.3</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.4</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
