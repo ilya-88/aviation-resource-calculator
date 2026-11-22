@@ -25,8 +25,16 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import org.json.JSONObject;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+
 public class MainActivity extends Activity {
     private static final int PICK_BOARD_IMAGE = 1002;
+    private static final int PICK_AIRCRAFT_TEMPLATE = 1003;
+    private static final int TEMPLATE_FILE_LIMIT = 256 * 1024;
     private android.webkit.ValueCallback<Uri[]> boardImagePicker;
     private static final String DIAGNOSTIC_PREFS = "touch_diagnostics";
     private static final String TOUCH_LOG = "events";
@@ -190,6 +198,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent result) {
         super.onActivityResult(requestCode, resultCode, result);
+        if (requestCode == PICK_AIRCRAFT_TEMPLATE) {
+            Uri uri = resultCode == RESULT_OK && result != null ? result.getData() : null;
+            if (uri != null) new Thread(() -> readAircraftTemplate(uri)).start();
+            return;
+        }
         if (requestCode != PICK_BOARD_IMAGE || boardImagePicker == null) return;
         android.webkit.ValueCallback<Uri[]> callback = boardImagePicker;
         boardImagePicker = null;
@@ -197,7 +210,53 @@ public class MainActivity extends Activity {
         callback.onReceiveValue(uri != null ? new Uri[]{uri} : null);
     }
 
+    private void readAircraftTemplate(Uri uri) {
+        try (InputStream input = getContentResolver().openInputStream(uri);
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (input == null) throw new IOException("Missing input stream");
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                if (output.size() + count > TEMPLATE_FILE_LIMIT) {
+                    deliverAircraftTemplate(null, "Файл шаблона должен быть не больше 256 КБ");
+                    return;
+                }
+                output.write(buffer, 0, count);
+            }
+            String text = new String(output.toByteArray(), StandardCharsets.UTF_8);
+            if (text.startsWith("\uFEFF")) text = text.substring(1);
+            deliverAircraftTemplate(text, null);
+        } catch (IOException | SecurityException error) {
+            deliverAircraftTemplate(null, "Не удалось прочитать файл");
+        }
+    }
+
+    private void deliverAircraftTemplate(String text, String error) {
+        String argument = text == null ? "null" : JSONObject.quote(text).replace("\u2028", "\\u2028").replace("\u2029", "\\u2029");
+        String message = error == null ? "null" : JSONObject.quote(error);
+        runOnUiThread(() -> {
+            if (webView != null && !isDestroyed()) {
+                webView.evaluateJavascript("window.receiveAircraftTemplate && window.receiveAircraftTemplate(" + argument + "," + message + ")", null);
+            }
+        });
+    }
+
     public class AndroidBridge {
+        @JavascriptInterface
+        public void pickAircraftTemplate() {
+            runOnUiThread(() -> {
+                Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                picker.addCategory(Intent.CATEGORY_OPENABLE);
+                picker.setType("*/*");
+                picker.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "text/plain", "application/octet-stream"});
+                try {
+                    startActivityForResult(picker, PICK_AIRCRAFT_TEMPLATE);
+                } catch (android.content.ActivityNotFoundException error) {
+                    deliverAircraftTemplate(null, "Файловый менеджер недоступен");
+                }
+            });
+        }
+
         @JavascriptInterface
         public String getTouchDiagnostics() {
             return getSharedPreferences(DIAGNOSTIC_PREFS, MODE_PRIVATE).getString(TOUCH_LOG, "");

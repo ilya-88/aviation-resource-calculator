@@ -1,6 +1,8 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const demoState = require("./fixtures/demo-state.json");
+const su33Template = require("../templates/su-33.json");
 
 const port = Number(process.argv[2] || 9223);
 const endpoint = `http://127.0.0.1:${port}`;
@@ -56,6 +58,146 @@ async function main() {
   try {
     if (process.argv[3]) {
       await command("Emulation.setDeviceMetricsOverride", { width: Number(process.argv[3]), height: 812, deviceScaleFactor: 1, mobile: true });
+    }
+    const experimental = await evaluate(`(async () => {
+      const click = selector => {
+        const element = document.querySelector(selector);
+        if (!element) throw new Error('Не найдено: ' + selector);
+        element.click();
+      };
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
+      const back = () => window.handleAndroidBack();
+      const empty = !document.querySelector('[data-aircraft-id]');
+      click('[data-action="settings"]');
+      click('[data-view="aircraft-types"]');
+      const template = ${JSON.stringify(su33Template)};
+      const file = (text) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([text], 'su-33.json', { type:'application/json' }));
+        const input = document.querySelector('#aircraft-template-file');
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change'));
+      };
+      const waitFor = async (condition) => {
+        for (let attempt = 0; attempt < 30 && !condition(); attempt++) await new Promise(resolve => setTimeout(resolve, 25));
+        if (!condition()) throw new Error('Не получен результат импорта');
+      };
+      file('{invalid');
+      await waitFor(() => document.querySelector('#template-import-status').textContent.includes('JSON'));
+      file(JSON.stringify(template));
+      await waitFor(() => document.querySelector('dialog[open] [value="import"]'));
+      await new Promise(resolve => {
+        const dialog = document.querySelector('dialog[open]');
+        dialog.addEventListener('close', resolve, { once: true });
+        click('dialog[open] [value="import"]');
+      });
+      file(JSON.stringify(template));
+      await waitFor(() => document.querySelector('#template-import-status').textContent.includes('уже есть'));
+      const imported = read().templateCatalog.length === 1;
+      back();
+      back();
+      click('[data-action="add-aircraft"]');
+      const boardForm = document.querySelector('#creation-form');
+      boardForm.elements.type.value = 'Су-33';
+      boardForm.elements.type.dispatchEvent(new Event('change'));
+      boardForm.elements.boardNumber.value = '101';
+      boardForm.requestSubmit();
+      const board = () => read().aircraft.find(row => row.boardNumber === '101');
+      const types = board().blocks.reduce((counts, block) => ({ ...counts, [block.kind]: (counts[block.kind] || 0) + 1 }), {});
+      const engine = slot => board().blocks.find(block => block.templateSlotId === slot);
+      const openEngine = slot => click('[data-block-id="' + engine(slot).id + '"]');
+      function record(both) {
+        click('[data-view="shift"]');
+        const form = document.querySelector('#template-work-form');
+        const set = (slot, key, value, row = 0) => {
+          form.querySelectorAll('[data-template-scope="' + slot + '"] [data-template-field="' + key + '"]')[row].value = value;
+        };
+        click('[data-template-scope="board"] [data-template-add]');
+        click('[data-template-scope="board"] [data-template-row]:last-child [data-template-remove]');
+        const rowsRemoved = form.querySelectorAll('[data-template-scope="board"] [data-template-row]').length === 1;
+        click('[data-template-scope="board"] [data-template-add]');
+        set('board', 'board-flight', '00:20');
+        set('board', 'board-flight', '00:40', 1);
+        set('board', 'runway', '1');
+        const slots = both ? ['engine-left', 'engine-right'] : ['engine-right'];
+        for (const slot of slots) {
+          for (const [key, value] of Object.entries({
+            starts: '1', 'ground-b': '00:13', 'ground-b-ub': '00:23', 'flight-b': '00:40',
+            'flight-b-ub': '00:50', 'maximum-or': '00:00:03', 'maximum-or-b': '00:00:08', 'maximum-b-ub': '00:00:12',
+          })) set(slot, key, value);
+        }
+        if (both) {
+          set('engine-right', 'flight-b-ub', '01:00');
+          set('engine-left', 'maximum-b-ub', '00:00:06');
+          form.dispatchEvent(new Event('input'));
+          if (!document.querySelector('#template-preview').textContent.includes('вложенность')) throw new Error('Нет проверки режимов');
+          set('engine-left', 'maximum-b-ub', '00:00:12');
+        }
+        form.dispatchEvent(new Event('input'));
+        const preview = document.querySelector('#template-preview').textContent;
+        form.requestSubmit();
+        return { rowsRemoved, preview };
+      }
+      const first = record(true);
+      const firstWork = board().shifts.at(-1);
+      const pair = firstWork.templateWork.engines;
+      const routed = pair[0].blockId === engine('engine-left').id && pair[1].blockId === engine('engine-right').id &&
+        pair[0].counters['total-b'] === 43 * 60 && pair[0].counters['total-b-ub'] === 55 * 60 &&
+        pair[1].counters['total-b-ub'] === 65 * 60 && firstWork.flightMinutes === 60;
+      const noUnitDefaults = board().blocks.filter(block => block.kind === 'unit').every(block => !block.sneMinutes && !block.sneLandings);
+      const maximas = Object.entries(pair[0].counters).filter(([key]) => key.startsWith('maximum')).map(([,value]) => value);
+      openEngine('engine-left');
+      const rows = document.querySelector('.template-table').textContent.includes('00:00:03') &&
+        document.querySelector('.template-table').textContent.includes('00:55') &&
+        document.querySelector('.template-table').textContent.includes('Работа на заказ');
+      const repair = document.querySelector('#block-event-form');
+      repair.elements.type.value = 'repair';
+      repair.requestSubmit();
+      back();
+      openEngine('engine-right');
+      const event = document.querySelector('#block-event-form');
+      event.elements.type.value = 'dismantle';
+      event.requestSubmit();
+      back();
+      const pendingRecord = record(true);
+      const pending = board().shifts.at(-1).templateWork.engines[1];
+      openEngine('engine-left');
+      const totals = [...document.querySelectorAll('.template-table tfoot tr')].map(row => row.textContent);
+      const repairs = totals[0].includes('01:50') && totals[1].includes('ППР') && totals[1].includes('00:55');
+      back();
+      click('[data-aircraft-tab="works"]');
+      click('[data-shift-id]');
+      const showsRaw = document.querySelector('main').textContent.includes('Ожидает привязки') &&
+        document.querySelector('main').textContent.includes('00:13');
+      back();
+      click('[data-aircraft-tab="aggregates"]');
+      click('[data-action="add-block"]');
+      const replacement = document.querySelector('#creation-form');
+      replacement.elements.name.value = 'Новый правый двигатель';
+      replacement.elements.kind.value = 'engine';
+      replacement.elements.kind.dispatchEvent(new Event('change'));
+      replacement.elements.templateSlotId.value = 'engine-right';
+      replacement.elements.serialNumber.value = 'TEST-02';
+      replacement.requestSubmit();
+      record(false);
+      const next = board().shifts.at(-1).templateWork.engines[1];
+      const replaces = next.blockId !== pair[1].blockId && next.serialNumber === 'TEST-02' &&
+        board().shifts[0].templateWork.engines[1].blockId === pair[1].blockId;
+      return { empty, imported, types, routed, noUnitDefaults, maximas, rows, repairs, replaces, preview: first.preview.includes('00:43'),
+        rowsRemoved: first.rowsRemoved, pending: pending.pending && !pending.blockId && pendingRecord.preview.includes('ожидает привязки'), showsRaw };
+    })()`);
+    assert.deepEqual(experimental, { empty: true, imported: true, types: {airframe:1, engine:2, unit:4}, routed: true, noUnitDefaults: true,
+      maximas: [3,8,12], rows: true, repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
+    results.templateExperiment = "ok";
+    if (process.argv.includes("--templates-only")) {
+      process.stdout.write(`${JSON.stringify(results)}\n`);
+      return;
+    }
+    await evaluate(`localStorage.setItem("aviation-resource-prototype-v1", JSON.stringify(${JSON.stringify(demoState)}))`);
+    await command("Page.reload");
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (await evaluate("Boolean(document.querySelector('[data-aircraft-id=su33-85]'))").catch(() => false)) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
     const home = await evaluate(`({
       h1: document.querySelector("h1")?.textContent,

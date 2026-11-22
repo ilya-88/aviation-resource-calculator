@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "su-33",
+  "name": "Су-33",
+  "workTitle": "Данные КЗА",
+  "positions": [
+    { "id": "airframe", "kind": "airframe", "label": "Формуляр самолёта" },
+    { "id": "engine-left", "kind": "engine", "label": "Левый двигатель", "model": "AL-31F · 3-я серия" },
+    { "id": "engine-right", "kind": "engine", "label": "Правый двигатель", "model": "AL-31F · 3-я серия" },
+    { "id": "vka-1", "kind": "unit", "label": "ВКА № 1", "model": "Выносная коробка агрегатов" },
+    { "id": "vka-2", "kind": "unit", "label": "ВКА № 2", "model": "Выносная коробка агрегатов" },
+    { "id": "gtde-1", "kind": "unit", "label": "ГТД-Э № 1", "model": "Газотурбинный двигатель пусковой установки" },
+    { "id": "gtde-2", "kind": "unit", "label": "ГТД-Э № 2", "model": "Газотурбинный двигатель пусковой установки" }
+  ],
+  "repeatGroups": [
+    { "id": "sorties", "scope": "board", "label": "Вылеты" },
+    { "id": "runs", "scope": "engine", "label": "Земля по запускам", "countField": "starts" }
+  ],
+  "inputs": [
+    { "id": "board-flight", "scope": "board", "group": "sorties", "type": "duration", "format": "HH:MM", "label": "Налёт по вылету", "role": "flight" },
+    { "id": "runway", "scope": "board", "type": "count", "label": "Посадки БВПП", "role": "runway" },
+    { "id": "hooks", "scope": "board", "type": "count", "label": "Зацепы за аэрофинишер", "role": "arresterHooks" },
+    { "id": "starts", "scope": "engine", "type": "count", "label": "Запуски за работу" },
+    { "id": "ground-b", "scope": "engine", "group": "runs", "type": "duration", "format": "HH:MM", "label": "Земля · Б" },
+    { "id": "ground-b-ub", "scope": "engine", "group": "runs", "type": "duration", "format": "HH:MM", "label": "Земля · Б + УБ" },
+    { "id": "flight-b", "scope": "engine", "type": "duration", "format": "HH:MM", "label": "Полёт двигателя · Б" },
+    { "id": "flight-b-ub", "scope": "engine", "type": "duration", "format": "HH:MM", "label": "Полёт двигателя · Б + УБ" },
+    { "id": "maximum-or", "scope": "engine", "type": "duration", "format": "HH:MM:SS", "label": "Максимал · ОР" },
+    { "id": "maximum-or-b", "scope": "engine", "type": "duration", "format": "HH:MM:SS", "label": "Максимал · ОР + Б" },
+    { "id": "maximum-b-ub", "scope": "engine", "type": "duration", "format": "HH:MM:SS", "label": "Максимал · Б + УБ" }
+  ],
+  "engineCounters": [
+    { "id": "starts", "type": "count", "label": "Запуски", "role": "starts" },
+    { "id": "ground-b", "type": "duration", "format": "HH:MM", "label": "Земля · Б" },
+    { "id": "ground-b-ub", "type": "duration", "format": "HH:MM", "label": "Земля · Б + УБ", "role": "ground" },
+    { "id": "flight-b", "type": "duration", "format": "HH:MM", "label": "Полёт · Б" },
+    { "id": "flight-b-ub", "type": "duration", "format": "HH:MM", "label": "Полёт · Б + УБ", "role": "flight" },
+    { "id": "maximum-or", "type": "duration", "format": "HH:MM:SS", "label": "Максимал · ОР", "role": "or" },
+    { "id": "maximum-or-b", "type": "duration", "format": "HH:MM:SS", "label": "Максимал · ОР + Б", "role": "combat" },
+    { "id": "maximum-b-ub", "type": "duration", "format": "HH:MM:SS", "label": "Максимал · Б + УБ", "role": "combined" },
+    { "id": "total-b", "type": "duration", "format": "HH:MM", "label": "Итог · Б" },
+    { "id": "total-b-ub", "type": "duration", "format": "HH:MM", "label": "Итог · Б + УБ", "role": "total" },
+    { "id": "order-work", "type": "duration", "format": "HH:MM", "label": "Работа на заказ" }
+  ],
+  "rules": [
+    { "operation": "copy", "source": "starts", "target": "starts" },
+    { "operation": "copy", "source": "ground-b", "target": "ground-b" },
+    { "operation": "copy", "source": "ground-b-ub", "target": "ground-b-ub" },
+    { "operation": "copy", "source": "flight-b", "target": "flight-b" },
+    { "operation": "copy", "source": "flight-b-ub", "target": "flight-b-ub" },
+    { "operation": "copy", "source": "maximum-or", "target": "maximum-or" },
+    { "operation": "copy", "source": "maximum-or-b", "target": "maximum-or-b" },
+    { "operation": "copy", "source": "maximum-b-ub", "target": "maximum-b-ub" },
+    { "operation": "flight_plus_ground", "flight": "flight-b", "ground": "ground-b", "target": "total-b", "stepMinutes": 5, "direction": "nearest", "percent": 20 },
+    { "operation": "flight_plus_ground", "flight": "flight-b-ub", "ground": "ground-b-ub", "target": "total-b-ub", "stepMinutes": 5, "direction": "nearest", "percent": 20 }
+  ],
+  "checks": [
+    { "ascending": ["maximum-or", "maximum-or-b", "maximum-b-ub"] }
+  ]
+}

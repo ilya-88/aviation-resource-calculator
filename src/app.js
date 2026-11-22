@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.37";
+  const APP_VERSION = "0.2.38-exp.1";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -371,41 +371,7 @@
     categories: { workUsage: true, workDate: true, resourceUsage: true, resourceDate: true },
   };
 
-  const seedState = {
-    view: "home",
-    globalNotifications: true,
-    selectedAircraftId: "su33-85",
-    aircraft: [
-      {
-        id: "su33-85",
-        type: "Су-33",
-        boardNumber: "85",
-        serialNumber: "49051002905",
-        rfNumber: "33738",
-        notifications: true,
-        totalFlightMinutes: 742 * 60 + 18,
-        actualLandings: 386,
-        equivalentLandings: 421.6,
-        arresterHooks: 0,
-        settings: structuredClone(DEFAULT_AIRCRAFT_SETTINGS),
-        shifts: [],
-        blocks: [
-          { id: "airframe", kind: "airframe", name: "Формуляр самолёта", caption: "Планер и общая наработка", status: "ok" },
-          { id: "engine-left", kind: "engine", name: "Левый двигатель", caption: "АЛ-31Ф · № 904118", status: "warning", sneMinutes: 22640, pprMinutes: 7460 },
-          { id: "engine-right", kind: "engine", name: "Правый двигатель", caption: "АЛ-31Ф · № 904127", status: "ok", sneMinutes: 21975, pprMinutes: 6795 },
-          { id: "vka", kind: "unit", name: "ВКА", caption: "Выносная коробка агрегатов", status: "ok" },
-          { id: "gtde", kind: "unit", name: "ГТДЭ / ВСУ", caption: "Вспомогательная энергоустановка", status: "warning" },
-        ],
-        resources: [
-          { id: "r1", object: "Самолёт", name: "Календарный срок", unit: "дн.", remaining: 412, limit: 3650, installed: "2017-08-14", produced: "2016-12-09", status: "ok" },
-          { id: "r2", object: "Левый двигатель", name: "Ресурс до продления", unit: "ч", remaining: 18.4, limit: 100, installed: "2025-04-11", produced: "2020-06-03", status: "warning" },
-          { id: "r3", object: "Правый двигатель", name: "Ресурс ППР", unit: "ч", remaining: 63.8, limit: 200, installed: "2025-04-11", produced: "2020-07-21", status: "ok" },
-          { id: "r4", object: "ГТДЭ / ВСУ", name: "Работа 60 дней", unit: "дн.", remaining: 3, limit: 60, installed: "2026-09-24", produced: "2023-03-18", status: "danger" },
-          { id: "r5", object: "ВКА", name: "Ресурс по налёту", unit: "ч", remaining: 44.2, limit: 500, installed: "2024-10-02", produced: "2022-01-17", status: "ok" },
-        ],
-      },
-    ],
-  };
+  const seedState = { view: "home", globalNotifications: true, aircraft: [] };
 
   let state = loadState();
   const viewStack = [];
@@ -433,6 +399,7 @@
         usageInheritanceVersion: USAGE_INHERITANCE_VERSION,
         sharedGround: state.sharedGround,
         usageTypeOverrides: state.usageTypeOverrides,
+        templateCatalog: state.templateCatalog,
         aircraft: state.aircraft,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
@@ -446,6 +413,7 @@
     const normalized = Object.assign({}, structuredClone(seedState), raw || {}, { view: "home" });
     normalized.typeSettings = Array.isArray(raw?.typeSettings) ? raw.typeSettings : [];
     normalized.usageTypeOverrides = Array.isArray(raw?.usageTypeOverrides) ? raw.usageTypeOverrides : [];
+    normalized.templateCatalog = Array.isArray(raw?.templateCatalog) ? raw.templateCatalog : [];
     normalized.archivedAircraftTypes = Array.isArray(raw?.archivedAircraftTypes) ? raw.archivedAircraftTypes : [];
     normalized.removedAircraftTypes = Array.isArray(raw?.removedAircraftTypes) ? raw.removedAircraftTypes : [];
     if (!Array.isArray(normalized.aircraft)) normalized.aircraft = [];
@@ -1492,6 +1460,7 @@
 
   function renderShift(editing = false) {
     const aircraft = selectedAircraft();
+    if (aircraft.workTemplate && !editing) { renderTemplateWork(aircraft); return; }
     const correction = editing ? aircraft.shifts.find((shift) => shift.id === state.selectedShiftId) : null;
     if (editing && !canCorrectShift(aircraft, correction)) {
       showToast("Показания после этой записи уже изменились");
@@ -1568,6 +1537,186 @@
       </form>
     `, { title: "Учёт работы", subtitle: `${aircraft.type} · борт ${aircraft.boardNumber}`, back: true, settingsScope: "aircraft" });
     bindShiftForm(correction);
+  }
+
+  function templateFieldMarkup(field) {
+    const attributes = field.type === "count" ? 'type="number" step="1" min="0"' :
+      `type="text" maxlength="12" placeholder="${field.format === "HH:MM:SS" ? "00:00:00" : "00:00"}"`;
+    return `<label>${escapeHtml(field.label)}<input data-template-field="${field.id}" ${attributes}></label>`;
+  }
+
+  function templateScopeMarkup(template, scope, position = null) {
+    const inputs = template.inputs.filter((field) => field.scope === scope);
+    return `<fieldset class="template-scope" data-template-scope="${position?.id || "board"}">
+      <legend>${escapeHtml(position?.label || "Данные борта")}</legend>
+      <div class="field-pair template-inputs">${inputs.filter((field) => !field.group).map(templateFieldMarkup).join("")}</div>
+      ${template.repeatGroups.filter((group) => group.scope === scope).map((group) => `
+        <section class="template-repeat" data-template-group="${group.id}">
+          <strong>${escapeHtml(group.label)}</strong>
+          <div class="template-rows"></div>
+          <button type="button" class="secondary-button" data-template-add>Добавить строку</button>
+        </section>`).join("")}
+    </fieldset>`;
+  }
+
+  function resolveTemplateEngine(aircraft, slot, date) {
+    const candidates = aircraft.blocks.filter((block) => block.kind === "engine" &&
+      block.templateSlotId === slot && blockInstalledOn(block, date));
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
+  function renderTemplateWork(aircraft) {
+    const stored = aircraft.workTemplate;
+    const inputs = stored.inputs.filter((field) => !field.role || sourceEnabled(aircraft, field.role))
+      .map((field) => field.role ? { ...field, label: usageRule(field.role, aircraft).label } : field);
+    for (const role of OPTIONAL_USAGE_TYPES) {
+      if (sourceEnabled(aircraft, role) && !inputs.some((field) => field.role === role)) {
+        inputs.push({ id: `board-extra-${role}`, scope: "board", type: "count", format: "count", role, label: usageRule(role, aircraft).label });
+      }
+    }
+    const template = { ...stored, inputs, repeatGroups: stored.repeatGroups.filter((group) => inputs.some((field) => field.group === group.id)) };
+    const positions = template.positions.filter((position) => position.kind === "engine");
+    app.innerHTML = shell(`
+      <h1>${escapeHtml(template.workTitle)}</h1>
+      <form id="template-work-form" class="shift-form">
+        <div id="operation-picker"></div>
+        <label>Дата работы<input name="date" type="date" required value="${todayIso()}"></label>
+        ${templateScopeMarkup(template, "board")}
+        ${customSources(aircraft).some(({ key }) => sourceEnabled(aircraft, key)) ? `<fieldset><legend>Другие показатели</legend>${customSources(aircraft)
+          .filter(({ key }) => sourceEnabled(aircraft, key)).map(customWorkInput).join("")}</fieldset>` : ""}
+        ${positions.map((position) => templateScopeMarkup(template, "engine", position)).join("")}
+        <section id="template-preview" class="shift-summary" aria-live="polite"></section>
+        <button class="primary-button" type="submit">Сохранить работу</button>
+      </form>`, { title: template.workTitle, subtitle: `${aircraft.type} · борт ${aircraft.boardNumber}`, back: true, settingsScope: "aircraft" });
+    const form = document.getElementById("template-work-form");
+    const preview = document.getElementById("template-preview");
+    const scopes = new Map([...form.querySelectorAll("[data-template-scope]")].map((element) => [element.dataset.templateScope, element]));
+    bindOperationPicker(aircraft);
+    function addRow(group) {
+      const inputs = template.inputs.filter((field) => field.group === group.dataset.templateGroup);
+      group.querySelector(".template-rows").insertAdjacentHTML("beforeend", `<div class="field-pair template-row" data-template-row>
+        ${inputs.map(templateFieldMarkup).join("")}
+        <button type="button" class="small-button" data-template-remove>Убрать строку</button>
+      </div>`);
+    }
+    form.querySelectorAll("[data-template-group]").forEach(addRow);
+    const inputValues = (element) => Object.fromEntries([...element.querySelectorAll("[data-template-field]")]
+      .map((input) => [input.dataset.templateField, input.value.trim()]));
+    function readScope(element) {
+      return {
+        fields: inputValues(element.querySelector(".template-inputs")),
+        groups: Object.fromEntries([...element.querySelectorAll("[data-template-group]")].map((group) => [
+          group.dataset.templateGroup, [...group.querySelectorAll("[data-template-row]")].map(inputValues)
+            .filter((row) => Object.values(row).some(Boolean)),
+        ])),
+      };
+    }
+    function calculate() {
+      const date = form.elements.date.value;
+      const boardInputs = readScope(scopes.get("board"));
+      const boardValues = aircraftTemplates.calculate(template, boardInputs, "board").values;
+      const boardUsage = Object.fromEntries(template.inputs.filter(({ role, id }) => role && boardValues[id] != null)
+        .map(({ role, id }) => [role, boardValues[id]]));
+      const engines = positions.map((position) => {
+        const raw = readScope(scopes.get(position.id));
+        const result = aircraftTemplates.calculate(template, raw, "engine");
+        const hasInput = Object.values(result.values).some((value) => value != null);
+        const block = hasInput ? resolveTemplateEngine(aircraft, position.id, date) : null;
+        return { slotId: position.id, slotLabel: position.label, blockId: block?.id,
+          blockName: block?.name, serialNumber: block?.serialNumber, repairNumber: block && countsTowardPpr(block, date) ? block.repairs : null,
+          raw, ...result, pending: hasInput && !block };
+      });
+      return { date, boardInputs, boardUsage, engines, customUsage: readCustomWork(aircraft, new FormData(form)),
+        boardFields: template.inputs.filter((field) => field.scope === "board") };
+    }
+    function update() {
+      try {
+        const work = calculate();
+        preview.innerHTML = `<strong>Предпросмотр</strong>${work.engines.map((engine) =>
+          `<details${engine.pending ? " open" : ""}><summary>${escapeHtml(engine.slotLabel)}${engine.pending ? " · ожидает привязки" : ""}</summary>
+            ${templateCounterValues(template, engine.counters)}
+            ${templateCalculationSteps(template, engine.steps)}
+          </details>`).join("")}`;
+      } catch (error) {
+        preview.textContent = error.message;
+      }
+    }
+    form.addEventListener("input", update);
+    form.addEventListener("click", (event) => {
+      if (event.target.closest("[data-template-add]")) {
+        const group = event.target.closest("[data-template-group]");
+        addRow(group);
+        group.querySelector("[data-template-row]:last-child input")?.focus();
+      } else if (event.target.closest("[data-template-remove]")) {
+        event.target.closest("[data-template-row]").remove();
+      } else return;
+      update();
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      let work;
+      try { work = calculate(); }
+      catch (error) { preview.textContent = error.message; showToast(error.message); return; }
+      if (!Object.values(work.boardInputs.fields).some(Boolean) && !Object.values(work.boardInputs.groups).some((rows) => rows.length) &&
+          !work.customUsage.length && !work.engines.some((engine) => Object.values(engine.values).some((value) => value != null))) {
+        showToast("Введи данные работы");
+        return;
+      }
+      saveTemplateWork(aircraft, template, work, new FormData(form).get("operationType"));
+    });
+    update();
+  }
+
+  function templateCounterValues(template, values) {
+    return `<dl class="template-values">${template.engineCounters.map((field) =>
+      `<dt>${escapeHtml(field.label)}</dt><dd>${aircraftTemplates.formatValue(field, values[field.id])}</dd>`).join("")}</dl>`;
+  }
+
+  function templateCalculationSteps(template, steps) {
+    const entries = Object.entries(steps);
+    if (!entries.length) return "";
+    return `<ul class="accrual-items">${entries.map(([key, step]) => {
+      const field = template.engineCounters.find((counter) => counter.id === key);
+      const format = (seconds) => aircraftTemplates.formatValue(field, seconds);
+      return `<li>${escapeHtml(field.label)}: земля ${format(step.ground)} → ${format(step.rounded)} × ${step.percent}% = ${format(step.credit)}.
+        Полёт ${format(step.flight)} + ${format(step.credit)} = ${format(step.flight + step.credit)}.</li>`;
+    }).join("")}</ul>`;
+  }
+
+  function saveTemplateWork(aircraft, template, work, operationType) {
+    const engineUsage = new Map();
+    for (const engine of work.engines.filter((item) => item.blockId)) {
+      const block = aircraft.blocks.find((item) => item.id === engine.blockId);
+      const byRole = (role) => engine.counters[template.engineCounters.find((field) => field.role === role)?.id] ?? 0;
+      const modes = { or: byRole("or"), combat: byRole("combat"), combined: byRole("combined") };
+      engineUsage.set(block, { minutes: byRole("total") / 60, flightMinutes: byRole("flight") / 60, starts: byRole("starts"),
+        maximumSeconds: modes.combined, afterburnerSeconds: 0, modes });
+    }
+    const flight = (work.boardUsage.flight || 0) / 60;
+    const landings = Object.fromEntries(OPTIONAL_USAGE_TYPES.filter((key) => key !== "arresterHooks")
+      .map((key) => [key, work.boardUsage[key] || 0]));
+    const arresterHooks = work.boardUsage.arresterHooks || 0;
+    const actualLandings = Object.values(landings).reduce((sum, value) => sum + value, 0);
+    const coefficients = Object.fromEntries(Object.keys(landings).map((key) => [key, usageRule(key, aircraft).factor]));
+    const equivalent = calc.calculateEquivalentLandings(landings, coefficients);
+    const sources = { ...work.boardUsage };
+    if (Object.hasOwn(sources, "flight")) sources.flight /= 3600;
+    for (const { key, value } of work.customUsage) sources[key] = value;
+    const accruals = resourceAccruals(aircraft, work.date, sources, engineUsage);
+    const backup = structuredClone(aircraft);
+    applyWorkUsage(aircraft, { flight, actualLandings, equivalent, arresterHooks, date: work.date, engineUsage, accruals, accrueUnits: false });
+    const [left, right] = work.engines.map((engine) => engineUsage.get(aircraft.blocks.find((block) => block.id === engine.blockId)));
+    const operation = (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find((item) => item.id === operationType);
+    const previous = aircraft.shifts.at(-1);
+    if (previous) { delete previous.beforeUsage; delete previous.afterUsage; }
+    aircraft.shifts.push({
+      id: id(), date: work.date, flightMinutes: flight, operationType, operationLabel: operation?.label, templateWork: work,
+      actualLandings, equivalentLandings: equivalent, arresterHooks, landingsByType: landings, accruals,
+      leftEngineMinutes: left?.minutes ?? 0, rightEngineMinutes: right?.minutes ?? 0, leftStarts: left?.starts ?? 0, rightStarts: right?.starts ?? 0,
+    });
+    if (!saveState()) { Object.assign(aircraft, backup); showToast("Не удалось сохранить работу"); return; }
+    navigateBack();
+    showToast(work.engines.some((engine) => engine.pending) ? "Работа сохранена. Есть данные без привязки двигателя" : "Работа сохранена");
   }
 
   function bindShiftForm(correction) {
@@ -1677,37 +1826,7 @@
       const equivalent = calc.calculateEquivalentLandings(landings, coefficients);
       const arresterHooks = Number(data.get("arresterHooks"));
 
-      aircraft.totalFlightMinutes += flight;
-      aircraft.actualLandings += actualLandings;
-      aircraft.equivalentLandings = Math.round((aircraft.equivalentLandings + equivalent) * 1e6) / 1e6;
-      aircraft.arresterHooks += arresterHooks;
-      const airframe = aircraft.blocks.find((block) => block.kind === "airframe");
-      if (countsTowardPpr(airframe, date) || (!airframe && (aircraft.pprFlightMinutes != null || aircraft.pprLandings != null))) {
-        aircraft.pprFlightMinutes = (aircraft.pprFlightMinutes || 0) + flight;
-        aircraft.pprLandings = (aircraft.pprLandings || 0) + actualLandings;
-      }
-      for (const [block, { minutes, starts, maximumSeconds: maximum, afterburnerSeconds: afterburner, modes }] of engineUsage) {
-        const afterRepair = countsTowardPpr(block, date);
-        addBlockUsage(block, minutes, actualLandings, afterRepair);
-        block.starts = (block.starts || 0) + starts;
-        block.maximumSeconds = (block.maximumSeconds || 0) + maximum;
-        block.afterburnerSeconds = (block.afterburnerSeconds || 0) + afterburner;
-        accumulateModes(block.modesSeconds ??= {}, modes);
-        if (afterRepair) {
-          block.pprStarts = (block.pprStarts || 0) + starts;
-          block.pprMaximumSeconds = (block.pprMaximumSeconds || 0) + maximum;
-          block.pprAfterburnerSeconds = (block.pprAfterburnerSeconds || 0) + afterburner;
-          accumulateModes(block.pprModesSeconds ??= {}, modes);
-        }
-      }
-      for (const block of aircraft.blocks) {
-        if (block.kind === "unit" && blockInstalledOn(block, date)) addBlockUsage(block, flight, actualLandings, countsTowardPpr(block, date));
-      }
-      for (const entry of accruals) {
-        const resource = aircraft.resources.find((item) => item.id === entry.resourceId);
-        resource.remaining = entry.remaining;
-        resource.status = resourceStatus(resource.remaining, resource.limit);
-      }
+      applyWorkUsage(aircraft, { flight, actualLandings, equivalent, arresterHooks, date, engineUsage, accruals });
       const operation = (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find((item) => item.id === data.get("operationType"));
       const entry = {
         id: correction?.id || id(),
@@ -1766,6 +1885,40 @@
       showToast(correction ? "Запись исправлена, начисления пересчитаны" : "Работа сохранена");
     });
     update();
+  }
+
+  function applyWorkUsage(aircraft, { flight, actualLandings, equivalent, arresterHooks, date, engineUsage, accruals, accrueUnits = true }) {
+    aircraft.totalFlightMinutes += flight;
+    aircraft.actualLandings += actualLandings;
+    aircraft.equivalentLandings = Math.round((aircraft.equivalentLandings + equivalent) * 1e6) / 1e6;
+    aircraft.arresterHooks += arresterHooks;
+    const airframe = aircraft.blocks.find((block) => block.kind === "airframe");
+    if (countsTowardPpr(airframe, date) || (!airframe && (aircraft.pprFlightMinutes != null || aircraft.pprLandings != null))) {
+      aircraft.pprFlightMinutes = (aircraft.pprFlightMinutes || 0) + flight;
+      aircraft.pprLandings = (aircraft.pprLandings || 0) + actualLandings;
+    }
+    for (const [block, { minutes, starts, maximumSeconds: maximum, afterburnerSeconds: afterburner, modes }] of engineUsage) {
+      const afterRepair = countsTowardPpr(block, date);
+      addBlockUsage(block, minutes, actualLandings, afterRepair);
+      block.starts = (block.starts || 0) + starts;
+      block.maximumSeconds = (block.maximumSeconds || 0) + maximum;
+      block.afterburnerSeconds = (block.afterburnerSeconds || 0) + afterburner;
+      accumulateModes(block.modesSeconds ??= {}, modes);
+      if (afterRepair) {
+        block.pprStarts = (block.pprStarts || 0) + starts;
+        block.pprMaximumSeconds = (block.pprMaximumSeconds || 0) + maximum;
+        block.pprAfterburnerSeconds = (block.pprAfterburnerSeconds || 0) + afterburner;
+        accumulateModes(block.pprModesSeconds ??= {}, modes);
+      }
+    }
+    for (const block of aircraft.blocks) {
+      if (accrueUnits && block.kind === "unit" && blockInstalledOn(block, date)) addBlockUsage(block, flight, actualLandings, countsTowardPpr(block, date));
+    }
+    for (const entry of accruals) {
+      const resource = aircraft.resources.find((item) => item.id === entry.resourceId);
+      resource.remaining = entry.remaining;
+      resource.status = resourceStatus(resource.remaining, resource.limit);
+    }
   }
 
   function timeToSeconds(value) {
@@ -1903,7 +2056,8 @@
     const aircraft = selectedAircraft();
     app.innerHTML = shell(`<h1>Реквизиты борта</h1>
       <form id="board-details-form" class="shift-form settings-form">
-        <label>Тип самолёта${aircraftTypeSelect(aircraft.type)}</label>
+        ${aircraft.workTemplate ? `<label>Тип самолёта<output>${escapeHtml(aircraft.type)}</output></label>` :
+          `<label>Тип самолёта${aircraftTypeSelect(aircraft.type)}</label>`}
         <label>Бортовой номер<input name="boardNumber" type="text" value="${escapeHtml(aircraft.boardNumber)}" required></label>
         <label>Заводской номер<input name="serialNumber" type="text" value="${escapeHtml(aircraft.serialNumber || "")}"></label>
         <label>RF<input name="rfNumber" type="text" value="${escapeHtml(aircraft.rfNumber || "")}" placeholder="Например, 33738"></label>
@@ -1914,9 +2068,14 @@
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, value.trim()]));
+      if (aircraft.workTemplate) data.type = aircraft.type;
       const status = document.getElementById("board-details-status");
       if (!(data.type.toLowerCase() === aircraft.type.trim().toLowerCase() || activeAircraftTypes().includes(data.type)) || !data.boardNumber) {
         status.textContent = "Укажи тип и бортовой номер.";
+        return;
+      }
+      if (data.type !== aircraft.type && state.templateCatalog.some((item) => item.name === data.type)) {
+        status.textContent = "Для шаблона создай новый борт, чтобы получить его формуляры.";
         return;
       }
       data.rfNumber = data.rfNumber.replace(/^RF[\s-]*/i, "");
@@ -2018,10 +2177,11 @@
       return;
     }
     const repaired = block.repairs > 0;
+    const engineTemplate = block.kind === "engine" ? aircraft.workTemplate : null;
     const groundRule = block.groundRule ?? usageTypeOverride(aircraft)?.ground ?? state.sharedGround ?? aircraft.settings;
     const ppr = (value) => repaired && value != null ? value : "—";
     const modeRow = (label, total, sinceRepair, format) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${format(total || 0)} / ${ppr(sinceRepair == null ? null : format(sinceRepair))}</strong></div>`;
-    const blockFields = block.kind !== "airframe" ? `
+    const blockFields = block.kind !== "airframe" && !engineTemplate ? `
       <fieldset><legend>Наработка</legend>
         <div class="field-pair">
           <label><span>СНЭ, минут</span><input name="sneMinutes" type="number" min="0" step="0.01" value="${block.sneMinutes || 0}"></label>
@@ -2118,7 +2278,7 @@
         </fieldset>
         ${airframeFields}
         ${blockFields}
-        ${block.kind === "engine" ? `<fieldset><legend>Земная наработка этого двигателя</legend>
+        ${block.kind === "engine" && !engineTemplate ? `<fieldset><legend>Земная наработка этого двигателя</legend>
           <label>Доля в общей наработке, %<input name="groundPercent" type="number" min="0" max="100" step="any" value="${groundRule.groundPercent}" required></label>
           <label>Шаг округления, минут<input name="groundStep" type="number" min="1" step="1" value="${groundRule.groundRoundingMinutes}" required></label>
           <label>Направление<select name="groundDirection">${[["nearest","До ближайшего"],["up","Вверх"],["down","Вниз"]].map(([value, name]) =>
@@ -2127,6 +2287,7 @@
         <button type="submit" class="primary-button wide">Сохранить формуляр</button>
       </form>
       <button type="button" class="add-block-button" data-view="correct-usage">Уточнить показания</button>
+      ${engineTemplate ? templateEngineLog(aircraft, block) : ""}
       ${installations}
       <div class="section-heading settings-section-heading"><div><h2>Ресурсы и работы</h2><p>Связанные с этим формуляром ограничения.</p></div></div>
       <section class="resource-list">${relatedResources.length ? resourceRows(relatedResources, { editable: true }) : `<div class="empty-state compact-empty"><p>Связанных ресурсов пока нет.</p></div>`}</section>
@@ -2162,7 +2323,7 @@
       if (block.kind === "airframe" && repaired) {
         aircraft.pprFlightMinutes = data.get("pprFlightMinutes") === "" ? null : Number(data.get("pprFlightMinutes"));
         aircraft.pprLandings = data.get("pprLandings") === "" ? null : Number(data.get("pprLandings"));
-      } else if (block.kind !== "airframe") {
+      } else if (block.kind !== "airframe" && !engineTemplate) {
         block.sneMinutes = Number(data.get("sneMinutes"));
         block.sneLandings = Number(data.get("sneLandings"));
         if (repaired) {
@@ -2234,6 +2395,39 @@
       render();
       showToast("Событие записано в историю");
     });
+  }
+
+  function templateEngineLog(aircraft, block) {
+    const template = aircraft.workTemplate;
+    const position = template.positions.find((item) => item.id === block.templateSlotId);
+    if (!position) return "";
+    const totals = {};
+    const repairs = new Map();
+    const fields = template.engineCounters;
+    const items = aircraft.shifts.filter((entry) => entry.templateWork).sort((a, b) => a.date.localeCompare(b.date))
+      .flatMap((shift) => shift.templateWork.engines.filter((engine) => engine.blockId === block.id)
+        .map((engine) => ({ date: shift.date, engine })));
+    const rows = items.map(({ date, engine }) => {
+      const current = repairs.get(engine.repairNumber) || {};
+      if (engine.repairNumber != null) repairs.set(engine.repairNumber, current);
+      return `<tr><th scope="row">${formatDate(date)}</th>${fields.map((field) => {
+        const value = engine.counters[field.id];
+        if (value == null) return "<td>—</td>";
+        totals[field.id] = (totals[field.id] || 0) + value;
+        if (engine.repairNumber != null) current[field.id] = (current[field.id] || 0) + value;
+        return `<td>${aircraftTemplates.formatValue(field, value)}${field.role === "starts" ? ` / ${aircraftTemplates.formatValue(field,
+          engine.repairNumber == null ? totals[field.id] : current[field.id])}` : ""}</td>`;
+      }).join("")}</tr>`;
+    }).join("");
+    const foot = (title, values) => `<tr><th scope="row">${title}</th>${fields.map((field) =>
+      `<td>${aircraftTemplates.formatValue(field, values[field.id])}</td>`).join("")}</tr>`;
+    return `<section class="section-stack"><h2>Записи формуляра двигателя</h2>
+      <p>${escapeHtml(position.label)} · ${escapeHtml(position.model)}</p>
+      <div class="template-table-wrap" tabindex="0"><table class="aircraft-counters template-table">
+        <thead><tr><th>Дата работы</th>${fields.map((field) => `<th>${escapeHtml(field.label)}</th>`).join("")}</tr></thead>
+        <tbody>${rows || `<tr><td colspan="${fields.length + 1}">Записей пока нет.</td></tr>`}</tbody>
+        <tfoot>${foot("СНЭ по журналу", totals)}${block.repairs ? foot("ППР по журналу", repairs.get(block.repairs) || {}) : ""}</tfoot>
+      </table></div></section>`;
   }
 
   function renderUsageCorrection() {
@@ -2354,6 +2548,10 @@
     const aircraft = selectedAircraft();
     const shift = aircraft.shifts.find((entry) => entry.id === state.selectedShiftId);
     if (!shift) { navigateBack(); return; }
+    if (shift.templateWork) {
+      renderTemplateWorkEntry(aircraft, shift);
+      return;
+    }
     const engines = shift.engineAccruals || [];
     const builtIn = (key) => shift.usageRules?.[key]?.label || usageRule(key).label;
     const customRows = shift.customUsage?.map(({label, value, seconds, format}) => {
@@ -2390,6 +2588,32 @@
       state.mapShiftId = shift.id;
       navigateTo("usage-map");
     });
+  }
+
+  function renderTemplateWorkEntry(aircraft, shift) {
+    const template = aircraft.workTemplate;
+    const work = shift.templateWork;
+    function rawValues(raw, scope) {
+      const fields = scope === "board" && work.boardFields ? work.boardFields : template.inputs.filter((field) => field.scope === scope);
+      return fields.map((field) => {
+        const values = field.group ? (raw.groups[field.group] || []).map((row, index) => row[field.id] ? `${index + 1}. ${row[field.id]}` : "").filter(Boolean) :
+          [raw.fields[field.id]].filter(Boolean);
+        return values.length ? `<dt>${escapeHtml(field.label)}</dt><dd>${values.map(escapeHtml).join(" · ")}</dd>` : "";
+      }).join("");
+    }
+    app.innerHTML = shell(`<section class="section-stack">
+      <h1>${escapeHtml(shift.operationLabel || template.workTitle)}</h1><p>${formatDate(shift.date)}</p>
+      <details open><summary>${escapeHtml(template.workTitle)} · борт</summary><dl class="template-values">${rawValues(work.boardInputs, "board")}</dl></details>
+      ${work.customUsage?.length ? `<dl class="template-values">${work.customUsage.map((entry) => `<dt>${escapeHtml(entry.label)}</dt><dd>${entry.seconds == null
+        ? formatNumber(entry.value) : aircraftTemplates.formatValue({format: entry.format === "seconds" ? "HH:MM:SS" : "HH:MM"}, entry.seconds)}</dd>`).join("")}</dl>` : ""}
+      ${work.engines.map((engine) => `<details open><summary>${escapeHtml(engine.blockName || engine.slotLabel)}${engine.serialNumber ? ` · № ${escapeHtml(engine.serialNumber)}` : ""}</summary>
+        ${engine.pending ? "<p>Ожидает привязки двигателя на дату работы.</p>" : ""}
+        <dl class="template-values">${rawValues(engine.raw, "engine")}</dl>
+        ${templateCounterValues(template, engine.counters)}
+        ${templateCalculationSteps(template, engine.steps)}
+      </details>`).join("")}
+      ${shift.accruals?.length ? accrualSummary(shift.accruals) : ""}
+    </section>`, { title: "Запись работы", back: true, settings: false });
   }
 
   function renderUsageMap() {
@@ -2624,10 +2848,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.37</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.38-exp.1</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.37", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.38-exp.1", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -2920,6 +3144,9 @@
           <label>Название нового типа<input name="type" type="text" maxlength="80" required></label>
           <button type="submit" class="primary-button">Добавить тип</button>
         </form>
+        <button type="button" class="secondary-button" id="import-aircraft-template">Импортировать шаблон</button>
+        <input id="aircraft-template-file" type="file" accept=".json,application/json" hidden>
+        <p id="template-import-status" class="field-help" role="status"></p>
         <section class="settings-list" aria-label="Доступные типы">
           ${types.map((name, index) => `<div class="setting-row type-catalog-card"><strong>${escapeHtml(name)}</strong><button class="type-archive-button" type="button" data-archive-type="${index}" aria-label="Переместить ${escapeHtml(name)} в корзину">×</button></div>`).join("") || "<p>Доступных типов пока нет.</p>"}
         </section>
@@ -2930,6 +3157,7 @@
           </div>`).join("") || "<p>Корзина пуста.</p>"}
         </details>
       </section>`, { title: "Типы самолётов", back: true, settings: false });
+    bindTemplateImport();
     document.getElementById("aircraft-type-form").addEventListener("submit", (event) => {
       event.preventDefault();
       const name = event.currentTarget.elements.type.value.trim();
@@ -2982,9 +3210,11 @@
         const previous = {
           aircraftTypes: state.aircraftTypes, archivedAircraftTypes: state.archivedAircraftTypes,
           removedAircraftTypes: state.removedAircraftTypes, usageTypeOverrides: state.usageTypeOverrides, typeSettings: state.typeSettings,
+          templateCatalog: state.templateCatalog,
         };
         state.aircraftTypes = previous.aircraftTypes.filter((item) => item !== name);
         state.archivedAircraftTypes = previous.archivedAircraftTypes.filter((item) => item !== key);
+        state.templateCatalog = previous.templateCatalog.filter((item) => item.name !== name);
         if (linked) state.removedAircraftTypes = [...previous.removedAircraftTypes, key];
         else {
           state.usageTypeOverrides = previous.usageTypeOverrides.filter((item) => item.type !== key);
@@ -2994,6 +3224,54 @@
         else { Object.assign(state, previous); showToast("Не удалось удалить тип"); }
       });
     }));
+  }
+
+  function bindTemplateImport() {
+    const file = document.getElementById("aircraft-template-file");
+    const status = document.getElementById("template-import-status");
+    function showFile(text, error) {
+      if (!status.isConnected || state.view !== "aircraft-types") return;
+      if (error) { status.textContent = error; return; }
+      let template;
+      try {
+        template = aircraftTemplates.validateTemplate(JSON.parse(text));
+        if (state.aircraftTypes.some((item) => item.toLowerCase() === template.name.toLowerCase()) ||
+            state.removedAircraftTypes.includes(template.name.toLowerCase()) ||
+            state.templateCatalog.some((item) => item.id === template.id)) {
+          throw new Error("Тип или идентификатор шаблона уже есть в приложении");
+        }
+      } catch (problem) {
+        status.textContent = problem instanceof SyntaxError ? "Файл не является корректным JSON" : problem.message;
+        return;
+      }
+      const positions = template.positions.length;
+      chooseLayoutAction(`Импортировать «${escapeHtml(template.name)}»? Формуляров: ${positions}. Полей ввода: ${template.inputs.length}.`,
+        [["import", "Импортировать"], ["cancel", "Отмена"]], (action) => {
+          if (action !== "import") return;
+          const previous = { aircraftTypes: state.aircraftTypes, templateCatalog: state.templateCatalog, usageTypeOverrides: state.usageTypeOverrides };
+          const enabled = Object.fromEntries(BOARD_USAGE_TYPES.map((key) => [key, template.inputs.some((input) => input.role === key)]));
+          const labels = Object.fromEntries(template.inputs.filter((input) => input.role).map((input) => [input.role, input.label]));
+          state.aircraftTypes = [...previous.aircraftTypes, template.name];
+          state.templateCatalog = [...previous.templateCatalog, template];
+          state.usageTypeOverrides = [...previous.usageTypeOverrides, { type: template.name.toLowerCase(), enabled, labels }];
+          if (saveState()) { render(); showToast("Шаблон импортирован"); }
+          else { Object.assign(state, previous); status.textContent = "Не удалось сохранить шаблон"; }
+        });
+    }
+    window.receiveAircraftTemplate = showFile;
+    document.getElementById("import-aircraft-template").addEventListener("click", () => {
+      status.textContent = "";
+      if (typeof window.AndroidBridge?.pickAircraftTemplate === "function") window.AndroidBridge.pickAircraftTemplate();
+      else file.click();
+    });
+    file.addEventListener("change", async () => {
+      const selected = file.files?.[0];
+      file.value = "";
+      if (!selected) return;
+      if (selected.size > 256 * 1024) { showFile(null, "Файл шаблона должен быть не больше 256 КБ"); return; }
+      try { showFile((await selected.text()).replace(/^\uFEFF/, "")); }
+      catch (_) { showFile(null, "Не удалось прочитать файл"); }
+    });
   }
 
   function renderUsageSettings() {
@@ -3231,7 +3509,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.37</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.38-exp.1</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -3349,6 +3627,9 @@
           <div id="creation-usage"></div>` : `
           <label>Название<input name="name" type="text" required></label>
           <label>Тип карточки<select name="kind"><option value="unit">Агрегат</option><option value="engine">Двигатель</option><option value="airframe">Планер</option></select></label>
+          ${selectedAircraft().workTemplate ? `<label id="template-new-slot" hidden>Позиция двигателя<select name="templateSlotId" disabled><option value="">Выбрать</option>
+            ${selectedAircraft().workTemplate.positions.filter((item) => item.kind === "engine").map((item) => `<option value="${item.id}">${escapeHtml(item.label)} · ${escapeHtml(item.model)}</option>`).join("")}
+          </select></label>` : ""}
           <label>Номер агрегата<input name="serialNumber" type="text"></label>
           <label>Описание<input name="caption" type="text"></label>`}
         <p id="creation-error" role="alert"></p>
@@ -3356,6 +3637,13 @@
       </form>`, { title, back: true, settings: false });
     const form = document.getElementById("creation-form");
     const usage = aircraftForm ? bindCreationUsage(form) : null;
+    const slot = form.elements.templateSlotId;
+    if (slot) form.elements.kind.addEventListener("change", () => {
+      const engine = form.elements.kind.value === "engine";
+      slot.closest("label").hidden = !engine;
+      slot.disabled = !engine;
+      slot.required = engine;
+    });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = Object.fromEntries([...new FormData(event.currentTarget)].map(([key, value]) => [key, value.trim()]));
@@ -3428,16 +3716,18 @@
   }
 
   function createAircraft({ type, boardNumber, serialNumber, rfNumber, enabledUsageSources, customUsageSources, usageFactors }) {
+    const workTemplate = state.templateCatalog.find((item) => item.name === type);
     const template = state.typeSettings.find((entry) => entry.type.toLowerCase() === type.toLowerCase());
     const sameType = state.aircraft.find((item) => item.type.toLowerCase() === type.toLowerCase());
-    const id = `aircraft-${Date.now()}`;
+    const boardId = `aircraft-${id()}`;
     state.aircraft.push({
-      id,
+      id: boardId,
       type: type.trim(),
       boardNumber: boardNumber.trim(),
       enabledUsageSources,
       customUsageSources,
       usageFactors,
+      ...(workTemplate && { workTemplate: structuredClone(workTemplate) }),
       serialNumber: serialNumber || "Не указан",
       rfNumber: (rfNumber || "").replace(/^RF[\s-]*/i, ""),
       notifications: state.globalNotifications,
@@ -3448,16 +3738,19 @@
       settings: structuredClone(template?.settings ?? sameType?.settings ?? DEFAULT_AIRCRAFT_SETTINGS),
       notificationConfig: structuredClone(DEFAULT_NOTIFICATION_CONFIG),
       shifts: [],
-      blocks: [
+      blocks: (workTemplate ? workTemplate.positions.map((position) => ({
+        id: id(), name: position.label, kind: position.kind, model: position.model, caption: position.model,
+        ...(position.kind === "engine" && { templateSlotId: position.id }),
+      })) : [
         { id: "airframe", kind: "airframe", name: "Формуляр самолёта", caption: "Планер и общая наработка" },
         { id: "engine-left", kind: "engine", name: "Левый двигатель", caption: "Формуляр двигателя" },
         { id: "engine-right", kind: "engine", name: "Правый двигатель", caption: "Формуляр двигателя" },
         { id: "vka", kind: "unit", name: "ВКА", caption: "Выносная коробка агрегатов" },
         { id: "gtde", kind: "unit", name: "ГТДЭ / ВСУ", caption: "Вспомогательная энергоустановка" },
-      ].map((block) => normalizeBlock({ status: "ok", ...block })),
+      ]).map((block) => normalizeBlock({ status: "ok", ...block })),
       resources: [],
     });
-    state.selectedAircraftId = id;
+    state.selectedAircraftId = boardId;
     state.aircraftTab = "aggregates";
     state.view = "aircraft";
     saveState();
@@ -3465,14 +3758,19 @@
     showToast("Самолёт добавлен");
   }
 
-  function createBlock({ name, kind, caption, serialNumber }) {
+  function createBlock({ name, kind, caption, serialNumber, templateSlotId }) {
     const aircraft = selectedAircraft();
+    const slot = kind === "engine" && aircraft.workTemplate?.positions.find((item) => item.kind === "engine" && item.id === templateSlotId);
+    if (kind === "engine" && aircraft.workTemplate && !slot) { showToast("Выбери позицию двигателя"); return; }
+    const occupied = slot && aircraft.blocks.some((block) => block.templateSlotId === slot.id && blockInstalledOn(block, todayIso()));
     aircraft.blocks.push(normalizeBlock({
       id: `unit-${Date.now()}`,
       kind,
       name: name.trim(),
       serialNumber,
       caption: caption.trim(),
+      ...(slot && { templateSlotId: slot.id, model: slot.model, installed: !occupied,
+        events: occupied ? [] : [{ id: id(), type: "install", date: todayIso(), note: "" }] }),
       status: "ok",
       ...(kind === "engine" ? { sneMinutes: 0, starts: 0 } : {}),
     }));

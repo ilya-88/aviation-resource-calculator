@@ -236,6 +236,17 @@ button.setting-row { cursor: pointer; }
 .type-catalog-card { position: relative; min-height: 58px; padding: 12px 58px 12px 14px; align-items: center; overflow-wrap: anywhere; }
 .type-archive-button { position: absolute; top: 6px; right: 6px; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--red-soft); color: var(--red); font-size: 24px; cursor: pointer; }
 .type-trash-row, .type-trash-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+#aircraft-template-file[hidden], #template-new-slot[hidden] { display: none; }
+.template-repeat, .template-rows { display: grid; gap: 8px; }
+.template-row { border-inline-start: 2px solid var(--line); padding-inline-start: 10px; align-items: end; }
+.template-row [data-template-remove] { justify-self: start; }
+.template-scope .field-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.template-values { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
+.template-values dd { margin: 0; text-align: right; overflow-wrap: anywhere; max-width: 22ch; }
+.template-table-wrap { max-width: 100%; overflow-x: auto; }
+.template-table { width: max-content; }
+.template-table :is(td, th) { white-space: nowrap; padding: 8px 10px; }
+.template-table tfoot { font-weight: 700; }
 #aircraft-type-form label { width: 100%; }
 .settings-section-heading { margin-top: 28px; }
 .compact-metrics { margin: 4px 0 0; }

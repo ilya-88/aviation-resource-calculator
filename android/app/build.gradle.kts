@@ -7,11 +7,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "ru.smolnikov.aviaresource"
+        applicationId = "ru.smolnikov.aviaresource.templates"
         minSdk = 26
         targetSdk = 36
-        versionCode = 39
-        versionName = "0.2.37"
+        versionCode = 40
+        versionName = "0.2.38-exp.1"
     }
 
     buildTypes {

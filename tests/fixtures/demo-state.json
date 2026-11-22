@@ -1,0 +1,129 @@
+{
+  "view": "home",
+  "globalNotifications": true,
+  "selectedAircraftId": "su33-85",
+  "aircraft": [
+    {
+      "id": "su33-85",
+      "type": "Су-33",
+      "boardNumber": "85",
+      "serialNumber": "49051002905",
+      "rfNumber": "33738",
+      "notifications": true,
+      "totalFlightMinutes": 44538,
+      "actualLandings": 386,
+      "equivalentLandings": 421.6,
+      "arresterHooks": 0,
+      "settings": {
+        "groundRoundingMinutes": 5,
+        "groundRoundingDirection": "nearest",
+        "groundPercent": 20,
+        "landingCoefficients": {
+          "runway": 1,
+          "carrier": 2,
+          "touch": 0.6,
+          "circuit": 0.6
+        }
+      },
+      "shifts": [],
+      "blocks": [
+        {
+          "id": "airframe",
+          "kind": "airframe",
+          "name": "Формуляр самолёта",
+          "caption": "Планер и общая наработка",
+          "status": "ok"
+        },
+        {
+          "id": "engine-left",
+          "kind": "engine",
+          "name": "Левый двигатель",
+          "caption": "АЛ-31Ф · № 904118",
+          "status": "warning",
+          "sneMinutes": 22640,
+          "pprMinutes": 7460
+        },
+        {
+          "id": "engine-right",
+          "kind": "engine",
+          "name": "Правый двигатель",
+          "caption": "АЛ-31Ф · № 904127",
+          "status": "ok",
+          "sneMinutes": 21975,
+          "pprMinutes": 6795
+        },
+        {
+          "id": "vka",
+          "kind": "unit",
+          "name": "ВКА",
+          "caption": "Выносная коробка агрегатов",
+          "status": "ok"
+        },
+        {
+          "id": "gtde",
+          "kind": "unit",
+          "name": "ГТДЭ / ВСУ",
+          "caption": "Вспомогательная энергоустановка",
+          "status": "warning"
+        }
+      ],
+      "resources": [
+        {
+          "id": "r1",
+          "object": "Самолёт",
+          "name": "Календарный срок",
+          "unit": "дн.",
+          "remaining": 412,
+          "limit": 3650,
+          "installed": "2017-08-14",
+          "produced": "2016-12-09",
+          "status": "ok"
+        },
+        {
+          "id": "r2",
+          "object": "Левый двигатель",
+          "name": "Ресурс до продления",
+          "unit": "ч",
+          "remaining": 18.4,
+          "limit": 100,
+          "installed": "2025-04-11",
+          "produced": "2020-06-03",
+          "status": "warning"
+        },
+        {
+          "id": "r3",
+          "object": "Правый двигатель",
+          "name": "Ресурс ППР",
+          "unit": "ч",
+          "remaining": 63.8,
+          "limit": 200,
+          "installed": "2025-04-11",
+          "produced": "2020-07-21",
+          "status": "ok"
+        },
+        {
+          "id": "r4",
+          "object": "ГТДЭ / ВСУ",
+          "name": "Работа 60 дней",
+          "unit": "дн.",
+          "remaining": 3,
+          "limit": 60,
+          "installed": "2026-09-24",
+          "produced": "2023-03-18",
+          "status": "danger"
+        },
+        {
+          "id": "r5",
+          "object": "ВКА",
+          "name": "Ресурс по налёту",
+          "unit": "ч",
+          "remaining": 44.2,
+          "limit": 500,
+          "installed": "2024-10-02",
+          "produced": "2022-01-17",
+          "status": "ok"
+        }
+      ]
+    }
+  ]
+}
