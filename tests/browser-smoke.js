@@ -375,7 +375,8 @@ async function main() {
       window.handleAndroidBack();
       document.querySelector('[data-aircraft-id]').click();
       const hold = async (target) => {
-        target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, isPrimary: true }));
+        target.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [new Touch({ identifier: 1, target, clientX: 20, clientY: 20 })] }));
+        if (target.dispatchEvent(new Event('selectstart', { bubbles: true, cancelable: true }))) throw new Error('Включилось выделение текста');
         await new Promise(resolve => setTimeout(resolve, 2100));
       };
       await hold(document.querySelector('[data-view="shift"]'));
