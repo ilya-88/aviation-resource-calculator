@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.15";
+  const APP_VERSION = "0.2.16";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -395,11 +395,16 @@
           showToast("Не удалось открыть редактор раскладки");
         }
       }
-      function startHold(target, x, y) {
+      function cancelHold(reason) {
+        if (start) recordDiagnostic("layout.hold.cancelled", `${reason} ${Math.round(performance.now() - start.at)}ms`);
+        stopHold();
+      }
+      function startHold(target, x, y, input) {
         stopHold();
         const tile = target.closest("[data-counter-index]");
         if (!tile) return;
-        start = { x, y, tile, ready: false };
+        start = { x, y, tile, ready: false, at: performance.now() };
+        recordDiagnostic("layout.hold.start", input);
         holdTimer = setTimeout(() => {
           if (!tile.isConnected || state.view !== "aircraft") return;
           start.ready = true;
@@ -411,17 +416,21 @@
       function finishHold(event) {
         const held = start;
         stopHold();
-        if (!held?.ready) return;
+        if (!held) return;
+        if (!held.ready) {
+          recordDiagnostic("layout.hold.released-early", `${Math.round(performance.now() - held.at)}ms`);
+          return;
+        }
         recordDiagnostic("layout.hold.released");
         if (event.cancelable) event.preventDefault();
         openHeldTile(held.tile);
       }
       function trackHold(x, y) {
-        if (start && Math.hypot(x - start.x, y - start.y) > 8) stopHold();
+        if (start && Math.hypot(x - start.x, y - start.y) > 8) cancelHold("movement");
       }
       tiles.addEventListener("pointerdown", (event) => {
         if (event.pointerType !== "touch" && event.isPrimary && event.button === 0) {
-          startHold(event.target, event.clientX, event.clientY);
+          startHold(event.target, event.clientX, event.clientY, "pointer");
         }
       });
       tiles.addEventListener("pointermove", (event) => {
@@ -429,23 +438,20 @@
       });
       tiles.addEventListener("pointerup", (event) => { if (event.pointerType !== "touch") finishHold(event); });
       for (const name of ["pointercancel", "pointerleave"]) {
-        tiles.addEventListener(name, (event) => { if (event.pointerType !== "touch") stopHold(); });
+        tiles.addEventListener(name, (event) => { if (event.pointerType !== "touch") cancelHold(name); });
       }
       tiles.addEventListener("touchstart", (event) => {
-        if (event.touches.length !== 1) { stopHold(); return; }
+        if (event.touches.length !== 1) { cancelHold("multiple-touches"); return; }
         const touch = event.touches[0];
-        startHold(event.target, touch.clientX, touch.clientY);
+        startHold(event.target, touch.clientX, touch.clientY, "touch");
       }, { passive: true });
       tiles.addEventListener("touchmove", (event) => {
-        if (event.touches.length !== 1) { stopHold(); return; }
+        if (event.touches.length !== 1) { cancelHold("multiple-touches"); return; }
         const touch = event.touches[0];
         trackHold(touch.clientX, touch.clientY);
       }, { passive: true });
       tiles.addEventListener("touchend", finishHold, { passive: false });
-      tiles.addEventListener("touchcancel", () => {
-        if (start?.ready) recordDiagnostic("layout.hold.cancelled");
-        stopHold();
-      });
+      tiles.addEventListener("touchcancel", () => cancelHold("touchcancel"));
       for (const name of ["contextmenu", "selectstart"]) tiles.addEventListener(name, (event) => event.preventDefault());
     }
     return { layout, catalog, activeTab };
@@ -1325,10 +1331,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.15</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.16</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.15", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.16", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1814,7 +1820,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.15</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.16</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -1862,6 +1868,7 @@
       navigateTo(button.dataset.view);
     }));
     document.querySelectorAll("[data-aircraft-id]").forEach((button) => button.addEventListener("click", () => {
+      recordDiagnostic("board.open");
       state.selectedAircraftId = button.dataset.aircraftId;
       state.aircraftTab = "aggregates";
       navigateTo("aircraft");
