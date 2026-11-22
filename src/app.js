@@ -267,7 +267,7 @@
     `, { title: "Самолёты", subtitle: "Авиаресурс" });
   }
 
-  function renderAircraft() {
+  function renderAircraft(layoutEditing = false) {
     const aircraft = selectedAircraft();
     const activeTab = state.aircraftTab || "aggregates";
     const blocks = aircraft.blocks.map((block) => `
@@ -320,21 +320,40 @@
         <button class="aircraft-tab ${activeTab === "least-reliable" ? "is-active" : ""}" data-aircraft-tab="least-reliable" aria-selected="${activeTab === "least-reliable"}">Агрегаты с наименее надёжным ресурсом</button>
       </nav>`;
     app.innerHTML = shell(`
-      ${tabs}
+      ${layoutEditing ? "" : `${tabs}
       <div class="aircraft-actions">
         <button class="secondary-button" data-view="resources">${icon("resource")} Остатки ресурсов</button>
         <button class="primary-button" data-view="shift">${icon("log")} Внести лётную смену</button>
       </div>
-      <button class="text-button" data-view="aircraft-layout">Настроить раскладку</button>
-      ${aircraft.counterLayout ? counterTiles(aircraft, aircraft.counterLayout) : `<table class="aircraft-counters" aria-label="Наработка борта">
-        <thead><tr><th scope="col">Показатель</th><th scope="col">СНЭ</th><th scope="col">ППР</th></tr></thead>
-        <tbody>
-          <tr><th scope="row">${escapeHtml(usageRule("flight").label)}</th><td>${calc.formatDuration(aircraft.totalFlightMinutes)}</td><td>${aircraft.pprFlightMinutes == null ? "Не задано" : calc.formatDuration(aircraft.pprFlightMinutes)}</td></tr>
-          <tr><th scope="row">Посадки</th><td>${aircraft.actualLandings}</td><td>${aircraft.pprLandings ?? "Не задано"}</td></tr>
-        </tbody>
-      </table>`}
-      <section class="aircraft-tab-panel">${tabContent}</section>
-    `, { title: `${aircraft.type} · Борт ${aircraft.boardNumber}`, subtitle: "", singleLine: true, back: true, settingsScope: "aircraft" });
+      <button class="text-button" data-view="aircraft-layout">Настроить раскладку</button>`}
+      ${layoutEditing ? `<p class="field-help">Перетаскивай карточки. Два пальца меняют размер.</p>
+        <div id="counter-preview"></div>
+        <div class="aircraft-actions"><button class="primary-button" id="layout-save">Сохранить</button>
+        <button class="secondary-button" id="layout-default">Восстановить по умолчанию</button></div>`
+        : counterTiles(aircraft, aircraft.counterLayout ?? defaultCounterLayout)}
+      ${layoutEditing ? "" : `<section class="aircraft-tab-panel">${tabContent}</section>`}
+    `, { title: `${aircraft.type} · Борт ${aircraft.boardNumber}`, subtitle: "", singleLine: true, back: true, settings: !layoutEditing, settingsScope: "aircraft" });
+    if (!layoutEditing) {
+      const tiles = app.querySelector(".counter-tiles");
+      let holdTimer;
+      let start;
+      function stopHold() { clearTimeout(holdTimer); start = null; }
+      tiles.addEventListener("pointerdown", (event) => {
+        const tile = event.target.closest("[data-counter-index]");
+        if (!event.isPrimary || !tile) return;
+        start = { x: event.clientX, y: event.clientY };
+        holdTimer = setTimeout(() => {
+          activeCounterIndex = Number(tile.dataset.counterIndex);
+          navigator.vibrate?.(25);
+          navigateTo("aircraft-layout");
+        }, 450);
+      });
+      tiles.addEventListener("pointermove", (event) => {
+        if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) stopHold();
+      });
+      for (const name of ["pointerup", "pointercancel", "pointerleave"]) tiles.addEventListener(name, stopHold);
+      tiles.addEventListener("contextmenu", (event) => event.preventDefault());
+    }
   }
 
   const defaultCounterLayout = [
@@ -342,6 +361,7 @@
     { keys: ["landingSne", "landingPpr"], wide: true },
   ];
   let leaveAircraftLayout;
+  let activeCounterIndex = null;
 
   function chooseLayoutAction(title, choices, onChoose) {
     const dialog = document.createElement("dialog");
@@ -366,9 +386,10 @@
       landingPpr: ["Посадки ППР", aircraft.pprLandings ?? "Не задано"],
     };
     return `<section class="counter-tiles" aria-label="Наработка борта">${layout.map((tile, index) => `
-      <article class="counter-tile ${tile.wide ? "counter-tile-wide" : ""}">
+      <article class="counter-tile ${editing && activeCounterIndex === index ? "counter-tile-active" : ""}" data-counter-index="${index}" style="--tile-span:${tile.span ?? (tile.wide ? 12 : 6)};--tile-height:${tile.height ?? 0}px;--tile-font:${tile.font ?? 1}rem">
+        ${editing ? `<button type="button" class="counter-edit-button text-button" data-layout-action="edit" data-index="${index}" aria-label="Редактировать названия показателей">✎</button>` : ""}
         ${editing ? `<button type="button" class="counter-drag-handle" data-drag-index="${index}" aria-label="Перетащить карточку">⠿</button>` : ""}
-        ${tile.keys.map((key) => `<div>${values[key][0]} <strong>${values[key][1]}</strong></div>`).join("")}
+        ${tile.keys.map((key) => `<div class="counter-value">${tile.labels?.[key] ? escapeHtml(tile.labels[key]) : values[key][0]} <strong>${values[key][1]}</strong></div>`).join("")}
         ${editing ? `<div class="counter-controls">
           ${[["up","↑","Вверх"],["down","↓","Вниз"],["left","←","Влево"],["right","→","Вправо"],["size",tile.wide ? "Сузить" : "Расширить","Изменить ширину"],
             ...(index + 1 < layout.length ? [["merge","Объединить","Объединить со следующей карточкой"]] : []),
@@ -382,16 +403,15 @@
     const aircraft = selectedAircraft();
     let draft = structuredClone(aircraft.counterLayout ?? defaultCounterLayout);
     const initial = JSON.stringify(draft);
-    app.innerHTML = shell(`<h1>Раскладка карточки</h1>
-      <p class="field-help">Потяни карточку за ручку ⠿. Порядок, ширина и группировка сохраняются для этого борта.</p>
-      <div id="counter-preview"></div>
-      <div class="aircraft-actions"><button class="primary-button" id="layout-save">Сохранить</button>
-      <button class="secondary-button" id="layout-default">Восстановить по умолчанию</button></div>`,
-    { title: "Раскладка карточки", subtitle: "", back: true, settings: false });
+    renderAircraft(true);
     const preview = document.getElementById("counter-preview");
     const paint = () => { preview.innerHTML = counterTiles(aircraft, draft, true); };
     let drag;
     let hold;
+    let pinch;
+    function fingerSpan(touches) {
+      return { x: Math.abs(touches[0].clientX - touches[1].clientX), y: Math.abs(touches[0].clientY - touches[1].clientY) };
+    }
     function clearDrag() {
       preview.querySelector(".counter-dragging")?.classList.remove("counter-dragging");
       preview.querySelector(".counter-drop-target")?.classList.remove("counter-drop-target");
@@ -439,6 +459,17 @@
       if (hold && drag?.touch === hold.id) clearDrag();
       cancelHold();
       const card = event.target.closest(".counter-tile");
+      if (event.touches.length === 2 && card && [...event.touches].every((touch) => card.contains(touch.target))) {
+        event.preventDefault();
+        clearDrag();
+        const index = Number(card.dataset.counterIndex);
+        const tile = draft[index];
+        const values = [...card.querySelectorAll(".counter-value")];
+        pinch = { card, index, origin: fingerSpan(event.touches), width: tile.span ?? (tile.wide ? 12 : 6),
+          height: tile.height ?? Math.max(...values.map((value) => value.offsetHeight)), font: tile.font ?? 1 };
+        card.classList.add("counter-tile-active");
+        return;
+      }
       if (drag || !card || event.target.closest("button") || event.touches.length !== 1) return;
       const touch = event.touches[0];
       hold = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
@@ -448,8 +479,27 @@
         drag = { touch: hold.id, source: cards.indexOf(card), target: null };
         card.classList.add("counter-dragging");
       }, 450);
-    }, { passive: true });
+    }, { passive: false });
     preview.addEventListener("touchmove", (event) => {
+      if (pinch && event.touches.length === 2) {
+        if (event.cancelable) event.preventDefault();
+        const current = fingerSpan(event.touches);
+        const { origin, card, index } = pinch;
+        const x = (current.x + 12) / (origin.x + 12);
+        const y = (current.y + 12) / (origin.y + 12);
+        const diagonal = Math.min(origin.x, origin.y) >= 0.4 * Math.max(origin.x, origin.y);
+        const scale = Math.hypot(current.x, current.y) / Math.max(1, Math.hypot(origin.x, origin.y));
+        const sx = diagonal ? scale : origin.x >= origin.y ? x : 1;
+        const sy = diagonal ? scale : origin.y > origin.x ? y : 1;
+        const tile = draft[index];
+        tile.span = Math.min(12, Math.max(4, Math.round(pinch.width * sx)));
+        tile.height = Math.min(260, Math.max(32, Math.round(pinch.height * sy)));
+        tile.font = Math.min(1.7, Math.max(0.75, Math.round(pinch.font * Math.sqrt(sx * sy) * 100) / 100));
+        card.style.setProperty("--tile-span", tile.span);
+        card.style.setProperty("--tile-height", `${tile.height}px`);
+        card.style.setProperty("--tile-font", `${tile.font}rem`);
+        return;
+      }
       if (!hold) return;
       const touch = [...event.touches].find((item) => item.identifier === hold.id);
       if (!touch) return;
@@ -461,6 +511,12 @@
       }
     }, { passive: false });
     preview.addEventListener("touchend", (event) => {
+      if (pinch) {
+        activeCounterIndex = pinch.index;
+        pinch = null;
+        paint();
+        return;
+      }
       if (!hold || ![...event.changedTouches].some((item) => item.identifier === hold.id)) return;
       if (drag?.touch === hold.id) {
         if (event.cancelable) event.preventDefault();
@@ -469,6 +525,7 @@
       cancelHold();
     });
     preview.addEventListener("touchcancel", () => {
+      if (pinch) { pinch = null; paint(); }
       if (hold && drag?.touch === hold.id) clearDrag();
       cancelHold();
     });
@@ -498,10 +555,36 @@
       const index = Number(button.dataset.index);
       const action = button.dataset.layoutAction;
       const tile = draft[index];
-      if (action === "size") tile.wide = !tile.wide;
-      else if (action === "split") draft.splice(index, 1, ...tile.keys.map((key) => ({ keys: [key], wide: false })));
+      activeCounterIndex = index;
+      if (action === "edit") {
+        const dialog = document.createElement("dialog");
+        dialog.className = "confirm-dialog";
+        const captions = [...button.closest(".counter-tile").querySelectorAll(".counter-value")];
+        dialog.innerHTML = `<form method="dialog" class="shift-form"><h2>Названия показателей</h2>
+          ${tile.keys.map((key, offset) => `<label>${escapeHtml(captions[offset].firstChild.textContent.trim())}
+            <input name="${key}" type="text" value="${escapeHtml(tile.labels?.[key] ?? "")}" placeholder="Стандартное название"></label>`).join("")}
+          <button class="primary-button" value="save">Применить</button><button class="secondary-button" value="cancel">Отмена</button></form>`;
+        dialog.addEventListener("close", () => {
+          if (dialog.returnValue === "save") {
+            const data = new FormData(dialog.querySelector("form"));
+            tile.labels = Object.fromEntries([...data].map(([key, value]) => [key, value.trim()]).filter(([, value]) => value));
+            paint();
+          }
+          dialog.remove();
+        }, { once: true });
+        app.append(dialog);
+        dialog.showModal();
+        return;
+      }
+      if (action === "size") {
+        tile.wide = (tile.span ?? (tile.wide ? 12 : 6)) < 12;
+        delete tile.span;
+      }
+      else if (action === "split") draft.splice(index, 1, ...tile.keys.map((key) => ({ keys: [key], wide: false,
+        ...(tile.labels?.[key] ? { labels: { [key]: tile.labels[key] } } : {}) })));
       else if (action === "merge") {
         tile.keys.push(...draft[index + 1].keys);
+        tile.labels = { ...tile.labels, ...draft[index + 1].labels };
         tile.wide = true;
         draft.splice(index + 1, 1);
       } else {
@@ -594,12 +677,14 @@
 
   function renderShift() {
     const aircraft = selectedAircraft();
-    const ground = usageTypeOverride(aircraft)?.ground ?? state.sharedGround ?? aircraft.settings;
+    const typeRule = usageTypeOverride(aircraft);
+    const ground = typeRule?.ground ?? state.sharedGround ?? aircraft.settings;
+    const ruleSource = typeRule ? "Правила типа" : state.sharedGround ? "Общие правила" : "Настройки борта";
     const today = new Date();
     const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     app.innerHTML = shell(`
       <section class="page-heading compact">
-        <div><p class="eyebrow">Новая запись</p><h1>Лётная смена</h1><p>${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p></div>
+        <div><p class="eyebrow">Новая запись</p><h1>Лётная смена</h1><p>${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><p class="field-help">${ruleSource}</p></div>
       </section>
       <form id="shift-form" class="shift-form">
         <fieldset><legend>Общие данные</legend>
@@ -1093,10 +1178,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.8</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.9</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.8", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.9", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1272,9 +1357,10 @@
       <form id="type-usage-form" class="shift-form settings-form">
         <label>Тип самолёта<select name="type" required>
           <option value="">Выбрать тип</option>
-          ${[...aircraftTypes].map(([key, aircraft]) => `<option value="${escapeHtml(key)}">${escapeHtml(aircraft.type)}</option>`).join("")}
+          ${[...aircraftTypes].map(([key, aircraft]) => `<option value="${escapeHtml(key)}">${escapeHtml(aircraft.type)}${usageTypeOverride(aircraft) ? " · свои правила" : ""}</option>`).join("")}
         </select></label>
         <p class="field-help">Настройки типа применяются ко всем его бортам. Общие правила действуют для остальных типов.</p>
+        <p id="type-usage-source" class="field-help" role="status"></p>
         <div id="type-usage-fields"></div>
       </form>`, { title: "Виды наработки", subtitle: "", back: true, settings: false });
     const form = document.getElementById("type-usage-form");
@@ -1285,9 +1371,14 @@
     let afterSave;
     function showFields() {
       activeType = form.elements.type.value;
+      state.lastUsageType = activeType;
       const aircraft = aircraftTypes.get(form.elements.type.value);
+      const source = form.querySelector("#type-usage-source");
+      source.textContent = "";
       if (!aircraft) { fields.innerHTML = ""; savedSnapshot = snapshot(); return; }
       const rule = usageTypeOverride(aircraft);
+      source.textContent = rule ? "Для этого типа сохранены отдельные правила." :
+        state.sharedGround ? "Этот тип использует общие правила." : "Для этого типа действуют исходные настройки борта.";
       const ground = rule?.ground ?? state.sharedGround ?? aircraft.settings;
       fields.innerHTML = `<fieldset><legend>Коэффициенты и земная наработка</legend>
         ${Object.keys(USAGE_TYPES).map((key) => `<label>${escapeHtml(usageRule(key).label)}<input name="${key}" type="number" min="0" step="any" value="${rule?.factors[key] ?? (state.usageRules ? usageRule(key).factor : aircraft.settings.landingCoefficients[key] ?? 1)}" required></label>`).join("")}
@@ -1308,6 +1399,8 @@
         return;
       }
       showFields();
+      const aircraft = aircraftTypes.get(activeType);
+      form.elements.type.selectedOptions[0].textContent = aircraft.type + (usageTypeOverride(aircraft) ? " · свои правила" : "");
       showToast("Настройки сохранены");
       afterSave?.();
     }
@@ -1348,6 +1441,8 @@
         if (action === "reset") saveRules(state.usageTypeOverrides.filter((entry) => entry.type !== type));
       });
     });
+    form.elements.type.value = aircraftTypes.has(state.lastUsageType) ? state.lastUsageType : "";
+    showFields();
   }
 
   function renderUsageSettings() {
@@ -1375,7 +1470,8 @@
           <h2>Скрытые виды</h2><p id="hidden-usage-empty">Скрытых видов нет.</p>
           ${OPTIONAL_USAGE_TYPES.map((key) => `<div data-usage-restore="${key}" ${usageRule(key).enabled !== false ? "hidden" : ""}><button type="button" class="secondary-button" data-usage-toggle="${key}" data-enable="true">Вернуть «${escapeHtml(usageRule(key).label)}»</button></div>`).join("")}
         </section>
-        <p class="field-help">Настройки для всех бортов. Коэффициенты меняют зачёт, фактическое количество сохраняется.</p>
+        <p class="field-help">Общие коэффициенты служат настройками по умолчанию. Если для типа сохранены свои правила, применяются они.</p>
+        <p class="field-help" id="usage-save-status" role="status"></p>
         ${groups.map(([label, keys]) => `<section class="usage-group"><h2>${label}</h2>${usageRows(keys)}</section>`).join("")}
         <fieldset><legend>Пересчёт земли для двигателей</legend>
           <label>Процент от округлённой земли<input name="percent" type="number" min="0" max="100" step="any" value="${ground.groundPercent}" required></label>
@@ -1388,7 +1484,7 @@
       </form>`, { title: "Виды наработки", subtitle: "", back: true, settings: false });
     const form = document.getElementById("usage-settings-form");
     const formSnapshot = () => JSON.stringify([...new FormData(form)]);
-    const initialSnapshot = formSnapshot();
+    let initialSnapshot = formSnapshot();
     let afterUsageSave;
     function confirmDraft(next) {
       if (formSnapshot() === initialSnapshot) return false;
@@ -1508,7 +1604,9 @@
         showToast("Не удалось сохранить настройки на устройстве. Изменения остались в форме.");
         return;
       }
-      (afterUsageSave ?? finishBackNavigation)();
+      initialSnapshot = formSnapshot();
+      if (afterUsageSave) afterUsageSave();
+      else form.querySelector("#usage-save-status").textContent = "Общие настройки сохранены.";
       showToast("Общие виды наработки сохранены");
     });
   }
@@ -1530,7 +1628,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.8</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.9</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });

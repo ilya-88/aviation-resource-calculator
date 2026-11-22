@@ -41,9 +41,16 @@ button { color: inherit; }
 .compact-bort-title { margin: 0; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .aircraft-counters { width: 100%; margin-bottom: 12px; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .aircraft-counters :is(th, td) { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--line); }
-.counter-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
-.counter-tile { min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow-wrap: anywhere; }
-.counter-tile-wide { grid-column: 1 / -1; }
+.counter-tiles { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: start; gap: 8px; margin: 10px 0; }
+.counter-tile { grid-column: span var(--tile-span, 6); min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow-wrap: anywhere; }
+.counter-value { font-size: var(--tile-font, 1rem); min-height: var(--tile-height, 0px); }
+#counter-preview .counter-value { touch-action: none; user-select: none; }
+.counter-tile-active { outline: 2px dashed #427fc7; outline-offset: -3px; }
+.counter-edit-button { float: left; min-width: 44px; min-height: 44px; }
+@media (prefers-reduced-motion: no-preference) {
+  .counter-tile-active { animation: counter-edit-pulse 1.2s ease-in-out infinite alternate; }
+  @keyframes counter-edit-pulse { to { outline-color: #244977; outline-offset: 0; } }
+}
 .counter-controls { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .counter-controls button { min-width: 38px; min-height: 36px; padding: 4px 8px; font-size: 13px; }
 .counter-drag-handle { display: block; margin: 0 0 4px auto; width: 44px; height: 44px; border: 0; border-radius: 8px; background: var(--blue-soft); color: var(--navy); font-size: 24px; cursor: grab; touch-action: none; user-select: none; }

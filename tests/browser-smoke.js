@@ -394,7 +394,8 @@ async function main() {
         dialog.querySelector('[value="reset"]').click();
       });
       document.querySelector('#layout-save').click();
-      return { count, persisted, restored: Boolean(document.querySelector('.aircraft-counters')) };
+      return { count, persisted, restored: document.querySelectorAll('.counter-tile').length === 2 &&
+        JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].counterLayout == null };
     })()`);
     assert.deepEqual(layoutResult, { count: 2, persisted: true, restored: true });
     results.aircraftLayout = "ok";
