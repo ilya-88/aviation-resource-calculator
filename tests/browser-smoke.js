@@ -713,6 +713,137 @@ async function main() {
       kind: 'Руление', rightFlight: 30, rightTotal: 36, historyBeforeRepair: 360, repairs: 2, hookPpr: 120 });
     results.resourceRouting = "ok";
 
+    const cardIntegrity = await evaluate(`(() => {
+      const get = selector => {
+        const element = document.querySelector(selector);
+        if (!element) throw new Error('Элемент карточки отсутствует: ' + selector);
+        return element;
+      };
+      const click = selector => get(selector).click();
+      const submit = selector => get(selector).requestSubmit();
+      const back = () => window.handleAndroidBack();
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft.find(board => board.boardNumber === '42');
+      const hook = read().blocks.find(block => block.name === 'ГАК');
+      back();
+      click('[data-aircraft-tab="aggregates"]');
+      click('[data-block-id="' + hook.id + '"]');
+      let form = get('#block-event-form');
+      form.elements.type.value = 'install';
+      submit('#block-event-form');
+      form = get('#block-form');
+      form.elements.installed.value = 'false';
+      submit('#block-form');
+      const manualDismantle = read().blocks.find(block => block.id === hook.id).events.at(-1).type === 'dismantle';
+      back();
+      click('[data-view="shift"]');
+      get('#shift-form [name="arresterHooks"]').value = '2';
+      get('#shift-form [name="arresterHooks"]').dispatchEvent(new Event('input', { bubbles: true }));
+      const noAccrualAfterDismantle = !get('#shift-summary').textContent.includes('Ресурс по зацепам');
+      submit('#shift-form');
+      const noSavedAccrual = !read().shifts.at(-1).accruals.some(entry => entry.blockId === hook.id);
+      click('[data-aircraft-tab="aggregates"]');
+      click('[data-action="add-block"]');
+      form = get('#creation-form');
+      form.elements.name.value = 'ГАК';
+      form.elements.serialNumber.value = 'G-457';
+      submit('#creation-form');
+      const other = read().blocks.find(block => block.serialNumber === 'G-457');
+      click('[data-block-id="' + other.id + '"]');
+      click('[data-action="add-resource"]');
+      form = get('#resource-form');
+      form.elements.name.value = 'Проверочный ресурс';
+      form.elements.limit.value = '10';
+      form.elements.remaining.value = '9.995';
+      const selectsRightOwner = form.elements.ownerId.value === other.id;
+      submit('#resource-form');
+      const fractionalSave = read().resources.find(resource => resource.objectId === other.id)?.remaining === 9.995;
+      back();
+      back();
+      click('[data-action="settings"]');
+      const originalPrompt = window.prompt;
+      try {
+        window.prompt = () => 'ГАК второй';
+        click('[data-rename-block-id="' + other.id + '"]');
+      } finally { window.prompt = originalPrompt; }
+      const board = read();
+      const renameIsolated = board.resources.find(resource => resource.objectId === hook.id)?.object === 'ГАК' &&
+        board.resources.find(resource => resource.objectId === other.id)?.object === 'ГАК второй';
+      const search = get('#notification-work-search');
+      search.value = 'Проверочный ресурс';
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      const notificationSearch = [...document.querySelectorAll('[data-notification-work]')]
+        .filter(row => getComputedStyle(row).display !== 'none').length === 1;
+      back();
+      click('[data-view="resources"]');
+      const resourceId = board.resources.find(resource => resource.objectId === other.id).id;
+      click('[data-resource-id="' + resourceId + '"]');
+      form = get('#resource-form');
+      form.elements.unit.value = 'дн.';
+      form.elements.unit.dispatchEvent(new Event('change'));
+      const calendarHidesFormula = getComputedStyle(get('#resource-consumption')).display === 'none' && get('#resource-consumption').disabled;
+      const originalConfirm = window.confirm;
+      try {
+        window.confirm = () => false;
+        click('[data-action="delete-resource"]');
+        if (!read().resources.some(resource => resource.id === resourceId)) throw new Error('Отмена удаления не сработала');
+        window.confirm = () => true;
+        click('[data-action="delete-resource"]');
+      } finally { window.confirm = originalConfirm; }
+      const resourceDeletion = !read().resources.some(resource => resource.id === resourceId) &&
+        read().blocks.some(block => block.id === other.id) && Boolean(document.querySelector('#resource-list'));
+      return { manualDismantle, noAccrualAfterDismantle, noSavedAccrual, selectsRightOwner, fractionalSave,
+        renameIsolated, notificationSearch, calendarHidesFormula, resourceDeletion };
+    })()`);
+    assert.deepEqual(cardIntegrity, {
+      manualDismantle: true, noAccrualAfterDismantle: true, noSavedAccrual: true, selectsRightOwner: true,
+      fractionalSave: true, renameIsolated: true, notificationSearch: true, calendarHidesFormula: true, resourceDeletion: true,
+    });
+    results.cardIntegrity = "ok";
+
+    const reportIntegrity = await evaluate(`(() => {
+      const click = selector => {
+        const element = document.querySelector(selector);
+        if (!element) throw new Error('Не найдено: ' + selector);
+        element.click();
+      };
+      const submit = selector => document.querySelector(selector).requestSubmit();
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft.find(board => board.boardNumber === '42');
+      const back = () => window.handleAndroidBack();
+      back();
+      click('[data-aircraft-tab="aggregates"]');
+      click('[data-block-id="engine-left"]');
+      document.querySelector('#block-form').elements.installed.value = 'false';
+      submit('#block-form');
+      back();
+      click('[data-view="shift"]');
+      const shift = document.querySelector('#shift-form');
+      shift.elements.flightHours.value = '1';
+      shift.elements.leftStarts.value = '3';
+      shift.elements.leftGround.value = '13';
+      shift.elements.leftGround.dispatchEvent(new Event('input', { bubbles: true }));
+      const preview = document.querySelector('#left-calculation').textContent.includes('не установлен') &&
+        document.querySelector('#shift-summary').textContent.includes('Левый: —');
+      submit('#shift-form');
+      const saved = read().shifts.at(-1);
+      const totals = [saved.leftEngineMinutes, saved.leftStarts, saved.rightEngineMinutes];
+      click('[data-aircraft-tab="works"]');
+      click('[data-view="reports"]');
+      click('[data-report-shift="' + saved.id + '"]');
+      const reportEntry = !document.querySelector('main').textContent.includes('Левый двигатель') &&
+        document.querySelector('main').textContent.includes('Правый двигатель');
+      click('#open-shift-map');
+      const zoom = document.querySelector('#map-scale');
+      zoom.value = '65';
+      zoom.dispatchEvent(new Event('input'));
+      const mapZoom = Number(document.querySelector('.usage-map-canvas').style.zoom) === 0.65;
+      back();
+      back();
+      const returnToReport = Boolean(document.querySelector('#report-form'));
+      return { preview, totals, reportEntry, mapZoom, returnToReport };
+    })()`);
+    assert.deepEqual(reportIntegrity, { preview: true, totals: [0, 0, 60], reportEntry: true, mapZoom: true, returnToReport: true });
+    results.reportIntegrity = "ok";
+
     process.stdout.write(`${JSON.stringify(results)}\n`);
   } finally {
     await command("Browser.close").catch(() => {});

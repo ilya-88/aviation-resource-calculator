@@ -71,8 +71,7 @@ test("формуляр агрегата поддерживает жизненн�
   assert.match(app, /block\.events\.push\(item\)/);
   assert.match(app, /block\.pprMinutes = 0/);
   assert.doesNotMatch(app, /name="has(?:Sne|Ppr)"/);
-  assert.match(app, /block\.installed = false/);
-  assert.match(app, /block\.installed = true/);
+  assert.match(app, /block\.installed = blockInstalledOn\(block, todayIso\(\)\)/);
 });
 
 test("карточка ограниченного ресурса поддерживает основные единицы и номера", () => {

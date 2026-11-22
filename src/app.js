@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.28";
+  const APP_VERSION = "0.2.29";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -113,6 +113,11 @@
     if (latest) return latest.type === "install";
     if (installations.length) return installations[0].type === "dismantle";
     return block.installed !== false;
+  }
+
+  function recordInstallation(block, event) {
+    block.events.push(event);
+    block.installed = blockInstalledOn(block, todayIso());
   }
 
   function countsTowardPpr(block, date) {
@@ -533,6 +538,7 @@
     for (const [index, item] of [...items].entries()) {
       const resource = item.querySelector("[data-resource-id]");
       const key = "widget:" + (item.dataset.view || item.dataset.blockId || resource?.dataset.resourceId ||
+        (item.dataset.shiftId ? `shift:${item.dataset.shiftId}` : "") ||
         (item.dataset.action ? item.dataset.action + ":" + activeTab : activeTab + ":" + index));
       catalog.set(key, item.outerHTML);
       item.remove();
@@ -788,9 +794,11 @@
       preview.addEventListener(kind, (event) => {
         if (toolbarDrag?.pointer !== event.pointerId) return;
         const toolbar = preview.querySelector(".counter-gesture-toolbar");
-        const card = toolbar.closest(".counter-tile").getBoundingClientRect();
-        const rect = toolbar.getBoundingClientRect();
-        toolbarOffset = { x: rect.right - card.right, y: rect.bottom - card.top };
+        if (toolbar) {
+          const card = toolbar.closest(".counter-tile").getBoundingClientRect();
+          const rect = toolbar.getBoundingClientRect();
+          toolbarOffset = { x: rect.right - card.right, y: rect.bottom - card.top };
+        }
         toolbarDrag = null;
       });
     }
@@ -1184,7 +1192,7 @@
   }
 
   function additionalShiftEngines(aircraft) {
-    return aircraft.blocks.filter((block) => block.kind === "engine" && block.installed &&
+    return aircraft.blocks.filter((block) => block.kind === "engine" &&
       block.id !== "engine-left" && block.id !== "engine-right")
       .map((block, index) => [`extraEngine${index}`, block]);
   }
@@ -1371,15 +1379,18 @@
         ...resource, remaining: correction.beforeUsage.resources.find((item) => item.id === resource.id)?.remaining ?? resource.remaining,
       })) } : aircraft;
       const accruals = resourceAccruals(sourceBoard, date, sources, engineUsage);
-      return { flight, left, right, engineUsage, accruals };
+      return { flight, left: engineUsage.get(leftBlock), right: engineUsage.get(rightBlock), engineUsage, accruals };
     }
     const update = () => {
       const data = new FormData(form);
       const { left, right, engineUsage, accruals } = calculate(data);
       const equivalent = calc.calculateEquivalentLandings({ runway: data.get("runway"), carrier: data.get("carrier"), touch: data.get("touch"), circuit: data.get("circuit") }, coefficients);
-      document.getElementById("left-calculation").textContent = `${left.ground.actualMinutes} → ${left.ground.roundedMinutes} мин → ${left.ground.percent}% = ${formatNumber(left.ground.contributionMinutes)} мин`;
-      document.getElementById("right-calculation").textContent = `${right.ground.actualMinutes} → ${right.ground.roundedMinutes} мин → ${right.ground.percent}% = ${formatNumber(right.ground.contributionMinutes)} мин`;
-      document.getElementById("shift-summary").innerHTML = `<span>Будет начислено</span><strong>Левый: ${calc.formatDuration(left.totalMinutes)} · Правый: ${calc.formatDuration(right.totalMinutes)}</strong><small>Зачёт посадок: ${equivalent.toLocaleString("ru-RU", { maximumFractionDigits: 6 })}</small>`;
+      const describeGround = (usage) => usage
+        ? `${usage.ground.actualMinutes} → ${usage.ground.roundedMinutes} мин → ${usage.ground.percent}% = ${formatNumber(usage.ground.contributionMinutes)} мин`
+        : "Двигатель не установлен на дату работы";
+      document.getElementById("left-calculation").textContent = describeGround(left);
+      document.getElementById("right-calculation").textContent = describeGround(right);
+      document.getElementById("shift-summary").innerHTML = `<span>Будет начислено</span><strong>Левый: ${left ? calc.formatDuration(left.minutes) : "—"} · Правый: ${right ? calc.formatDuration(right.minutes) : "—"}</strong><small>Зачёт посадок: ${equivalent.toLocaleString("ru-RU", { maximumFractionDigits: 6 })}</small>`;
       const otherEngines = [...engineUsage].filter(([block]) => block !== leftBlock && block !== rightBlock);
       if (otherEngines.length) document.getElementById("shift-summary").insertAdjacentHTML("beforeend",
         `<details><summary>Другие двигатели (${otherEngines.length})</summary><ul>${otherEngines.map(([block, usage]) =>
@@ -1390,8 +1401,10 @@
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(form);
-      const modeError = validateNestedModes(data, "left", "левого") || validateNestedModes(data, "right", "правого") ||
-        extraEngines.map(([prefix, block]) => validateNestedModes(data, prefix, block.name)).find(Boolean);
+      const date = String(data.get("date"));
+      const modeError = [["left", leftBlock], ["right", rightBlock], ...extraEngines]
+        .filter(([, block]) => block && blockInstalledOn(block, date))
+        .map(([prefix, block]) => validateNestedModes(data, prefix, block.name)).find(Boolean);
       if (modeError) {
         showToast(modeError);
         return;
@@ -1419,7 +1432,6 @@
       aircraft.equivalentLandings = Math.round((aircraft.equivalentLandings + equivalent) * 1e6) / 1e6;
       aircraft.arresterHooks += arresterHooks;
       const airframe = aircraft.blocks.find((block) => block.kind === "airframe");
-      const date = String(data.get("date"));
       if (countsTowardPpr(airframe, date) || (!airframe && (aircraft.pprFlightMinutes != null || aircraft.pprLandings != null))) {
         aircraft.pprFlightMinutes = (aircraft.pprFlightMinutes || 0) + flight;
         aircraft.pprLandings = (aircraft.pprLandings || 0) + actualLandings;
@@ -1462,8 +1474,8 @@
         engineAccruals: [...engineUsage].map(([block, usage]) => ({ blockId: block.id, name: block.name, ...usage })),
         date: String(data.get("date")),
         flightMinutes: flight,
-        leftEngineMinutes: left.totalMinutes,
-        rightEngineMinutes: right.totalMinutes,
+        leftEngineMinutes: left?.minutes ?? 0,
+        rightEngineMinutes: right?.minutes ?? 0,
         landingsByType: landings,
         landingCoefficients: { ...coefficients },
         usageRules: Object.fromEntries(Object.keys(USAGE_TYPES).map((key) => [key, { ...usageRule(key), factor: factor(key) }])),
@@ -1473,16 +1485,16 @@
         rightMaximumSeconds: Number(data.get("rightMaximum")),
         leftAfterburnerSeconds: Number(data.get("leftAfterburner")),
         rightAfterburnerSeconds: Number(data.get("rightAfterburner")),
-        otherEngines: extraEngines.map(([, block]) => ({ blockId: block.id, ...engineUsage.get(block) })),
+        otherEngines: extraEngines.filter(([, block]) => engineUsage.has(block)).map(([, block]) => ({ blockId: block.id, ...engineUsage.get(block) })),
         actualLandings,
         equivalentLandings: equivalent,
         arresterHooks,
-        leftGroundActualMinutes: left.ground.actualMinutes,
-        leftGroundRoundedMinutes: left.ground.roundedMinutes,
-        rightGroundActualMinutes: right.ground.actualMinutes,
-        rightGroundRoundedMinutes: right.ground.roundedMinutes,
-        leftStarts: Number(data.get("leftStarts")),
-        rightStarts: Number(data.get("rightStarts")),
+        leftGroundActualMinutes: left?.ground.actualMinutes ?? 0,
+        leftGroundRoundedMinutes: left?.ground.roundedMinutes ?? 0,
+        rightGroundActualMinutes: right?.ground.actualMinutes ?? 0,
+        rightGroundRoundedMinutes: right?.ground.roundedMinutes ?? 0,
+        leftStarts: left?.starts ?? 0,
+        rightStarts: right?.starts ?? 0,
         leftModesSeconds: readModes(data, "left"),
         rightModesSeconds: readModes(data, "right"),
       };
@@ -1731,13 +1743,15 @@
     form.elements.fit.addEventListener("change", showPreview);
     form.elements.picture.addEventListener("change", async (event) => {
       const file = event.target.files[0];
+      const current = ++selection;
+      const save = form.querySelector('[type="submit"]');
+      save.disabled = false;
       if (!file) return;
       if (!file.type.startsWith("image/") || file.size > 15 * 1024 * 1024) {
+        event.target.value = "";
         status.textContent = "Выбери изображение размером до 15 МБ.";
         return;
       }
-      const current = ++selection;
-      const save = form.querySelector('[type="submit"]');
       save.disabled = true;
       const url = URL.createObjectURL(file);
       try {
@@ -1820,7 +1834,7 @@
       resourceOwner(aircraft, resource) === block || (block.kind === "airframe" && resource.object === "Самолёт")
     );
     const assemblies = aircraft.blocks.filter((item) => item.kind !== "airframe");
-    const installedAssemblies = assemblies.filter((item) => item.installed !== false);
+    const installedAssemblies = assemblies.filter((item) => blockInstalledOn(item, todayIso()));
     const assemblyHistory = assemblies.flatMap((item) =>
       item.events.filter((entry) => entry.type === "install" || entry.type === "dismantle")
         .map((entry) => ({ ...entry, name: item.name })))
@@ -1839,7 +1853,8 @@
       <section class="section-stack settings-section-heading">
         <h2>Установленные агрегаты</h2>
         ${installedAssemblies.map((item) => {
-          const entry = item.events.filter((event) => event.type === "install").at(-1);
+          const entry = item.events.filter((event) => event.type === "install" && event.date <= todayIso())
+            .sort((a, b) => a.date.localeCompare(b.date)).at(-1);
           return `<button class="setting-row" data-block-id="${escapeHtml(item.id)}"><span>
             <strong>${escapeHtml(item.name)}</strong>
             <small>${entry ? `Установлен ${formatOptionalDate(entry.date)}${entry.note ? ` · ${escapeHtml(entry.note)}` : ""}` : "Дата установки не указана"}</small>
@@ -1884,7 +1899,7 @@
           ${block.kind === "engine" ? "" : `<label><span>Тип/модель</span><input name="model" type="text" value="${escapeHtml(block.model || "")}"></label>`}
           <label><span>Заводской/обычный номер</span><input name="serialNumber" type="text" value="${escapeHtml(block.serialNumber || "")}"></label>
           <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(block.drawingNumber || "")}"></label>
-          <label><span>Состояние установки</span><select name="installed"><option value="true" ${block.installed ? "selected" : ""}>Установлен</option><option value="false" ${!block.installed ? "selected" : ""}>Демонтирован</option></select></label>`}
+          <label><span>Состояние установки</span><select name="installed"><option value="true" ${blockInstalledOn(block, todayIso()) ? "selected" : ""}>Установлен</option><option value="false" ${!blockInstalledOn(block, todayIso()) ? "selected" : ""}>Демонтирован</option></select></label>`}
           <label>Количество ремонтов<output>${block.repairs}</output></label>
         </fieldset>
         ${airframeFields}
@@ -1916,14 +1931,19 @@
     document.getElementById("block-form").addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
-      const oldName = block.name;
-      block.name = String(data.get("name")).trim();
+      const name = String(data.get("name")).trim();
+      if (!name) { showToast("Введи название формуляра"); return; }
+      const before = structuredClone(aircraft);
+      updateBlockName(aircraft, block, name);
       block.caption = String(data.get("caption") || "").trim();
       if (block.kind !== "airframe") {
         if (data.has("model")) block.model = String(data.get("model")).trim();
         block.serialNumber = String(data.get("serialNumber") || "").trim();
         block.drawingNumber = String(data.get("drawingNumber") || "").trim();
-        block.installed = data.get("installed") === "true";
+        const installed = data.get("installed") === "true";
+        if (blockInstalledOn(block, todayIso()) !== installed) {
+          recordInstallation(block, { id: id(), type: installed ? "install" : "dismantle", date: todayIso(), note: "" });
+        }
       }
       if (block.kind === "airframe" && repaired) {
         aircraft.pprFlightMinutes = data.get("pprFlightMinutes") === "" ? null : Number(data.get("pprFlightMinutes"));
@@ -1941,10 +1961,12 @@
             groundRoundingDirection: data.get("groundDirection") };
         }
       }
-      aircraft.resources.forEach((resource) => {
-        if (resource.objectId === block.id || (!resource.objectId && resource.object === oldName)) resource.object = block.name;
-      });
-      saveState();
+      if (!saveState()) {
+        Object.assign(aircraft, before);
+        render();
+        showToast("Не удалось сохранить формуляр");
+        return;
+      }
       showToast("Формуляр сохранён");
       renderBlock();
       bindCommonActions();
@@ -1953,7 +1975,8 @@
       event.preventDefault();
       const data = new FormData(event.currentTarget);
       const type = String(data.get("type"));
-      const item = { id: `event-${Date.now()}`, type, date: String(data.get("date")), note: String(data.get("note") || "").trim() };
+      const item = { id: id(), type, date: String(data.get("date")), note: String(data.get("note") || "").trim() };
+      const before = structuredClone(aircraft);
       if (type === "repair") {
         item.repairNumber = block.repairs + 1;
         item.beforeRepair = {
@@ -1985,13 +2008,15 @@
             block.pprModesSeconds = { or: 0, combat: 0, combined: 0 };
           }
         }
-      } else if (type === "dismantle") {
-        block.installed = false;
-      } else if (type === "install") {
-        block.installed = true;
       }
-      block.events.push(item);
-      saveState();
+      if (type === "dismantle" || type === "install") recordInstallation(block, item);
+      else block.events.push(item);
+      if (!saveState()) {
+        Object.assign(aircraft, before);
+        render();
+        showToast("Не удалось сохранить событие");
+        return;
+      }
       render();
       showToast("Событие записано в историю");
     });
@@ -2159,7 +2184,7 @@
       if (!owner && resource.object !== "Самолёт") return [];
       return Object.entries(resourceInputs(resource, owner)).filter(([, factor]) => factor > 0).map(([key, factor]) => ({
         key, factor, target: owner?.kind === "airframe" || !owner ? boardNode : owner.id,
-        name: resource.name, enabled: sourceEnabled(aircraft, key), installed: owner?.installed !== false, installedDate: resource.installed,
+        name: resource.name, enabled: sourceEnabled(aircraft, key), installed: !owner || blockInstalledOn(owner, todayIso()), installedDate: resource.installed,
       }));
     });
     const landingKeys = OPTIONAL_USAGE_TYPES.filter((key) => key !== "arresterHooks");
@@ -2171,7 +2196,7 @@
       ...landingKeys.map((key) => makeCounterEdge(boardNode, key, "Посадки СНЭ / ППР", true, pprCondition)),
       makeCounterEdge(boardNode, "arresterHooks", "Зацепы в формуляре", true),
       ...blocks.flatMap((block) => {
-        const installed = block.installed !== false;
+        const installed = blockInstalledOn(block, todayIso());
         const minutes = block.kind === "engine" ? "engineMinutes" : "flight";
         const condition = block.kind === "engine"
           ? `Налёт двигателя берётся из записи работы, по умолчанию из налёта борта. Доля и округление земли задаются в формуляре двигателя. ${pprCondition}.`
@@ -2331,7 +2356,7 @@
         </fieldset>
       </form>
       <section id="report-results" class="history-list" aria-live="polite"></section>
-    `, { title: "Отчёты", subtitle: `${aircraft.type} · борт ${aircraft.boardNumber}`, back: true });
+    `, { title: "Отчёты", subtitle: `${aircraft.type} · борт ${aircraft.boardNumber}`, back: true, settingsScope: "aircraft" });
     const form = document.getElementById("report-form");
     const output = document.getElementById("report-results");
     function showReport() {
@@ -2374,10 +2399,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.28</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.29</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.28", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.29", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -2423,9 +2448,9 @@
           <label><span>Вид ограничения</span><select name="resourceType"><option value="assigned" ${draft.resourceType === "assigned" ? "selected" : ""}>Назначенный ресурс</option><option value="overhaul" ${draft.resourceType === "overhaul" ? "selected" : ""}>Межремонтный ресурс</option><option value="extension" ${draft.resourceType === "extension" ? "selected" : ""}>Ресурс до продления</option></select></label>
           <div class="field-pair">
             <label><span>Единица</span><select name="unit"><option value="ч" ${draft.unit === "ч" ? "selected" : ""}>Часы</option><option value="пос." ${draft.unit === "пос." ? "selected" : ""}>Посадки</option><option value="зап." ${draft.unit === "зап." ? "selected" : ""}>Запуски</option><option value="сраб." ${draft.unit === "сраб." ? "selected" : ""}>Срабатывания</option><option value="дн." ${draft.unit === "дн." ? "selected" : ""}>Календарные дни</option></select></label>
-            <label><span>Полный ресурс</span><input name="limit" type="number" min="0" step="0.01" value="${draft.limit}" required></label>
+            <label><span>Полный ресурс</span><input name="limit" type="number" min="0" step="any" value="${draft.limit}" required></label>
           </div>
-          <label><span>Остаток</span><input name="remaining" type="number" min="0" step="0.01" value="${draft.remaining}" required></label>
+          <label><span>Остаток</span><input name="remaining" type="number" min="0" step="any" value="${draft.remaining}" required></label>
           <label class="checkbox-row"><input type="checkbox" name="priority" ${draft.priority ? "checked" : ""}><span>Показывать первым в начислениях</span></label>
         </fieldset>
         <fieldset id="resource-consumption"><legend>Расход ресурса из записи работы</legend>
@@ -2500,7 +2525,8 @@
         <input data-source="${key}" type="number" min="0" step="any" value="${values[key] ?? ""}" placeholder="—"></label>`).join("");
       sourceChoice.replaceChildren(new Option("Новый показатель", ""),
         ...usageSources(aircraft).filter(({ key }) => !sourceEnabled(aircraft, key)).map(({ key, label }) => new Option(label, key)));
-      inputsRoot.closest("fieldset").hidden = resourceForm.elements.unit.value === "дн.";
+      const fieldset = inputsRoot.closest("fieldset");
+      fieldset.disabled = fieldset.hidden = resourceForm.elements.unit.value === "дн.";
     };
     let implicitInputs = resource?.consumption ? null : resourceInputs(draft, currentOwner());
     drawInputs(implicitInputs || resource.consumption);
@@ -2556,16 +2582,19 @@
       event.preventDefault();
       const data = new FormData(event.currentTarget);
       const objectName = String(data.get("object")).trim();
+      const name = String(data.get("name")).trim();
+      if (!objectName || !name) { showToast("Введи название объекта и ресурса"); return; }
+      const orphan = resource?.objectId && !resourceOwner(aircraft, resource) && objectName === resource.object && !currentOwner();
       const limit = Number(data.get("limit"));
       const remaining = Number(data.get("remaining"));
       const saved = normalizeResource({
         ...(resource || {}),
         id: resource?.id || `resource-${Date.now()}`,
         object: objectName,
-        objectId: currentOwner()?.id || null,
-        consumption: readInputs(),
+        objectId: currentOwner()?.id || (orphan ? resource.objectId : null),
+        consumption: data.get("unit") === "дн." ? {} : readInputs(),
         priority: data.get("priority") === "on",
-        name: String(data.get("name")).trim(),
+        name,
         serialNumber: String(data.get("serialNumber") || "").trim(),
         drawingNumber: String(data.get("drawingNumber") || "").trim(),
         repairs: Number(data.get("repairs")),
@@ -2585,7 +2614,7 @@
       });
       const previous = resource && { ...resource };
       let createdOwner;
-      if (objectName !== "Самолёт" && !aircraft.blocks.some((block) => block.name === objectName)) {
+      if (!orphan && objectName !== "Самолёт" && !aircraft.blocks.some((block) => block.name === objectName)) {
         const block = normalizeBlock({ id: id(), kind: "unit", name: objectName, caption: "Агрегат с ограниченным ресурсом", status: saved.status });
         aircraft.blocks.push(block);
         saved.objectId = block.id;
@@ -2623,20 +2652,21 @@
         showToast(error.message);
         return;
       }
-      resource.history ??= [];
-      resource.history.push({ ...updated, type: "extension", object: resource.object, unit: resource.unit,
-        date: String(data.get("date")), basis, documentNumber, documentDate: String(data.get("documentDate")) });
+      const previous = { history: resource.history, limit: resource.limit, remaining: resource.remaining, status: resource.status };
+      resource.history = [...(resource.history || []), { ...updated, type: "extension", object: resource.object, unit: resource.unit,
+        date: String(data.get("date")), basis, documentNumber, documentDate: String(data.get("documentDate")) }];
       resource.limit = updated.limit;
       resource.remaining = updated.remaining;
       resource.status = resourceStatus(updated.remaining, updated.limit);
-      saveState();
+      if (!saveState()) { Object.assign(resource, previous); showToast("Не удалось сохранить продление"); return; }
       render();
       showToast("Продление записано");
     });
     document.querySelector('[data-action="delete-resource"]')?.addEventListener("click", () => {
       if (!window.confirm(`Удалить ресурсную карточку «${draft.name}»?`)) return;
-      aircraft.resources = aircraft.resources.filter((item) => item.id !== draft.id);
-      saveState();
+      const previous = aircraft.resources;
+      aircraft.resources = previous.filter((item) => item.id !== draft.id);
+      if (!saveState()) { aircraft.resources = previous; showToast("Не удалось удалить ресурсную карточку"); return; }
       state.selectedResourceId = null;
       navigateBack();
     });
@@ -2960,7 +2990,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.28</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.29</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -3153,21 +3183,31 @@
     if (!block) return;
     const name = window.prompt("Новое название", block.name);
     if (!name?.trim()) return;
-    const oldName = block.name;
-    block.name = name.trim();
-    aircraft.resources.forEach((resource) => { if (resource.object === oldName) resource.object = block.name; });
-    saveState();
+    const before = structuredClone(aircraft);
+    updateBlockName(aircraft, block, name.trim());
+    if (!saveState()) { Object.assign(aircraft, before); render(); showToast("Не удалось сохранить название"); return; }
     renderAircraftSettings();
     bindCommonActions();
     showToast("Название блока сохранено");
+  }
+
+  function updateBlockName(aircraft, block, name) {
+    const linked = aircraft.resources.filter((resource) => resourceOwner(aircraft, resource) === block);
+    block.name = name;
+    for (const resource of linked) {
+      resource.objectId = block.id;
+      resource.object = name;
+    }
   }
 
   function removeBlock(blockId) {
     const aircraft = selectedAircraft();
     const block = aircraft.blocks.find((item) => item.id === blockId);
     if (!block || !window.confirm(`Удалить блок «${block.name}»? История самолёта и смены останутся.`)) return;
+    const before = structuredClone(aircraft);
+    updateBlockName(aircraft, block, block.name);
     aircraft.blocks = aircraft.blocks.filter((item) => item.id !== blockId);
-    saveState();
+    if (!saveState()) { Object.assign(aircraft, before); render(); showToast("Не удалось удалить блок"); return; }
     renderAircraftSettings();
     bindCommonActions();
     showToast("Блок удалён");
