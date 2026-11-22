@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.20";
+  const APP_VERSION = "0.2.21";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -504,11 +504,12 @@
       landingPpr: ["Посадки ППР", aircraft.pprLandings ?? "Не задано"],
     };
     return `<section class="counter-tiles" aria-label="Наработка борта">${layout.map((tile, index) => `
-      <article class="counter-tile ${editing && activeCounterIndex === index ? "counter-tile-active" : ""}" data-counter-index="${index}" style="--tile-span:${tile.span ?? (tile.wide ? 12 : 6)};--tile-height:${tile.height ?? 0}px;--tile-font:${tile.font ?? 1}rem">
+      <article class="counter-tile ${editing && activeCounterIndex === index ? "counter-tile-active" : ""}" data-counter-index="${index}" style="--tile-start:${tile.columnStart ?? "auto"};--tile-span:${Math.round((tile.span ?? (tile.wide ? 12 : 6)) * 10)};--tile-height:${tile.height ?? 0}px;--tile-font:${tile.font ?? 1}rem">
         ${editing && activeCounterIndex === index ? `<div class="counter-gesture-toolbar">
+          <button type="button" class="counter-toolbar-handle" aria-label="Передвинуть панель">⠿</button>
           <button type="button" data-gesture="move" aria-label="Переместить" aria-pressed="${counterGesture === "move"}">✥</button>
           <button type="button" data-gesture="resize" aria-label="Изменить размер" aria-pressed="${counterGesture === "resize"}">↔</button>
-          <button type="button" data-layout-action="font" data-index="${index}" aria-label="Размер текста">Aa</button>
+          <button type="button" data-gesture="font" aria-label="Размер текста" aria-pressed="${counterGesture === "font"}">Aa</button>
           ${values[tile.keys[0]] ? `<button type="button" data-layout-action="edit" data-index="${index}" aria-label="Изменить подпись">✎</button>` : ""}
         </div><svg class="counter-edit-outline" aria-hidden="true"><rect pathLength="100" rx="22"/></svg>` : ""}
         ${tile.keys.map((key) => `<div class="counter-value">${catalog.get(key) ?? `${tile.labels?.[key] ? escapeHtml(tile.labels[key]) : values[key][0]} <strong>${values[key][1]}</strong>`}</div>`).join("")}
@@ -533,14 +534,64 @@
     const surface = preview.closest("main");
     const controls = document.createElement("div");
     controls.className = "counter-save-bar";
-    controls.innerHTML = `<button class="secondary-button" id="layout-default">Сбросить размер плитки</button><button class="primary-button" id="layout-save">Готово</button>`;
+    controls.innerHTML = `<button class="secondary-button" id="layout-default">Сбросить размер плитки</button>
+      <button class="secondary-button counter-font-reset" id="counter-font-reset" aria-label="Стандартный текст 100%" hidden>● <span id="counter-font-percent">100%</span></button>
+      <button class="primary-button" id="layout-save">Готово</button>`;
     surface.after(controls);
     surface.querySelectorAll("button").forEach((button) => { button.disabled = true; });
     const boardSettings = app.querySelector('[data-action="settings"]');
     if (boardSettings) boardSettings.disabled = true;
+    const fontReset = controls.querySelector("#counter-font-reset");
+    const fontPercent = controls.querySelector("#counter-font-percent");
+    let toolbarOffset = { x: 0, y: 0 };
+    let toolbarDrag;
+    function placeToolbar() {
+      const toolbar = preview.querySelector(".counter-gesture-toolbar");
+      if (!toolbar) return;
+      const card = toolbar.closest(".counter-tile").getBoundingClientRect();
+      const width = toolbar.offsetWidth;
+      const height = toolbar.offsetHeight;
+      const left = Math.max(8, Math.min(innerWidth - width - 8, card.right - width + toolbarOffset.x));
+      const top = Math.max(8, Math.min(innerHeight - height - 8, card.top - height + toolbarOffset.y));
+      toolbar.style.left = `${left - card.left}px`;
+      toolbar.style.top = `${top - card.top}px`;
+    }
+    function updateFontControl() {
+      fontReset.hidden = counterGesture !== "font";
+      controls.classList.toggle("counter-font-mode", counterGesture === "font");
+      fontPercent.textContent = Math.round((draft[activeCounterIndex]?.font ?? 1) * 100) + "%";
+    }
     const paint = () => { preview.innerHTML = counterTiles(aircraft, draft, true, catalog);
       preview.querySelectorAll(".counter-value button").forEach((button) => { button.disabled = true; });
+      placeToolbar();
+      updateFontControl();
     };
+    fontReset.onclick = () => {
+      delete draft[activeCounterIndex].font;
+      paint();
+    };
+    preview.addEventListener("pointerdown", (event) => {
+      const handle = event.target.closest(".counter-toolbar-handle");
+      if (!handle || !event.isPrimary || event.button !== 0) return;
+      handle.setPointerCapture(event.pointerId);
+      toolbarDrag = { pointer: event.pointerId, x: event.clientX, y: event.clientY, offsetX: toolbarOffset.x, offsetY: toolbarOffset.y };
+    });
+    preview.addEventListener("pointermove", (event) => {
+      if (toolbarDrag?.pointer !== event.pointerId) return;
+      toolbarOffset = { x: toolbarDrag.offsetX + event.clientX - toolbarDrag.x,
+        y: toolbarDrag.offsetY + event.clientY - toolbarDrag.y };
+      placeToolbar();
+    });
+    for (const kind of ["pointerup", "pointercancel", "lostpointercapture"]) {
+      preview.addEventListener(kind, (event) => {
+        if (toolbarDrag?.pointer !== event.pointerId) return;
+        const toolbar = preview.querySelector(".counter-gesture-toolbar");
+        const card = toolbar.closest(".counter-tile").getBoundingClientRect();
+        const rect = toolbar.getBoundingClientRect();
+        toolbarOffset = { x: rect.right - card.right, y: rect.bottom - card.top };
+        toolbarDrag = null;
+      });
+    }
     let drag;
     let hold;
     let resize;
@@ -577,6 +628,7 @@
       drag.order = order;
       drag.lastMove = { x, y };
       const before = cards.map((card) => card.getBoundingClientRect());
+      cards[drag.source].style.setProperty("--tile-start", "auto");
       order.forEach((index, position) => { cards[index].style.order = String(position); });
       if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
         cards.forEach((card, index) => {
@@ -597,6 +649,7 @@
       const { source, order } = drag;
       clearDrag();
       if (!order) return;
+      delete draft[source].columnStart;
       draft = order.map((index) => draft[index]);
       activeCounterIndex = order.indexOf(source);
       paint();
@@ -614,16 +667,21 @@
       if (hold && drag?.touch === hold.id) clearDrag();
       cancelHold();
       const card = event.target.closest(".counter-tile");
-      if (counterGesture === "resize" && event.touches.length === 1 && !event.target.closest("button")) {
+      if ((counterGesture === "resize" || counterGesture === "font") && event.touches.length === 1 && !event.target.closest("button:not(:disabled)")) {
         event.preventDefault();
         clearDrag();
         const finger = event.touches[0];
         const index = activeCounterIndex;
         const card = preview.querySelector(`[data-counter-index="${index}"]`);
         const tile = draft[index];
+        const grid = card.parentElement;
+        const gridLeft = grid.getBoundingClientRect().left;
+        const cardLeft = card.getBoundingClientRect().left - parseFloat(getComputedStyle(card).marginLeft);
+        const columnStart = Math.max(1, Math.min(101, Math.round((cardLeft - gridLeft) / (grid.clientWidth / 120)) + 1));
         resize = { card, index, finger: finger.identifier, x: finger.clientX, y: finger.clientY,
           width: tile.span ?? (tile.wide ? 12 : 6), height: card.offsetHeight,
-          column: card.parentElement.clientWidth / 12, axis: null, lastFeedback: -Infinity };
+          column: grid.clientWidth / 12, columnStart, axis: counterGesture === "font" ? "font" : null,
+          font: tile.font ?? 1, lastFeedback: -Infinity };
         resize.feedbackWidth = resize.width;
         resize.feedbackHeight = resize.height;
         return;
@@ -655,13 +713,24 @@
         if (!resize.axis && Math.hypot(dx, dy) < 8) return;
         resize.axis ??= Math.abs(dx) >= Math.abs(dy) ? "width" : "height";
         const tile = draft[index];
+        if (resize.axis === "font") {
+          tile.font = Math.min(1.7, Math.max(0.65, Math.round(resize.font * 100 - dy / 3) / 100));
+          card.style.setProperty("--tile-font", `${tile.font}rem`);
+          updateFontControl();
+          placeToolbar();
+          return;
+        }
         if (resize.axis === "width") {
-          tile.span = Math.min(12, Math.max(2, Math.round(resize.width + dx / resize.column)));
-          card.style.setProperty("--tile-span", tile.span);
+          tile.span = Math.min((121 - resize.columnStart) / 10, Math.max(2, Math.round((resize.width + dx / resize.column) * 10) / 10));
+          if (tile.span === resize.width && tile.columnStart == null) return;
+          tile.columnStart = resize.columnStart;
+          card.style.setProperty("--tile-start", tile.columnStart);
+          card.style.setProperty("--tile-span", Math.round(tile.span * 10));
         } else {
           tile.height = Math.min(260, Math.max(0, Math.round(resize.height + dy)));
           card.style.setProperty("--tile-height", `${tile.height}px`);
         }
+        placeToolbar();
         const now = performance.now();
         if (now - resize.lastFeedback >= 120 &&
             (resize.axis === "width" ? tile.span !== resize.feedbackWidth : Math.abs(tile.height - resize.feedbackHeight) >= 8)) {
@@ -732,7 +801,7 @@
       if (gesture) {
         counterGesture = gesture.dataset.gesture;
         recordDiagnostic("layout.tool", counterGesture);
-        surface.classList.toggle("counter-resize-surface", counterGesture === "resize");
+        surface.classList.toggle("counter-resize-surface", counterGesture === "resize" || counterGesture === "font");
         preview.classList.toggle("counter-move-surface", counterGesture === "move");
         paint();
         return;
@@ -749,24 +818,6 @@
       const action = button.dataset.layoutAction;
       const tile = draft[index];
       activeCounterIndex = index;
-      if (action === "font") {
-        const dialog = document.createElement("dialog");
-        dialog.className = "confirm-dialog";
-        dialog.innerHTML = `<form method="dialog" class="shift-form"><h2>Размер текста</h2>
-          <label>Масштаб текста <output>${Math.round((tile.font ?? 1) * 100)}%</output>
-            <input name="font" type="range" min="65" max="170" step="5" value="${Math.round((tile.font ?? 1) * 100)}"></label>
-          <button class="primary-button" value="save">Применить</button>
-          <button class="secondary-button" value="cancel">Отмена</button></form>`;
-        const slider = dialog.querySelector("input");
-        slider.addEventListener("input", () => { dialog.querySelector("output").value = slider.value + "%"; });
-        dialog.addEventListener("close", () => {
-          if (dialog.returnValue === "save") { tile.font = slider.valueAsNumber / 100; paint(); }
-          dialog.remove();
-        }, { once: true });
-        app.append(dialog);
-        dialog.showModal();
-        return;
-      }
       if (action === "edit") {
         const dialog = document.createElement("dialog");
         dialog.className = "confirm-dialog";
@@ -789,6 +840,7 @@
       }
       if (action === "size") {
         tile.span = (tile.span ?? (tile.wide ? 12 : 6)) > 6 ? 6 : 12;
+        delete tile.columnStart;
       }
       else if (action === "split") draft.splice(index, 1, ...tile.keys.map((key) => ({ keys: [key], wide: false,
         ...(tile.labels?.[key] ? { labels: { [key]: tile.labels[key] } } : {}) })));
@@ -796,6 +848,8 @@
         tile.keys.push(...draft[index + 1].keys);
         tile.labels = { ...tile.labels, ...draft[index + 1].labels };
         tile.wide = true;
+        delete tile.span;
+        delete tile.columnStart;
         draft.splice(index + 1, 1);
       } else {
         const cards = [...preview.querySelectorAll(".counter-tile")];
@@ -818,6 +872,7 @@
         const tile = draft[activeCounterIndex];
         tile.wide = tile.keys.length > 1;
         delete tile.span;
+        delete tile.columnStart;
         delete tile.height;
         paint();
       });
@@ -1392,10 +1447,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.20</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.21</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.20", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.21", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1886,7 +1941,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.20</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.21</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });

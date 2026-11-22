@@ -54,6 +54,9 @@ async function main() {
   const { socket, evaluate, command } = await connect();
   const results = {};
   try {
+    if (process.argv[3]) {
+      await command("Emulation.setDeviceMetricsOverride", { width: Number(process.argv[3]), height: 812, deviceScaleFactor: 1, mobile: true });
+    }
     const home = await evaluate(`({
       h1: document.querySelector("h1")?.textContent,
       hasSettings: Boolean(document.querySelector('[data-action="settings"]')),
@@ -428,10 +431,32 @@ async function main() {
       await new Promise(resolve => setTimeout(resolve, 180));
       const movedBeforeRelease = second.getBoundingClientRect().top < b.top;
       dragTarget.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, changedTouches: [touch(b.left + 20, b.top + 10)] }));
+      document.querySelector('[data-gesture="font"]').click();
+      const active = document.querySelector('.counter-tile-active');
+      const value = active.querySelector('.counter-value');
+      const finger = (y) => new Touch({ identifier: 3, target: value, clientX: 40, clientY: y });
+      value.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [finger(400)] }));
+      value.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, cancelable: true, touches: [finger(391)] }));
+      const fontGrowsInline = active.style.getPropertyValue('--tile-font') === '1.03rem' && !document.querySelector('dialog[open]');
+      value.dispatchEvent(new TouchEvent('touchend', { bubbles: true, changedTouches: [finger(391)] }));
+      document.querySelector('#counter-font-reset').click();
+      const fontReset = document.querySelector('.counter-tile-active').style.getPropertyValue('--tile-font') === '1rem';
+      const toolbar = document.querySelector('.counter-gesture-toolbar').getBoundingClientRect();
+      const toolbarFits = toolbar.left >= 0 && toolbar.right <= innerWidth;
+      document.querySelector('[data-gesture="resize"]').click();
+      const tile = document.querySelector('.counter-tile-active');
+      const content = tile.querySelector('.counter-value');
+      const before = tile.getBoundingClientRect();
+      const dragSize = (x) => new Touch({ identifier: 4, target: content, clientX: x, clientY: 400 });
+      content.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [dragSize(180)] }));
+      content.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, cancelable: true, touches: [dragSize(171)] }));
+      const after = tile.getBoundingClientRect();
+      const gentleResize = before.width - after.width > 0 && before.width - after.width <= 14 && Math.abs(before.left - after.left) <= 1;
+      content.dispatchEvent(new TouchEvent('touchend', { bubbles: true, changedTouches: [dragSize(171)] }));
       document.querySelector('#layout-save').click();
-      return movedBeforeRelease;
+      return { movedBeforeRelease, fontGrowsInline, fontReset, toolbarFits, gentleResize };
     })()`);
-    assert.equal(liveReflow, true);
+    assert.deepEqual(liveReflow, { movedBeforeRelease: true, fontGrowsInline: true, fontReset: true, toolbarFits: true, gentleResize: true });
     results.liveTileReflow = "ok";
     const journal = await evaluate(`(() => {
       window.handleAndroidBack();
