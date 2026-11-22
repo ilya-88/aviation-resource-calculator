@@ -146,8 +146,10 @@
   }
 
   let leaveUsageSettings;
+  let leaveTypeUsageSettings;
   function navigateBack() {
     if (state.view === "usage-settings" && leaveUsageSettings?.()) return;
+    if (state.view === "type-usage-settings" && leaveTypeUsageSettings?.()) return;
     if (state.view === "aircraft-layout" && leaveAircraftLayout?.()) return;
     finishBackNavigation();
   }
@@ -1091,10 +1093,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.7</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.8</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.7", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.8", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1247,9 +1249,26 @@
     });
   }
 
+  function usageScopeTabs(active) {
+    return `<nav class="filter-row" aria-label="Область применения коэффициентов">
+      <button type="button" class="filter-chip ${active === "usage-settings" ? "is-active" : ""}" data-usage-scope="usage-settings" aria-pressed="${active === "usage-settings"}">Для всех</button>
+      <button type="button" class="filter-chip ${active === "type-usage-settings" ? "is-active" : ""}" data-usage-scope="type-usage-settings" aria-pressed="${active === "type-usage-settings"}">По типу самолёта</button>
+    </nav>`;
+  }
+
+  function bindUsageScope(active, confirmDraft) {
+    app.querySelectorAll("[data-usage-scope]").forEach((button) => button.addEventListener("click", () => {
+      const target = button.dataset.usageScope;
+      if (target === active) return;
+      const go = () => { state.view = target; render(); };
+      if (!confirmDraft(go)) go();
+    }));
+  }
+
   function renderTypeUsageSettings() {
     const aircraftTypes = new Map(state.aircraft.map((aircraft) => [aircraft.type.trim().toLowerCase(), aircraft]));
     app.innerHTML = shell(`
+      ${usageScopeTabs("type-usage-settings")}
       <form id="type-usage-form" class="shift-form settings-form">
         <label>Тип самолёта<select name="type" required>
           <option value="">Выбрать тип</option>
@@ -1257,12 +1276,17 @@
         </select></label>
         <p class="field-help">Настройки типа применяются ко всем его бортам. Общие правила действуют для остальных типов.</p>
         <div id="type-usage-fields"></div>
-      </form>`, { title: "Коэффициенты по типу", subtitle: "", back: true, settings: false });
+      </form>`, { title: "Виды наработки", subtitle: "", back: true, settings: false });
     const form = document.getElementById("type-usage-form");
     const fields = document.getElementById("type-usage-fields");
+    const snapshot = () => JSON.stringify([...new FormData(form)].filter(([name]) => name !== "type"));
+    let activeType = "";
+    let savedSnapshot = snapshot();
+    let afterSave;
     function showFields() {
+      activeType = form.elements.type.value;
       const aircraft = aircraftTypes.get(form.elements.type.value);
-      if (!aircraft) { fields.innerHTML = ""; return; }
+      if (!aircraft) { fields.innerHTML = ""; savedSnapshot = snapshot(); return; }
       const rule = usageTypeOverride(aircraft);
       const ground = rule?.ground ?? state.sharedGround ?? aircraft.settings;
       fields.innerHTML = `<fieldset><legend>Коэффициенты и земная наработка</legend>
@@ -1273,6 +1297,7 @@
         <button class="primary-button" type="submit">Сохранить для типа</button>
         ${rule ? `<button class="secondary-button" type="button" id="remove-type-rule">Вернуть общие правила</button>` : ""}
       </fieldset>`;
+      savedSnapshot = snapshot();
     }
     function saveRules(next) {
       const previous = state.usageTypeOverrides;
@@ -1284,8 +1309,27 @@
       }
       showFields();
       showToast("Настройки сохранены");
+      afterSave?.();
     }
-    form.elements.type.addEventListener("change", showFields);
+    function confirmDraft(next) {
+      if (snapshot() === savedSnapshot) return false;
+      chooseLayoutAction("Сохранить изменения коэффициентов?", [["save","Сохранить"],["discard","Продолжить без сохранения"],["cancel","Остаться"]], (action) => {
+        if (action === "discard") next();
+        if (action === "save") {
+          afterSave = next;
+          try { form.requestSubmit(); } finally { afterSave = undefined; }
+        }
+      });
+      return true;
+    }
+    leaveTypeUsageSettings = () => confirmDraft(finishBackNavigation);
+    bindUsageScope("type-usage-settings", confirmDraft);
+    form.elements.type.addEventListener("change", () => {
+      const selected = form.elements.type.value;
+      form.elements.type.value = activeType;
+      const switchType = () => { form.elements.type.value = selected; showFields(); };
+      if (!confirmDraft(switchType)) switchType();
+    });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(form);
@@ -1322,6 +1366,7 @@
       <p class="field-help" data-usage-example="${key}"></p></fieldset>`;
     }).join("");
     app.innerHTML = shell(`
+      ${usageScopeTabs("usage-settings")}
       <form id="usage-settings-form" class="shift-form settings-form">
         <div class="usage-heading"><h1>Виды наработки</h1>
           <button type="button" class="usage-hidden-button" aria-label="Скрытые виды" title="Скрытые виды" aria-controls="hidden-usage" aria-expanded="false">♲</button>
@@ -1344,7 +1389,8 @@
     const form = document.getElementById("usage-settings-form");
     const formSnapshot = () => JSON.stringify([...new FormData(form)]);
     const initialSnapshot = formSnapshot();
-    leaveUsageSettings = () => {
+    let afterUsageSave;
+    function confirmDraft(next) {
       if (formSnapshot() === initialSnapshot) return false;
       if (app.querySelector("dialog[open]")) return true;
       const dialog = document.createElement("dialog");
@@ -1360,12 +1406,17 @@
       dialog.addEventListener("close", () => {
         const action = dialog.returnValue;
         dialog.remove();
-        if (action === "save") form.requestSubmit();
-        if (action === "discard") finishBackNavigation();
+        if (action === "save") {
+          afterUsageSave = next;
+          try { form.requestSubmit(); } finally { afterUsageSave = undefined; }
+        }
+        if (action === "discard") next();
       }, { once: true });
       dialog.showModal();
       return true;
-    };
+    }
+    leaveUsageSettings = () => confirmDraft(finishBackNavigation);
+    bindUsageScope("usage-settings", confirmDraft);
     const hiddenPanel = form.querySelector("#hidden-usage");
     const hiddenButton = form.querySelector(".usage-hidden-button");
     function updateHiddenCount() {
@@ -1457,8 +1508,8 @@
         showToast("Не удалось сохранить настройки на устройстве. Изменения остались в форме.");
         return;
       }
-      finishBackNavigation();
-      showToast("Виды наработки сохранены для всех бортов");
+      (afterUsageSave ?? finishBackNavigation)();
+      showToast("Общие виды наработки сохранены");
     });
   }
 
@@ -1472,15 +1523,14 @@
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Приложение</p><h1>Настройки</h1></div></section>
       <section class="settings-list">
-        <button class="setting-row" data-view="usage-settings"><strong>Виды наработки · общие</strong>${icon("chevron")}</button>
-        <button class="setting-row" data-view="type-usage-settings"><strong>Коэффициенты по типу самолёта</strong>${icon("chevron")}</button>
+        <button class="setting-row" data-view="usage-settings"><strong>Виды наработки</strong>${icon("chevron")}</button>
         <label class="setting-row"><span><strong>Все уведомления</strong><small>Главный переключатель имеет высший приоритет</small></span><input id="global-notifications" type="checkbox" ${state.globalNotifications ? "checked" : ""}></label>
         <div class="settings-subheading">Уведомления по самолётам</div>
         ${aircraftNotificationRows}
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.7</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.8</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
