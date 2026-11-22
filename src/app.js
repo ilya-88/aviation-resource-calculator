@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.32";
+  const APP_VERSION = "0.2.33";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -363,7 +363,10 @@
   }
 
   function navigateTo(view) {
-    if (state.view !== view) viewStack.push(state.view);
+    if (state.view !== view) {
+      viewStack.push(state.view);
+      if (view === "usage-settings") state.lastUsageType = null;
+    }
     state.view = view;
     render();
   }
@@ -425,6 +428,7 @@
     else if (state.view === "settings") renderSettings();
     else if (state.view === "diagnostics") renderDiagnostics();
     else if (state.view === "usage-settings") renderUsageSettings();
+    else if (state.view === "aircraft-types") renderAircraftTypes();
     else if (state.view === "aircraft-layout") renderAircraftLayout();
     else if (state.view === "about") renderAbout();
     else renderHome();
@@ -2432,10 +2436,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.32</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.33</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.32", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.33", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -2705,10 +2709,67 @@
     });
   }
 
-  function renderUsageSettings() {
+  function renderAircraftTypes() {
     const types = activeAircraftTypes();
     const archived = state.aircraftTypes.filter(isArchivedType);
+    app.innerHTML = shell(`
+      <h1>Типы самолётов</h1>
+      <section class="section-stack type-usage">
+        <form id="aircraft-type-form" class="shift-form settings-form">
+          <label>Название нового типа<input name="type" type="text" maxlength="80" required></label>
+          <button type="submit" class="primary-button">Добавить тип</button>
+        </form>
+        <section class="settings-list" aria-label="Доступные типы">
+          ${types.map((name, index) => `<div class="setting-row"><strong>${escapeHtml(name)}</strong><button class="small-button" type="button" data-archive-type="${index}">В корзину</button></div>`).join("") || "<p>Доступных типов пока нет.</p>"}
+        </section>
+        <details id="aircraft-type-trash" ${types.length ? "" : "open"}><summary>Корзина (${archived.length})</summary>
+          ${archived.map((name, index) => `<div class="setting-row"><strong>${escapeHtml(name)}</strong><button class="small-button" type="button" data-restore-type="${index}">Восстановить</button></div>`).join("") || "<p>Корзина пуста.</p>"}
+        </details>
+      </section>`, { title: "Типы самолётов", back: true, settings: false });
+    document.getElementById("aircraft-type-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const name = event.currentTarget.elements.type.value.trim();
+      const key = name.toLowerCase();
+      if (!name) { showToast("Введи название типа"); return; }
+      if (state.aircraftTypes.some((item) => item.toLowerCase() === key)) {
+        showToast(isArchivedType(name) ? "Тип уже в корзине. Его можно восстановить" : "Такой тип уже есть");
+        return;
+      }
+      state.aircraftTypes.push(name);
+      state.usageTypeOverrides.push({
+        type: key, labels: { flight: USAGE_TYPES.flight, runway: "Посадки" },
+        enabled: defaultUsageSources(),
+      });
+      if (saveState()) render();
+      else { state.aircraftTypes.pop(); state.usageTypeOverrides.pop(); showToast("Не удалось сохранить тип"); }
+    });
+    function changeArchive(name, archivedNow) {
+      const previous = state.archivedAircraftTypes;
+      const key = name.toLowerCase();
+      state.archivedAircraftTypes = archivedNow ? [...previous, key] : previous.filter((item) => item !== key);
+      if (saveState()) render();
+      else { state.archivedAircraftTypes = previous; showToast("Не удалось обновить корзину"); }
+    }
+    app.querySelectorAll("[data-archive-type]").forEach((button) => button.addEventListener("click", () => {
+      const name = types[Number(button.dataset.archiveType)];
+      chooseLayoutAction("Переместить тип в корзину? Существующие борта сохранят его.",
+        [["archive", "В корзину"], ["cancel", "Отмена"]], (action) => { if (action === "archive") changeArchive(name, true); });
+    }));
+    app.querySelectorAll("[data-restore-type]").forEach((button) => button.addEventListener("click", () => {
+      changeArchive(archived[Number(button.dataset.restoreType)], false);
+    }));
+  }
+
+  function renderUsageSettings() {
+    const types = activeAircraftTypes();
     const type = types.includes(state.lastUsageType) ? state.lastUsageType : types[0];
+    if (!type) {
+      leaveUsageSettings = null;
+      app.innerHTML = shell(`<h1>Виды наработки</h1>
+        <p>Создать тип самолёта для того, чтобы выбрать наработки для этого типа самолёта</p>`,
+        { title: "Виды наработки", back: true, settings: false });
+      return;
+    }
     const aircraft = state.aircraft.find((item) => item.type === type) || { type };
     const profile = usageTypeOverride(aircraft);
     const draft = structuredClone({
@@ -2723,26 +2784,16 @@
       ...draft.customSources,
     ];
     const enabled = (key) => draft.enabled[key] ?? sourceEnabled({ type }, key);
-    const selector = (items) => items.map((name) =>
+    const options = types.map((name) =>
       `<option value="${escapeHtml(name)}" ${name === type ? "selected" : ""}>${escapeHtml(name)}</option>`).join("");
     app.innerHTML = shell(`
       <h1>Виды наработки</h1>
       <section class="section-stack type-usage">
-        ${type ? `<label>Тип самолёта<select id="usage-aircraft-type">${selector(types)}</select></label>` : `<p>Добавь тип самолёта, чтобы настроить виды наработки.</p>`}
-        <details ${type ? "" : "open"}><summary>Добавить тип самолёта</summary>
-          <form id="aircraft-type-form" class="shift-form settings-form">
-            <label>Название нового типа<input name="type" type="text" maxlength="80" required></label>
-            <button type="submit" class="secondary-button">Добавить тип</button>
-          </form>
-        </details>
-        ${type ? `<form id="usage-settings-form" class="shift-form">
+        <label>Тип самолёта<select id="usage-aircraft-type">${options}</select></label>
+        <form id="usage-settings-form" class="shift-form">
           <div id="type-usage-fields" class="section-stack"></div>
           <button type="submit" class="primary-button">Сохранить для типа</button>
-          <button type="button" class="secondary-button" id="archive-aircraft-type">В корзину</button>
-        </form>` : ""}
-        <details id="aircraft-type-trash" ${type ? "" : "open"}><summary>Корзина (${archived.length})</summary>
-          ${archived.map((name, index) => `<div class="setting-row"><strong>${escapeHtml(name)}</strong><button class="small-button" type="button" data-restore-type="${index}">Восстановить</button></div>`).join("") || "<p>Корзина пуста.</p>"}
-        </details>
+        </form>
       </section>`, { title: "Виды наработки", back: true, settings: false });
     const form = document.getElementById("usage-settings-form");
     const collection = document.getElementById("type-usage-fields");
@@ -2847,39 +2898,6 @@
         row.querySelector("small").textContent = Number.isFinite(value) && value >= 0 ? `Пример: 1 × ${formatNumber(value)} = ${formatNumber(value)}` : "";
       }
     });
-    document.getElementById("aircraft-type-form").addEventListener("submit", (event) => {
-      event.preventDefault();
-      const name = event.currentTarget.elements.type.value.trim();
-      const key = name.toLowerCase();
-      if (!name) { showToast("Введи название типа"); return; }
-      if (state.aircraftTypes.some((item) => item.toLowerCase() === key)) {
-        showToast(isArchivedType(name) ? "Тип уже в корзине. Его можно восстановить" : "Такой тип уже есть");
-        return;
-      }
-      afterDraft(() => {
-        state.aircraftTypes.push(name);
-        state.usageTypeOverrides.push({
-          type: key, labels: { flight: USAGE_TYPES.flight, runway: "Посадки" },
-          enabled: defaultUsageSources(),
-        });
-        if (saveState()) { state.lastUsageType = name; render(); }
-        else { state.aircraftTypes.pop(); state.usageTypeOverrides.pop(); showToast("Не удалось сохранить тип"); }
-      });
-    });
-    function changeArchive(name, archivedNow) {
-      const previous = state.archivedAircraftTypes;
-      const key = name.toLowerCase();
-      state.archivedAircraftTypes = archivedNow ? [...previous, key] : previous.filter((item) => item !== key);
-      if (saveState()) { state.lastUsageType = archivedNow ? null : name; render(); }
-      else { state.archivedAircraftTypes = previous; showToast("Не удалось обновить корзину"); }
-    }
-    document.getElementById("archive-aircraft-type")?.addEventListener("click", () => {
-      afterDraft(() => chooseLayoutAction("Переместить тип в корзину? Существующие борта сохранят его.",
-        [["archive", "В корзину"], ["cancel", "Отмена"]], (action) => { if (action === "archive") changeArchive(type, true); }));
-    });
-    app.querySelectorAll("[data-restore-type]").forEach((button) => button.addEventListener("click", () => {
-      afterDraft(() => changeArchive(archived[Number(button.dataset.restoreType)], false));
-    }));
   }
 
   function renderDiagnostics() {
@@ -2936,6 +2954,7 @@
       <section class="page-heading compact"><div><p class="eyebrow">Приложение</p><h1>Настройки</h1></div></section>
       <section class="settings-list">
         <button class="setting-row" data-view="usage-settings"><strong>Виды наработки</strong>${icon("chevron")}</button>
+        <button class="setting-row" data-view="aircraft-types"><strong>Типы самолётов</strong>${icon("chevron")}</button>
         <button class="setting-row" data-view="diagnostics"><strong>Диагностика</strong>${icon("chevron")}</button>
         <label class="setting-row"><span><strong>Все уведомления</strong><small>Главный переключатель имеет высший приоритет</small></span><input id="global-notifications" type="checkbox" ${state.globalNotifications ? "checked" : ""}></label>
         <div class="settings-subheading">Уведомления по самолётам</div>
@@ -2943,7 +2962,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.32</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.33</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
