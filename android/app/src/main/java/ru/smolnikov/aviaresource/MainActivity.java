@@ -140,6 +140,19 @@ public class MainActivity extends Activity {
 
     public class AndroidBridge {
         @JavascriptInterface
+        public String getDiagnosticEnvironment() {
+            return Build.MODEL + " | Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")";
+        }
+
+        @JavascriptInterface
+        public void copyDiagnostics(String text) {
+            runOnUiThread(() -> {
+                android.content.ClipboardManager clipboard = getSystemService(android.content.ClipboardManager.class);
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Авиаресурс · диагностика", text));
+            });
+        }
+
+        @JavascriptInterface
         public String getPlatform() {
             return "android";
         }

@@ -4,6 +4,26 @@
   const calc = window.AviationCalc;
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
+  const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
+  const APP_VERSION = "0.2.15";
+  let diagnostics = [];
+  try {
+    const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
+    if (Array.isArray(saved)) diagnostics = saved.slice(-100);
+  } catch (_) {}
+
+  function recordDiagnostic(event, detail = "") {
+    diagnostics.push({ at: new Date().toISOString(), event, detail });
+    diagnostics = diagnostics.slice(-100);
+    try { localStorage.setItem(DIAGNOSTIC_KEY, JSON.stringify(diagnostics)); } catch (_) {}
+  }
+
+  window.addEventListener("error", (event) => {
+    const name = event.error?.name || "Error";
+    recordDiagnostic("js.error", `${name} app.js:${event.lineno || 0}:${event.colno || 0}`);
+  });
+  window.addEventListener("unhandledrejection", () => recordDiagnostic("js.unhandled-rejection"));
+  recordDiagnostic("app.start", APP_VERSION);
   const DEFAULT_AIRCRAFT_SETTINGS = {
     groundRoundingMinutes: 5,
     groundRoundingDirection: "nearest",
@@ -195,6 +215,7 @@
     else if (state.view === "shift") renderShift();
     else if (state.view === "reports") renderReports();
     else if (state.view === "settings") renderSettings();
+    else if (state.view === "diagnostics") renderDiagnostics();
     else if (state.view === "usage-settings") renderUsageSettings();
     else if (state.view === "type-usage-settings") renderTypeUsageSettings();
     else if (state.view === "aircraft-layout") renderAircraftLayout();
@@ -360,12 +381,15 @@
       }
       function openHeldTile(tile) {
         if (!tile.isConnected || state.view !== "aircraft") return;
+        recordDiagnostic("layout.open.request");
         activeCounterIndex = Number(tile.dataset.counterIndex);
         viewStack.push(state.view);
         state.view = "aircraft-layout";
         try {
           renderAircraftLayout({ layout, catalog, activeTab });
+          recordDiagnostic("layout.open.ok", `toolbar=${Boolean(app.querySelector(".counter-gesture-toolbar"))}`);
         } catch (error) {
+          recordDiagnostic("layout.open.error", error.name);
           console.error("Не удалось открыть редактор раскладки", error);
           finishBackNavigation();
           showToast("Не удалось открыть редактор раскладки");
@@ -380,6 +404,7 @@
           if (!tile.isConnected || state.view !== "aircraft") return;
           start.ready = true;
           tile.classList.add("counter-tile-active");
+          recordDiagnostic("layout.hold.ready");
           try { navigator.vibrate?.(25); } catch (_) {}
         }, 2000);
       }
@@ -387,6 +412,7 @@
         const held = start;
         stopHold();
         if (!held?.ready) return;
+        recordDiagnostic("layout.hold.released");
         if (event.cancelable) event.preventDefault();
         openHeldTile(held.tile);
       }
@@ -416,7 +442,10 @@
         trackHold(touch.clientX, touch.clientY);
       }, { passive: true });
       tiles.addEventListener("touchend", finishHold, { passive: false });
-      tiles.addEventListener("touchcancel", stopHold);
+      tiles.addEventListener("touchcancel", () => {
+        if (start?.ready) recordDiagnostic("layout.hold.cancelled");
+        stopHold();
+      });
       for (const name of ["contextmenu", "selectstart"]) tiles.addEventListener(name, (event) => event.preventDefault());
     }
     return { layout, catalog, activeTab };
@@ -632,11 +661,13 @@
       const previous = aircraft.boardLayouts;
       aircraft.boardLayouts = { ...previous, [activeTab]: structuredClone(draft) };
       if (saveState()) {
+        recordDiagnostic("layout.save.ok");
         const currentScroll = window.scrollY;
         finishBackNavigation();
         window.scrollTo(0, currentScroll);
       }
       else {
+        recordDiagnostic("layout.save.error");
         aircraft.boardLayouts = previous;
         showToast("Не удалось сохранить раскладку");
       }
@@ -653,6 +684,7 @@
       const gesture = event.target.closest("[data-gesture]");
       if (gesture) {
         counterGesture = gesture.dataset.gesture;
+        recordDiagnostic("layout.tool", counterGesture);
         surface.classList.toggle("counter-resize-surface", counterGesture === "resize");
         preview.classList.toggle("counter-move-surface", counterGesture === "move");
         paint();
@@ -1293,10 +1325,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.14</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.15</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.14", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.15", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1726,6 +1758,44 @@
     });
   }
 
+  function renderDiagnostics() {
+    app.innerHTML = shell(`
+      <h1>Диагностика</h1>
+      <p class="field-help">Повтори сбой, затем открой этот экран и скопируй журнал. В нём нет номеров бортов и введённых значений. Хранятся последние 100 событий на устройстве.</p>
+      <label>Журнал<textarea id="diagnostic-text" rows="12" readonly></textarea></label>
+      <div class="aircraft-actions"><button class="primary-button" id="diagnostic-copy">Скопировать журнал</button>
+      <button class="secondary-button" id="diagnostic-clear">Очистить журнал</button></div>
+    `, { title: "Диагностика", subtitle: "", back: true, settings: false });
+    const output = document.getElementById("diagnostic-text");
+    let platform = "Веб-версия";
+    try { platform = window.AndroidBridge?.getDiagnosticEnvironment?.() || platform; } catch (_) {}
+    const engine = navigator.userAgent.match(/Chrome\/[\d.]+/)?.[0] ?? "WebView: версия неизвестна";
+    const update = () => {
+      output.value = [`Авиаресурс ${APP_VERSION} | ${platform} | ${engine}`,
+        ...diagnostics.map(({ at, event, detail }) => `${at} ${event}${detail ? " " + detail : ""}`)].join("\n");
+    };
+    update();
+    document.getElementById("diagnostic-copy").onclick = async () => {
+      try {
+        if (window.AndroidBridge?.copyDiagnostics) {
+          window.AndroidBridge.copyDiagnostics(output.value);
+        } else {
+          await navigator.clipboard.writeText(output.value);
+        }
+        showToast("Журнал скопирован");
+      } catch (_) {
+        output.focus();
+        output.select();
+        showToast("Журнал выделен. Скопируй его вручную.");
+      }
+    };
+    document.getElementById("diagnostic-clear").onclick = () => {
+      diagnostics = [];
+      try { localStorage.removeItem(DIAGNOSTIC_KEY); } catch (_) {}
+      update();
+    };
+  }
+
   function renderSettings() {
     const aircraft = selectedAircraft();
     const aircraftNotificationRows = state.aircraft.map((item) => `
@@ -1737,13 +1807,14 @@
       <section class="page-heading compact"><div><p class="eyebrow">Приложение</p><h1>Настройки</h1></div></section>
       <section class="settings-list">
         <button class="setting-row" data-view="usage-settings"><strong>Виды наработки</strong>${icon("chevron")}</button>
+        <button class="setting-row" data-view="diagnostics"><strong>Диагностика</strong>${icon("chevron")}</button>
         <label class="setting-row"><span><strong>Все уведомления</strong><small>Главный переключатель имеет высший приоритет</small></span><input id="global-notifications" type="checkbox" ${state.globalNotifications ? "checked" : ""}></label>
         <div class="settings-subheading">Уведомления по самолётам</div>
         ${aircraftNotificationRows}
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.14</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.15</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });

@@ -411,6 +411,17 @@ async function main() {
     })()`);
     assert.deepEqual(layoutResult, { count: 0, persisted: true, selectedAction: true, restored: true });
     results.aircraftLayout = "ok";
+    const journal = await evaluate(`(() => {
+      window.handleAndroidBack();
+      document.querySelector('[data-action="settings"]').click();
+      document.querySelector('[data-view="diagnostics"]').click();
+      return document.querySelector('#diagnostic-text').value;
+    })()`);
+    assert.match(journal, /layout\.hold\.ready/);
+    assert.match(journal, /layout\.open\.ok toolbar=true/);
+    assert.match(journal, /layout\.save\.ok/);
+    assert.doesNotMatch(journal, /Су-33|49051002905|742:18/);
+    results.diagnosticJournal = "ok";
 
     process.stdout.write(`${JSON.stringify(results)}\n`);
   } finally {
