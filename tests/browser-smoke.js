@@ -378,6 +378,7 @@ async function main() {
       document.querySelector('[data-layout-action="split"]').click();
       document.querySelector('[data-layout-action="right"][data-index="0"]').click();
       document.querySelector('[data-layout-action="merge"]').click();
+      document.querySelector('[data-layout-action="size"][data-index="0"]').click();
       const count = document.querySelectorAll('.counter-tile').length;
       window.handleAndroidBack();
       let dialog = document.querySelector('dialog[open]');
@@ -385,7 +386,9 @@ async function main() {
         dialog.addEventListener('close', resolve, { once: true });
         dialog.querySelector('[value="save"]').click();
       });
-      const persisted = Boolean(document.querySelector('.counter-tile'));
+      const tile = document.querySelector('.counter-tile');
+      const persisted = tile.getBoundingClientRect().width < tile.parentElement.clientWidth &&
+        JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0].counterLayout[0].span === 6;
       document.querySelector('[data-view="aircraft-layout"]').click();
       document.querySelector('#layout-default').click();
       dialog = document.querySelector('dialog[open]');

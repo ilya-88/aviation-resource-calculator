@@ -44,13 +44,24 @@ button { color: inherit; }
 .counter-tiles { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: start; gap: 8px; margin: 10px 0; }
 .counter-tile { grid-column: span var(--tile-span, 6); min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow-wrap: anywhere; }
 .counter-value { font-size: var(--tile-font, 1rem); min-height: var(--tile-height, 0px); }
-#counter-preview .counter-value { touch-action: none; user-select: none; }
+#counter-preview .counter-tile { position: relative; }
+.counter-resize-surface, .counter-move-surface .counter-tile-active { touch-action: none; user-select: none; }
+.counter-tile { border-radius: 24px; }
+.counter-gesture-toolbar { position: absolute; z-index: 3; right: 4px; top: -34px; display: flex; gap: 4px; background: var(--surface); padding: 3px; border-radius: 12px; box-shadow: var(--shadow); }
+.counter-gesture-toolbar button { min-width: 40px; min-height: 36px; border: 0; border-radius: 8px; background: var(--blue-soft); cursor: pointer; }
+.counter-gesture-toolbar button[aria-pressed="true"] { background: var(--navy); color: white; }
+.counter-save-bar { position: fixed; right: 12px; bottom: 12px; z-index: 25; display: flex; gap: 8px; padding: 6px; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+.counter-move-ghost { position: fixed; z-index: 30; pointer-events: none; opacity: .9; box-shadow: var(--shadow); }
+.counter-controls[hidden] { display: none; }
 .counter-tile-active { outline: 2px dashed #427fc7; outline-offset: -3px; }
 .counter-edit-button { float: left; min-width: 44px; min-height: 44px; }
 @media (prefers-reduced-motion: no-preference) {
-  .counter-tile-active { animation: counter-edit-pulse 1.2s ease-in-out infinite alternate; }
-  @keyframes counter-edit-pulse { to { outline-color: #244977; outline-offset: 0; } }
+  .counter-edit-outline rect { animation: counter-edit-run 1.2s linear infinite; }
+  @keyframes counter-edit-run { to { stroke-dashoffset: -10; } }
 }
+.counter-edit-outline { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.counter-edit-outline rect { x: 2px; y: 2px; width: calc(100% - 4px); height: calc(100% - 4px); fill: none; stroke: #427fc7; stroke-width: 2; stroke-dasharray: 6 4; }
+.counter-tile-active:has(.counter-edit-outline) { outline: none; }
 .counter-controls { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .counter-controls button { min-width: 38px; min-height: 36px; padding: 4px 8px; font-size: 13px; }
 .counter-drag-handle { display: block; margin: 0 0 4px auto; width: 44px; height: 44px; border: 0; border-radius: 8px; background: var(--blue-soft); color: var(--navy); font-size: 24px; cursor: grab; touch-action: none; user-select: none; }
