@@ -319,14 +319,15 @@
 
   function renderResources() {
     const aircraft = selectedAircraft();
-    const initialResources = [...aircraft.resources].sort((a, b) => a.remaining - b.remaining);
+    const resources = aircraft.resources.filter((item) => !["workUsage", "workDate"].includes(item.notificationCategory));
+    const initialResources = [...resources].sort(calc.compareResourceRemaining);
     app.innerHTML = shell(`
       <section class="page-heading">
         <div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>Остатки ресурсов</h1></div>
         <label class="search-field">${icon("search")}<input id="resource-search" type="search" placeholder="Поиск по объектам и работам"></label>
       </section>
       <div class="filter-row" role="group" aria-label="Сортировка ресурсов">
-        <button class="filter-chip is-active" data-sort="remaining">По остатку</button>
+        <button class="filter-chip is-active" data-sort="remaining">По доле остатка</button>
         <button class="filter-chip" data-sort="installed">По установке</button>
         <button class="filter-chip" data-sort="produced">По производству</button>
         <button class="filter-chip" data-sort="used">По наработке</button>
@@ -341,7 +342,7 @@
     let key = "remaining";
     function updateList() {
       const query = search.value.trim().toLowerCase();
-      let sorted = aircraft.resources.filter((item) => `${item.object} ${item.name}`.toLowerCase().includes(query));
+      let sorted = resources.filter((item) => `${item.object} ${item.name}`.toLowerCase().includes(query));
       if (key === "installed" || key === "produced") {
         sorted.sort((a, b) => (a[key] || "9999-12-31").localeCompare(b[key] || "9999-12-31"));
       } else if (key === "used") {
@@ -352,7 +353,7 @@
       } else if (key === "calendarRemaining") {
         sorted = sorted.filter((item) => item.unit === "дн.").sort((a, b) => a.remaining - b.remaining);
       } else {
-        sorted.sort((a, b) => a.remaining - b.remaining);
+        sorted.sort(calc.compareResourceRemaining);
       }
       document.getElementById("resource-list").innerHTML = resourceRows(sorted, { editable: true });
       bindResourceButtons();
@@ -368,10 +369,11 @@
   function resourceRows(resources, options = {}) {
     if (!resources.length) return `<div class="empty-state"><h2>Ничего не найдено</h2><p>Измените поисковый запрос.</p></div>`;
     return resources.map((resource) => {
-      const percent = resource.limit > 0 ? Math.max(2, Math.min(100, resource.remaining / resource.limit * 100)) : 100;
+      const percent = resource.limit > 0 ? Math.max(0, Math.min(100, resource.remaining / resource.limit * 100)) : null;
       return `<article class="resource-row">
         <div class="resource-row__top"><div><span>${escapeHtml(resource.object)}</span><strong>${escapeHtml(resource.name)}</strong></div><span class="resource-value status-text-${resource.status}">${formatNumber(resource.remaining)} ${escapeHtml(resource.unit)}</span></div>
-        <div class="progress-track"><span class="progress-fill status-bg-${resource.status}" style="width:${percent}%"></span></div>
+        ${percent == null ? "" : `<div class="progress-track"><span class="progress-fill status-bg-${resource.status}" style="width:${percent}%"></span></div>
+        <p class="field-help">Остаток: ${formatNumber(percent)}% от ${formatNumber(resource.limit)} ${escapeHtml(resource.unit)}</p>`}
         <div class="resource-row__meta"><span>Установлен: ${formatOptionalDate(resource.installed)}</span><span>Изготовлен: ${formatOptionalDate(resource.produced)}</span></div>
         ${options.editable ? `<button class="resource-edit-button" data-resource-id="${resource.id}">Открыть карточку</button>` : ""}
       </article>`;
@@ -862,9 +864,9 @@
       }
       const { rows, totals } = calc.summarizeShifts(aircraft.shifts, start, end);
       output.innerHTML = `<h2>${formatDate(start)} — ${formatDate(end)}</h2>
-        <p>Смен: ${rows.length} · Налёт: ${calc.formatDuration(totals.flightMinutes)} · Посадки: ${totals.actualLandings} / ${formatNumber(totals.equivalentLandings)} приведённых · Зацепы: ${totals.arresterHooks}</p>
+        <p>Смен: ${rows.length} · ${escapeHtml(usageRule("flight").label)}: ${calc.formatDuration(totals.flightMinutes)} · Посадки: ${totals.actualLandings} / ${formatNumber(totals.equivalentLandings)} в зачёт · Зацепы: ${totals.arresterHooks}</p>
         <p>Левый двигатель: ${calc.formatDuration(totals.leftEngineMinutes)}, запусков: ${totals.leftStarts}. Правый двигатель: ${calc.formatDuration(totals.rightEngineMinutes)}, запусков: ${totals.rightStarts}.</p>
-        ${rows.map((row) => `<article class="history-row"><div><strong>${formatDate(row.date)}</strong><span>Налёт ${calc.formatDuration(row.flightMinutes)} · ${row.actualLandings} посадок</span></div></article>`).join("")}`;
+        ${rows.map((row) => `<article class="history-row"><div><strong>${formatDate(row.date)}</strong><span>${escapeHtml(usageRule("flight").label)} ${calc.formatDuration(row.flightMinutes)} · ${row.actualLandings} посадок</span></div></article>`).join("")}`;
     }
     form.addEventListener("change", showReport);
     form.addEventListener("submit", (event) => {
@@ -877,10 +879,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.4</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.5</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.4", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.5", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1035,19 +1037,30 @@
 
   function renderUsageSettings() {
     const ground = state.sharedGround ?? DEFAULT_AIRCRAFT_SETTINGS;
+    const groups = [
+      ["Наработка", ["flight", "ground", "maximum"]],
+      ["Посадки и зацепы", OPTIONAL_USAGE_TYPES],
+    ];
+    const usageRows = (keys) => keys.map((key) => {
+      const rule = usageRule(key);
+      return `<fieldset data-usage-row="${key}" ${rule.enabled === false ? "hidden" : ""}><legend data-usage-title="${key}">${escapeHtml(rule.label)}</legend><div class="field-pair">
+        <label>Наименование<input type="text" name="${key}Label" value="${escapeHtml(rule.label)}" required></label>
+        <label>Коэффициент<input type="number" name="${key}Factor" value="${rule.factor}" min="0" step="any" required></label>
+      </div>
+      ${OPTIONAL_USAGE_TYPES.includes(key) ? `<input type="hidden" name="${key}Enabled" value="${rule.enabled !== false}"><button type="button" class="secondary-button" data-usage-toggle="${key}" data-enable="false">Скрыть вид</button>` : ""}
+      <p class="field-help" data-usage-example="${key}"></p></fieldset>`;
+    }).join("");
     app.innerHTML = shell(`
-      <h1>Виды наработки</h1>
       <form id="usage-settings-form" class="shift-form settings-form">
-        <p>Применяется ко всем бортам. Фактические посадки и зацепы сохраняются в том количестве, в котором их ввели.</p>
-        ${Object.entries(USAGE_TYPES).map(([key, title]) => `<fieldset data-usage-row="${key}" ${usageRule(key).enabled === false ? "hidden" : ""}><legend>${title}</legend><div class="field-pair">
-          <label>Наименование<input type="text" name="${key}Label" value="${escapeHtml(usageRule(key).label)}" required></label>
-          <label>Коэффициент<input type="number" name="${key}Factor" value="${usageRule(key).factor}" min="0" step="any" required></label>
+        <div class="usage-heading"><h1>Виды наработки</h1>
+          <button type="button" class="usage-hidden-button" aria-label="Скрытые виды" title="Скрытые виды" aria-controls="hidden-usage" aria-expanded="false">♲</button>
         </div>
-        ${OPTIONAL_USAGE_TYPES.includes(key) ? `<input type="hidden" name="${key}Enabled" value="${usageRule(key).enabled !== false}"><button type="button" class="secondary-button" data-usage-toggle="${key}" data-enable="false">Убрать</button>` : ""}
-        <p class="field-help" data-usage-example="${key}"></p></fieldset>`).join("")}
-        <details><summary>Вернуть убранный вид</summary>
+        <section id="hidden-usage" class="usage-hidden-panel" hidden aria-label="Скрытые виды">
+          <h2>Скрытые виды</h2><p id="hidden-usage-empty">Скрытых видов нет.</p>
           ${OPTIONAL_USAGE_TYPES.map((key) => `<div data-usage-restore="${key}" ${usageRule(key).enabled !== false ? "hidden" : ""}><button type="button" class="secondary-button" data-usage-toggle="${key}" data-enable="true">Вернуть «${escapeHtml(usageRule(key).label)}»</button></div>`).join("")}
-        </details>
+        </section>
+        <p class="field-help">Настройки для всех бортов. Коэффициенты меняют зачёт, фактическое количество сохраняется.</p>
+        ${groups.map(([label, keys]) => `<section class="usage-group"><h2>${label}</h2>${usageRows(keys)}</section>`).join("")}
         <fieldset><legend>Пересчёт земли для двигателей</legend>
           <label>Процент от округлённой земли<input name="percent" type="number" min="0" max="100" step="any" value="${ground.groundPercent}" required></label>
           <label>Шаг округления, минут<input name="step" type="number" min="1" step="1" value="${ground.groundRoundingMinutes}" required></label>
@@ -1057,12 +1070,25 @@
         <button class="primary-button" type="submit">Сохранить</button>
       </form>`, { title: "Виды наработки", subtitle: "", back: true, settings: false });
     const form = document.getElementById("usage-settings-form");
+    const hiddenPanel = form.querySelector("#hidden-usage");
+    const hiddenButton = form.querySelector(".usage-hidden-button");
+    function updateHiddenCount() {
+      const count = hiddenPanel.querySelectorAll("[data-usage-restore]:not([hidden])").length;
+      form.querySelector("#hidden-usage-empty").hidden = count > 0;
+      hiddenButton.textContent = count ? `♲ ${count}` : "♲";
+    }
+    hiddenButton.addEventListener("click", () => {
+      hiddenPanel.hidden = !hiddenPanel.hidden;
+      hiddenButton.setAttribute("aria-expanded", String(!hiddenPanel.hidden));
+    });
+    updateHiddenCount();
     form.querySelectorAll("[data-usage-toggle]").forEach((button) => button.addEventListener("click", () => {
       const { usageToggle: key, enable } = button.dataset;
       form.elements.namedItem(`${key}Enabled`).value = enable;
       const row = form.querySelector(`[data-usage-row="${key}"]`);
       row.hidden = enable === "false";
       form.querySelector(`[data-usage-restore="${key}"]`).hidden = enable === "true";
+      updateHiddenCount();
     }));
     function updateExamples() {
       for (const output of form.querySelectorAll("[data-usage-example]")) {
@@ -1084,6 +1110,15 @@
       output.textContent = `Ввод: 13 мин → округление: ${example.roundedMinutes} мин → ${example.percent}%: ${formatNumber(example.contributionMinutes)} мин → в наработку двигателя: ${formatNumber(contribution)} мин (с коэффициентом земли).`;
     }
     form.addEventListener("input", updateExamples);
+    form.addEventListener("input", (event) => {
+      const row = event.target.closest("[data-usage-row]");
+      if (!row || event.target.name !== `${row.dataset.usageRow}Label`) return;
+      const key = row.dataset.usageRow;
+      const label = event.target.value.trim() || USAGE_TYPES[key];
+      row.querySelector("[data-usage-title]").textContent = label;
+      const restore = hiddenPanel.querySelector(`[data-usage-toggle="${key}"]`);
+      if (restore) restore.textContent = `Вернуть «${label}»`;
+    });
     updateExamples();
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -1118,7 +1153,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.4</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.5</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });

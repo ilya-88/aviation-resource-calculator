@@ -2,6 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const calc = require("../src/calculations.js");
 
+test("общая сортировка сравнивает доли ресурса, а записи без лимита ставит в конец", () => {
+  const hours = { remaining: 5, limit: 10 };
+  const days = { remaining: 30, limit: 365 };
+  const unknown = { remaining: 0, limit: 0 };
+  assert.deepEqual([unknown, hours, days].sort(calc.compareResourceRemaining), [days, hours, unknown]);
+});
+
 test("направление округления можно изменить без изменения стандартного правила", () => {
   assert.equal(calc.calculateGroundContribution(7, { direction: "up" }).roundedMinutes, 10);
   assert.equal(calc.calculateGroundContribution(8, { direction: "down" }).roundedMinutes, 5);

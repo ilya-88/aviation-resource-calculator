@@ -85,6 +85,13 @@
     return null;
   }
 
+  function compareResourceRemaining(a, b) {
+    const ratio = (item) => item.limit > 0 ? item.remaining / item.limit : Infinity;
+    const left = ratio(a);
+    const right = ratio(b);
+    return left === right ? 0 : left < right ? -1 : 1;
+  }
+
   function extendUsageResource(resource, newLimit) {
     const previousLimit = requireNonNegativeNumber(resource.limit, "Прежний ресурс");
     const remaining = requireNonNegativeNumber(resource.remaining, "Остаток");
@@ -109,6 +116,7 @@
     roundToNearestStep,
     summarizeShifts,
     extendUsageResource,
+    compareResourceRemaining,
     calculateGroundContribution,
     calculateEngineIncrement,
     calculateEquivalentLandings,
