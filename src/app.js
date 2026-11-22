@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.24";
+  const APP_VERSION = "0.2.25";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -115,6 +115,7 @@
         globalNotifications: state.globalNotifications,
         selectedAircraftId: state.selectedAircraftId,
         typeSettings: state.typeSettings,
+        aircraftTypes: state.aircraftTypes,
         usageRules: state.usageRules,
         sharedGround: state.sharedGround,
         usageTypeOverrides: state.usageTypeOverrides,
@@ -160,6 +161,18 @@
     if (!normalized.aircraft.some((item) => item.id === normalized.selectedAircraftId)) {
       normalized.selectedAircraftId = normalized.aircraft[0]?.id || null;
     }
+    const types = new Map();
+    for (const value of [
+      ...(Array.isArray(raw?.aircraftTypes) ? raw.aircraftTypes : []),
+      ...normalized.aircraft.map((item) => item.type),
+      ...normalized.typeSettings.map((item) => item.type),
+    ]) {
+      if (typeof value !== "string" || !value.trim()) continue;
+      const name = value.trim();
+      const key = name.toLowerCase();
+      if (!types.has(key)) types.set(key, name);
+    }
+    normalized.aircraftTypes = [...types.values()];
     return normalized;
   }
 
@@ -217,12 +230,15 @@
     }
     if (state.view === "aircraft") renderAircraft();
     else if (state.view === "aircraft-settings") renderAircraftSettings();
+    else if (state.view === "board-details") renderBoardDetails();
+    else if (state.view === "board-image") renderBoardImage();
     else if (state.view === "block") renderBlock();
     else if (state.view === "resource-editor") renderResourceEditor();
     else if (state.view === "resources") renderResources();
     else if (state.view === "shift") renderShift();
     else if (state.view === "reports") renderReports();
     else if (state.view === "settings") renderSettings();
+    else if (state.view === "aircraft-types") renderAircraftTypes();
     else if (state.view === "diagnostics") renderDiagnostics();
     else if (state.view === "usage-settings") renderUsageSettings();
     else if (state.view === "type-usage-settings") renderTypeUsageSettings();
@@ -259,7 +275,7 @@
     const aircraftCards = state.aircraft.map((aircraft) => {
       const urgent = aircraft.resources.filter((resource) => resource.status !== "ok").length;
       return `
-        <button class="aircraft-card" data-aircraft-id="${aircraft.id}">
+        <article class="aircraft-list-entry"><button class="aircraft-card" data-aircraft-id="${escapeHtml(aircraft.id)}">
           <span class="aircraft-card__visual">${aircraft.cardImage?.data ? `<img alt="" class="board-image ${aircraft.cardImage.fit === "contain" ? "board-image-contain" : ""}" src="${escapeHtml(aircraft.cardImage.data)}">` : icon("plane")}</span>
           <span class="aircraft-card__body">
             <span class="aircraft-card__title">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</span>
@@ -270,8 +286,14 @@
             </span>
           </span>
           <span class="aircraft-card__status status-${urgent ? "warning" : "ok"}">${urgent ? `${urgent} требуют внимания` : "Ресурс в норме"}</span>
-          <span class="aircraft-card__chevron">${icon("chevron")}</span>
-        </button>`;
+        </button>
+        <details class="aircraft-card-menu">
+          <summary aria-label="Меню борта ${escapeHtml(aircraft.boardNumber)}">⋮</summary>
+          <div class="aircraft-card-menu-panel">
+            <button type="button" class="secondary-button" data-board-menu="board-details" data-board-id="${escapeHtml(aircraft.id)}">Реквизиты борта</button>
+            <button type="button" class="secondary-button" data-board-menu="board-image" data-board-id="${escapeHtml(aircraft.id)}">Обновить картинку</button>
+          </div>
+        </details></article>`;
     }).join("");
 
     const nearest = state.aircraft.flatMap((aircraft) => aircraft.resources
@@ -300,13 +322,15 @@
   function renderAircraft(layoutEditing = false) {
     const aircraft = selectedAircraft();
     const activeTab = state.aircraftTab || "aggregates";
-    const blocks = aircraft.blocks.map((block) => `
+    const renderBlockTile = (block) => `
       <button class="equipment-block" data-block-id="${block.id}">
         <span class="equipment-block__icon">${block.kind === "engine" ? "◉" : block.kind === "airframe" ? "△" : "⬡"}</span>
         <span class="equipment-block__body"><strong>${escapeHtml(block.name)}</strong><small>${escapeHtml(block.caption)}</small></span>
         <span class="status-dot status-${block.status}" aria-label="${statusLabel(block.status)}"></span>
         <span>${icon("chevron")}</span>
-      </button>`).join("");
+      </button>`;
+    const aircraftForms = aircraft.blocks.filter((block) => block.kind === "airframe");
+    const blocks = aircraft.blocks.filter((block) => block.kind !== "airframe").map(renderBlockTile).join("");
 
     const recentShifts = aircraft.shifts.slice(-3).reverse().map((shift) => `
       <article class="history-row">
@@ -352,6 +376,7 @@
     app.innerHTML = shell(`
       ${tabs}
       <div class="aircraft-actions">
+        ${aircraftForms.map(renderBlockTile).join("")}
         <button class="secondary-button" data-view="resources">${icon("resource")} Остатки ресурсов</button>
         <button class="primary-button" data-view="shift">${icon("log")} Внести лётную смену</button>
       </div>
@@ -1243,16 +1268,6 @@
       </div>`).join("");
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>Настройки самолёта</h1></div></section>
-      <form id="board-image-form" class="shift-form settings-form">
-        <fieldset><legend>Картинка борта</legend>
-          <span class="aircraft-card__visual" id="board-image-preview">${icon("plane")}</span>
-          <label>Фото или эмблема<input name="picture" type="file" accept="image/*"></label>
-          <label>Как показывать<select name="fit"><option value="cover">Заполнить рамку с обрезкой</option><option value="contain">Показать целиком</option></select></label>
-          <p class="field-help" role="status" id="board-image-status"></p>
-          <div class="aircraft-actions"><button class="primary-button" type="submit">Сохранить картинку</button>
-          <button type="button" class="secondary-button" id="board-image-remove">Убрать картинку</button></div>
-        </fieldset>
-      </form>
       <section class="settings-list">
         <label class="setting-row"><span><strong>Уведомления этого самолёта</strong><small>${state.globalNotifications ? "Работы и ресурсы выбранного борта" : "Общие уведомления приложения выключены"}</small></span><input id="aircraft-notifications" type="checkbox" ${aircraft.notifications ? "checked" : ""} ${!state.globalNotifications ? "disabled" : ""}></label>
       </section>
@@ -1294,7 +1309,6 @@
       <button class="add-block-button" data-action="add-block">${icon("plus")} Добавить блок</button>
     `, { title: "Настройки самолёта", subtitle: `${aircraft.type} · борт ${aircraft.boardNumber}`, back: true, settings: false });
 
-    bindBoardImageForm(aircraft);
     document.getElementById("aircraft-notifications").addEventListener("change", (event) => {
       aircraft.notifications = state.globalNotifications && event.target.checked;
       saveState();
@@ -1349,6 +1363,80 @@
     });
     document.querySelectorAll("[data-rename-block-id]").forEach((button) => button.addEventListener("click", () => renameBlockById(button.dataset.renameBlockId)));
     document.querySelectorAll("[data-remove-block-id]").forEach((button) => button.addEventListener("click", () => removeBlock(button.dataset.removeBlockId)));
+  }
+
+  function aircraftTypeSelect(selected = "") {
+    return `<select name="type" required><option value="">Выбрать тип</option>${state.aircraftTypes.map((name) =>
+      `<option value="${escapeHtml(name)}" ${name.toLowerCase() === selected.trim().toLowerCase() ? "selected" : ""}>${escapeHtml(name)}</option>`
+    ).join("")}</select>`;
+  }
+
+  function renderAircraftTypes() {
+    app.innerHTML = shell(`
+      <section class="settings-list">${state.aircraftTypes.map((name) => `<div class="setting-row"><strong>${escapeHtml(name)}</strong></div>`).join("")}</section>
+      <form id="aircraft-type-form" class="shift-form settings-form">
+        <label>Название нового типа<input name="type" required></label>
+        <p id="aircraft-type-status" role="status"></p>
+        <button class="primary-button" type="submit">Добавить тип</button>
+      </form>`, { title: "Типы самолётов", back: true, settings: false });
+    document.getElementById("aircraft-type-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const name = event.currentTarget.elements.type.value.trim();
+      const status = document.getElementById("aircraft-type-status");
+      if (!name) { status.textContent = "Укажи название типа."; return; }
+      if (state.aircraftTypes.some((type) => type.toLowerCase() === name.toLowerCase())) {
+        status.textContent = "Такой тип уже есть.";
+        return;
+      }
+      state.aircraftTypes.push(name);
+      if (saveState()) render();
+      else {
+        state.aircraftTypes.pop();
+        status.textContent = "Не удалось сохранить тип.";
+      }
+    });
+  }
+
+  function renderBoardDetails() {
+    const aircraft = selectedAircraft();
+    app.innerHTML = shell(`<h1>Реквизиты борта</h1>
+      <form id="board-details-form" class="shift-form settings-form">
+        <label>Тип самолёта${aircraftTypeSelect(aircraft.type)}</label>
+        <label>Бортовой номер<input name="boardNumber" type="text" value="${escapeHtml(aircraft.boardNumber)}" required></label>
+        <label>Заводской номер<input name="serialNumber" type="text" value="${escapeHtml(aircraft.serialNumber || "")}"></label>
+        <label>RF<input name="rfNumber" type="text" value="${escapeHtml(aircraft.rfNumber || "")}" placeholder="Например, 33738"></label>
+        <p id="board-details-status" class="field-help" role="status"></p>
+        <button class="primary-button" type="submit">Сохранить реквизиты</button>
+      </form>`, { title: "Реквизиты борта", subtitle: "", back: true, settings: false });
+    const form = document.getElementById("board-details-form");
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, value.trim()]));
+      const status = document.getElementById("board-details-status");
+      if (!state.aircraftTypes.includes(data.type) || !data.boardNumber) { status.textContent = "Укажи тип и бортовой номер."; return; }
+      data.rfNumber = data.rfNumber.replace(/^RF[\s-]*/i, "");
+      const previous = Object.fromEntries(Object.keys(data).map((key) => [key, aircraft[key]]));
+      Object.assign(aircraft, data);
+      if (saveState()) navigateBack();
+      else {
+        Object.assign(aircraft, previous);
+        status.textContent = "Не удалось сохранить реквизиты.";
+      }
+    });
+  }
+
+  function renderBoardImage() {
+    const aircraft = selectedAircraft();
+    app.innerHTML = shell(`<h1>Картинка борта</h1>
+      <form id="board-image-form" class="shift-form settings-form">
+        <span class="aircraft-card__visual" id="board-image-preview">${icon("plane")}</span>
+        <label>Фото или эмблема<input name="picture" type="file" accept="image/*"></label>
+        <label>Как показывать<select name="fit"><option value="cover">Заполнить рамку с обрезкой</option><option value="contain">Показать целиком</option></select></label>
+        <p class="field-help" role="status" id="board-image-status"></p>
+        <div class="aircraft-actions"><button class="primary-button" type="submit">Сохранить картинку</button>
+        <button type="button" class="secondary-button" id="board-image-remove">Убрать картинку</button></div>
+      </form>`, { title: "Картинка борта", subtitle: "", back: true, settings: false });
+    bindBoardImageForm(aircraft);
   }
 
   function bindBoardImageForm(aircraft) {
@@ -1442,6 +1530,12 @@
     const relatedResources = aircraft.resources.filter((resource) =>
       resource.object === block.name || (block.kind === "airframe" && resource.object === "Самолёт")
     );
+    const assemblies = aircraft.blocks.filter((item) => item.kind !== "airframe");
+    const installedAssemblies = assemblies.filter((item) => item.installed !== false);
+    const assemblyHistory = assemblies.flatMap((item) =>
+      item.events.filter((entry) => entry.type === "install" || entry.type === "dismantle")
+        .map((entry) => ({ ...entry, name: item.name })))
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
     const airframeFields = block.kind === "airframe" ? `
       <section class="metric-grid" aria-label="Наработка планера">
         <div class="metric"><span>${escapeHtml(usageRule("flight").label)}</span><strong>${calc.formatDuration(aircraft.totalFlightMinutes)}</strong></div>
@@ -1449,13 +1543,25 @@
         <div class="metric"><span>Зацепы</span><strong>${aircraft.arresterHooks}</strong></div>
       </section>
       <fieldset><legend>ППР планера</legend>
-        <div class="field-pair">
-          <label>Заводской номер<input name="aircraftSerialNumber" type="text" value="${escapeHtml(aircraft.serialNumber || "")}"></label>
-          <label>RF<input name="rfNumber" type="text" value="${escapeHtml(aircraft.rfNumber || "")}"></label>
-        </div>
         <label>${escapeHtml(usageRule("flight").label)} ППР, минут<input name="pprFlightMinutes" type="number" min="0" step="1" value="${aircraft.pprFlightMinutes ?? ""}"></label>
         <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}"></label>
       </fieldset>` : "";
+    const installations = block.kind === "airframe" ? `
+      <section class="section-stack settings-section-heading">
+        <h2>Установленные агрегаты</h2>
+        ${installedAssemblies.map((item) => {
+          const entry = item.events.filter((event) => event.type === "install").at(-1);
+          return `<button class="setting-row" data-block-id="${escapeHtml(item.id)}"><span>
+            <strong>${escapeHtml(item.name)}</strong>
+            <small>${entry ? `Установлен ${formatOptionalDate(entry.date)}${entry.note ? ` · ${escapeHtml(entry.note)}` : ""}` : "Дата установки не указана"}</small>
+          </span>${icon("chevron")}</button>`;
+        }).join("") || "<p>Установленных агрегатов пока нет.</p>"}
+        <h2>История установок и демонтажа</h2>
+        ${assemblyHistory.map((entry) => `<article class="history-row"><div>
+          <strong>${formatOptionalDate(entry.date)} · ${escapeHtml(entry.name)}</strong>
+          <span>${entry.type === "install" ? "Установка" : "Демонтаж"}${entry.note ? ` · ${escapeHtml(entry.note)}` : ""}</span>
+        </div></article>`).join("") || "<p>Записей пока нет.</p>"}
+      </section>` : "";
     const eventLabels = { repair: "Ремонт", dismantle: "Демонтаж", install: "Установка", extension: "Продление ресурса", correction: "Корректировка" };
     const eventRows = block.events.slice().reverse().map((item) => {
       const before = item.beforeRepair;
@@ -1474,14 +1580,22 @@
         <fieldset><legend>Формуляр</legend>
           <label><span>Название</span><input name="name" type="text" value="${escapeHtml(block.name)}" required></label>
           <label><span>Описание</span><input name="caption" type="text" value="${escapeHtml(block.caption)}"></label>
-          <div class="field-pair"><label><span>Тип/модель</span><input name="model" type="text" value="${escapeHtml(block.model || "")}"></label><label><span>Заводской/обычный номер</span><input name="serialNumber" type="text" value="${escapeHtml(block.serialNumber || "")}"></label></div>
+          ${block.kind === "airframe" ? `
+          <div class="field-pair">
+            <label>Заводской номер<output>${escapeHtml(aircraft.serialNumber || "Не указан")}</output></label>
+            <label>RF<output>${escapeHtml(aircraft.rfNumber || "Не указан")}</output></label>
+          </div>` : `
+          ${block.kind === "engine" ? "" : `<label><span>Тип/модель</span><input name="model" type="text" value="${escapeHtml(block.model || "")}"></label>`}
+          <label><span>Заводской/обычный номер</span><input name="serialNumber" type="text" value="${escapeHtml(block.serialNumber || "")}"></label>
           <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(block.drawingNumber || "")}"></label>
-          <div class="field-pair"><label><span>Количество ремонтов</span><input name="repairs" type="number" min="0" step="1" value="${block.repairs || 0}"></label><label><span>Состояние установки</span><select name="installed"><option value="true" ${block.installed ? "selected" : ""}>Установлен</option><option value="false" ${!block.installed ? "selected" : ""}>Демонтирован</option></select></label></div>
+          <label><span>Состояние установки</span><select name="installed"><option value="true" ${block.installed ? "selected" : ""}>Установлен</option><option value="false" ${!block.installed ? "selected" : ""}>Демонтирован</option></select></label>`}
+          <label><span>Количество ремонтов</span><input name="repairs" type="number" min="0" step="1" value="${block.repairs || 0}"></label>
         </fieldset>
         ${airframeFields}
         ${engineFields}
         <button type="submit" class="primary-button wide">Сохранить формуляр</button>
       </form>
+      ${installations}
       <div class="section-heading settings-section-heading"><div><h2>Ресурсы и работы</h2><p>Связанные с этим формуляром ограничения.</p></div></div>
       <section class="resource-list">${relatedResources.length ? resourceRows(relatedResources, { editable: true }) : `<div class="empty-state compact-empty"><p>Связанных ресурсов пока нет.</p></div>`}</section>
       <button class="add-block-button" data-action="add-resource" data-resource-object="${escapeHtml(block.name)}">${icon("plus")} Добавить ограниченный ресурс</button>
@@ -1490,7 +1604,7 @@
       <form id="block-event-form" class="shift-form event-form">
         <fieldset><legend>Добавить событие</legend>
           <div class="field-pair"><label><span>Тип события</span><select name="type"><option value="repair">Ремонт</option><option value="dismantle">Демонтаж</option><option value="install">Установка</option><option value="extension">Продление ресурса</option><option value="correction">Корректировка</option></select></label><label><span>Дата</span><input name="date" type="date" value="${todayIso()}" required></label></div>
-          <label><span>Основание, документ или примечание</span><input name="note" type="text" placeholder="Номер бюллетеня, решения или акта"></label>
+          <label><span>Цель установки, основание или примечание</span><input name="note" type="text" placeholder="Цель, номер документа или акт"></label>
           <button type="submit" class="secondary-button wide">Записать событие</button>
         </fieldset>
       </form>
@@ -1502,14 +1616,14 @@
       const oldName = block.name;
       block.name = String(data.get("name")).trim();
       block.caption = String(data.get("caption") || "").trim();
-      block.model = String(data.get("model") || "").trim();
-      block.serialNumber = String(data.get("serialNumber") || "").trim();
-      block.drawingNumber = String(data.get("drawingNumber") || "").trim();
+      if (block.kind !== "airframe") {
+        if (data.has("model")) block.model = String(data.get("model")).trim();
+        block.serialNumber = String(data.get("serialNumber") || "").trim();
+        block.drawingNumber = String(data.get("drawingNumber") || "").trim();
+        block.installed = data.get("installed") === "true";
+      }
       block.repairs = Number(data.get("repairs"));
-      block.installed = data.get("installed") === "true";
       if (block.kind === "airframe") {
-        aircraft.serialNumber = String(data.get("aircraftSerialNumber") ?? "").trim();
-        aircraft.rfNumber = String(data.get("rfNumber") ?? "").trim().replace(/^RF[\s-]*/i, "");
         aircraft.pprFlightMinutes = data.get("pprFlightMinutes") === "" ? null : Number(data.get("pprFlightMinutes"));
         aircraft.pprLandings = data.get("pprLandings") === "" ? null : Number(data.get("pprLandings"));
       }
@@ -1602,10 +1716,10 @@
   function renderAbout() {
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">Авиаресурс</p><h1>О приложении</h1></div></section>
-      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.24</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
+      <section class="info-panel">${icon("plane")}<div><strong>Версия 0.2.25</strong><p>Локальный прототип персонального учёта ресурсов самолёта, двигателей и агрегатов.</p></div></section>
       <section class="info-panel">${icon("shield")}<div><strong>Хранение данных</strong><p>Текущая версия работает без интернета и хранит данные только на устройстве. Защищённый серверный режим ещё не включён.</p></div></section>
       <section class="info-panel">${icon("log")}<div><strong>Назначение сборки</strong><p>Эта версия предназначена для проверки структуры и расчётов и не заменяет утверждённую эксплуатационную документацию.</p></div></section>
-    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.24", back: true, settings: false });
+    `, { title: "О приложении", subtitle: "Авиаресурс 0.2.25", back: true, settings: false });
   }
 
   function renderResourceEditor() {
@@ -1775,7 +1889,11 @@
   }
 
   function renderTypeUsageSettings() {
-    const aircraftTypes = new Map(state.aircraft.map((aircraft) => [aircraft.type.trim().toLowerCase(), aircraft]));
+    const aircraftTypes = new Map(state.aircraftTypes.map((type) => {
+      const key = type.toLowerCase();
+      return [key, state.aircraft.find((aircraft) => aircraft.type.trim().toLowerCase() === key) ||
+        { type, settings: DEFAULT_AIRCRAFT_SETTINGS }];
+    }));
     app.innerHTML = shell(`
       ${usageScopeTabs("type-usage-settings")}
       <form id="type-usage-form" class="shift-form settings-form">
@@ -2089,6 +2207,7 @@
       <section class="page-heading compact"><div><p class="eyebrow">Приложение</p><h1>Настройки</h1></div></section>
       <section class="settings-list">
         <button class="setting-row" data-view="usage-settings"><strong>Виды наработки</strong>${icon("chevron")}</button>
+        <button class="setting-row" data-view="aircraft-types"><strong>Типы самолётов</strong>${icon("chevron")}</button>
         <button class="setting-row" data-view="diagnostics"><strong>Диагностика</strong>${icon("chevron")}</button>
         <label class="setting-row"><span><strong>Все уведомления</strong><small>Главный переключатель имеет высший приоритет</small></span><input id="global-notifications" type="checkbox" ${state.globalNotifications ? "checked" : ""}></label>
         <div class="settings-subheading">Уведомления по самолётам</div>
@@ -2096,7 +2215,7 @@
         <button class="setting-row" data-action="calendar-settings"><span><strong>Добавить ближайшую работу в календарь</strong><small>Откроется штатный календарь Android для подтверждения</small></span>${icon("chevron")}</button>
         <button class="setting-row" data-action="notification-test"><span><strong>Проверить уведомление Android</strong><small>Запросить разрешение и показать тестовое напоминание</small></span>${icon("bell")}</button>
         <div class="setting-row" aria-disabled="true"><span><strong>Защищённый режим хранения</strong><small>В прототипе не активирован</small></span><span class="prototype-badge">Позже</span></div>
-        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.24</small></span>${icon("chevron")}</button>
+        <button class="setting-row" data-action="about"><span><strong>О приложении</strong><small>Авиаресурс · Android-прототип 0.2.25</small></span>${icon("chevron")}</button>
       </section>
       <section class="info-panel">${icon("shield")}<div><strong>Данные этого прототипа</strong><p>Сохраняются только в локальном хранилище браузера. Серверная синхронизация и шифрование пока не реализованы.</p></div></section>
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
@@ -2140,6 +2259,10 @@
   }
 
   function bindCommonActions() {
+    document.querySelectorAll("[data-board-menu]").forEach((button) => button.addEventListener("click", () => {
+      state.selectedAircraftId = button.dataset.boardId;
+      navigateTo(button.dataset.boardMenu);
+    }));
     document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => {
       navigateTo(button.dataset.view);
     }));
@@ -2192,13 +2315,12 @@
   function renderCreationForm() {
     const aircraftForm = state.view === "add-aircraft";
     const title = aircraftForm ? "Добавить самолёт" : "Добавить агрегат";
-    const knownTypes = [...new Set([...state.typeSettings, ...state.aircraft].map((item) => item.type))];
     app.innerHTML = shell(`
       <h1>${title}</h1>
       <form id="creation-form" class="shift-form settings-form">
         ${aircraftForm ? `
-          <label>Тип самолёта<input name="type" type="text" list="known-aircraft-types" required></label>
-          <datalist id="known-aircraft-types">${knownTypes.map((type) => `<option value="${escapeHtml(type)}"></option>`).join("")}</datalist>
+          <label>Тип самолёта${aircraftTypeSelect()}</label>
+          <p class="field-help">Новый тип можно добавить в общих настройках.</p>
           <label>Бортовой номер<input name="boardNumber" type="text" required></label>
           <label>Заводской номер<input name="serialNumber" type="text"></label>
           <label>RF<input name="rfNumber" type="text" placeholder="Например, 33738"></label>` : `
@@ -2211,7 +2333,7 @@
     document.getElementById("creation-form").addEventListener("submit", (event) => {
       event.preventDefault();
       const data = Object.fromEntries([...new FormData(event.currentTarget)].map(([key, value]) => [key, value.trim()]));
-      if (aircraftForm ? !data.type || !data.boardNumber : !data.name) {
+      if (aircraftForm ? !state.aircraftTypes.includes(data.type) || !data.boardNumber : !data.name) {
         document.getElementById("creation-error").textContent = "Заполни обязательные поля.";
         return;
       }

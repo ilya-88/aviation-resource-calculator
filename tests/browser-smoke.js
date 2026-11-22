@@ -101,6 +101,13 @@ async function main() {
       if (!window.handleAndroidBack() || document.querySelector('h1')?.textContent !== 'Самолёты') {
         throw new Error('Системный возврат из общих настроек должен открыть главный экран');
       }
+      document.querySelector('[data-action="settings"]').click();
+      document.querySelector('[data-view="aircraft-types"]').click();
+      const typeForm = document.querySelector('#aircraft-type-form');
+      typeForm.elements.type.value = "МиГ-29";
+      typeForm.requestSubmit();
+      window.handleAndroidBack();
+      window.handleAndroidBack();
       document.querySelector('[data-action="add-aircraft"]').click();
       const form = document.querySelector('#creation-form');
       form.elements.type.value = "МиГ-29";
@@ -150,6 +157,9 @@ async function main() {
           title: document.querySelector('h1')?.textContent,
           form: Boolean(document.querySelector('#block-form')),
           engine: Boolean(document.querySelector('[name="sneMinutes"]')),
+          hasModel: Boolean(document.querySelector('#block-form [name="model"]')),
+          hasSerial: Boolean(document.querySelector('#block-form [name="serialNumber"]')),
+          boardSerial: document.querySelector('#block-form output')?.textContent,
           airframe: Boolean(document.querySelector('[aria-label="Наработка планера"]')),
           resource: Boolean(document.querySelector('[data-action="add-resource"]'))
         };
@@ -161,6 +171,8 @@ async function main() {
     assert.ok(forms.every(item => item.form && item.resource));
     assert.deepEqual(forms.map(item => item.engine), [false, true, true, false, false]);
     assert.equal(forms[0].airframe, true);
+    assert.equal(forms[0].boardSerial, "SN-42");
+    assert.ok(forms.filter(item => item.engine).every(item => !item.hasModel && item.hasSerial));
     results.defaultForms = "ok";
     const addedBlock = await evaluate(`(() => {
       document.querySelector('[data-action="add-block"]').click();
@@ -500,8 +512,22 @@ async function main() {
     const boardImage = await evaluate(`(async () => {
       window.handleAndroidBack();
       window.handleAndroidBack();
+      document.querySelector('.aircraft-card-menu summary').click();
+      document.querySelector('[data-board-menu="board-details"]').click();
+      const details = document.querySelector('#board-details-form');
+      details.elements.rfNumber.value = 'RF 33739';
+      details.requestSubmit();
       document.querySelector('[data-aircraft-id]').click();
-      document.querySelector('[data-action="settings"]').click();
+      const updatedRF = document.querySelector('.board-identifiers')?.textContent.includes('RF 33739');
+      document.querySelector('[data-block-id="airframe"]').click();
+      const airframeSections = !document.querySelector('[name="rfNumber"], #block-form [name="model"], #block-form [name="drawingNumber"], #block-form [name="serialNumber"]') &&
+        [...document.querySelectorAll('#block-form output')].some((item) => item.textContent === '33739') &&
+        document.querySelector('#block-form output')?.textContent === '49051002905' &&
+        [...document.querySelectorAll('h2')].some(item => item.textContent === 'Установленные агрегаты');
+      window.handleAndroidBack();
+      window.handleAndroidBack();
+      document.querySelector('.aircraft-card-menu summary').click();
+      document.querySelector('[data-board-menu="board-image"]').click();
       const form = document.querySelector('#board-image-form');
       const canvas = document.createElement('canvas');
       canvas.width = 640;
@@ -517,10 +543,9 @@ async function main() {
       form.elements.fit.value = 'contain';
       form.requestSubmit();
       window.handleAndroidBack();
-      window.handleAndroidBack();
-      return { previewWidth, shownOnMain: Boolean(document.querySelector('.aircraft-card .board-image-contain')) };
+      return { previewWidth, updatedRF, airframeSections, shownOnMain: Boolean(document.querySelector('.aircraft-card .board-image-contain')) };
     })()`);
-    assert.deepEqual(boardImage, { previewWidth: 320, shownOnMain: true });
+    assert.deepEqual(boardImage, { previewWidth: 320, updatedRF: true, airframeSections: true, shownOnMain: true });
     results.boardImage = "ok";
 
     process.stdout.write(`${JSON.stringify(results)}\n`);
