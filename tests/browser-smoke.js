@@ -294,6 +294,17 @@ async function main() {
       ruleName().value = 'Циклы от посадок';
       await leaveRules('save');
       const rulesSavedOnBack = !ruleName() && aggregate().usageCounters[0].name === 'Циклы от посадок';
+      click('[data-action="add-resource"]');
+      const aggregateResource = document.querySelector('#resource-form');
+      aggregateResource.elements.name.value = 'Лимит циклов';
+      aggregateResource.elements.unit.value = 'шт.';
+      aggregateResource.elements.unit.dispatchEvent(new Event('change'));
+      aggregateResource.elements.limit.value = '30';
+      aggregateResource.elements.remaining.value = '30';
+      const consumptionKey = 'aggregate:' + aggregate().usageCounters[0].id;
+      aggregateResource.querySelector('[data-source="' + consumptionKey + '"]').value = '0.5';
+      aggregateResource.requestSubmit();
+      back();
       back();
       function recordAggregate() {
         click('[data-view="shift"]');
@@ -303,7 +314,8 @@ async function main() {
         form.querySelector('[data-template-scope="engine-right"] [data-template-field="starts"]').value = '1';
         form.querySelector('[data-aggregate-manual-block] input').value = '10';
         form.dispatchEvent(new Event('input'));
-        const previewed = document.querySelector('#template-preview').textContent.includes('Наработка агрегатов (3)');
+        const preview = document.querySelector('#template-preview').textContent;
+        const previewed = preview.includes('Наработка агрегатов (3)') && preview.includes('Расход 2 шт.');
         form.requestSubmit();
         return previewed;
       }
@@ -319,6 +331,9 @@ async function main() {
       const aggregateTotals = JSON.stringify(firstTotals) === JSON.stringify([{sne:7,ppr:null},{sne:5,ppr:null},{sne:3,ppr:null}]) &&
         JSON.stringify(aggregateBalances()) === JSON.stringify([{sne:11,ppr:4},{sne:10,ppr:5},{sne:6,ppr:3}]);
       const aggregateHistory = board().shifts.at(-1).aggregateAccruals.map(entry => entry.amount).join(',') === '4,5,3';
+      const charged = board().shifts.at(-1).accruals.find(entry => entry.name === 'Лимит циклов');
+      const aggregateResourceCharge = charged?.inputs[0].key === consumptionKey && charged.inputs[0].input === 4 &&
+        charged.amount === 2 && board().resources.find(resource => resource.name === 'Лимит циклов').remaining === 26;
       click('[data-aircraft-tab="works"]');
       click('[data-view="reports"]');
       const report = document.querySelector('[data-report-aggregates]');
@@ -334,7 +349,7 @@ async function main() {
       click('[data-aircraft-tab="aggregates"]');
       return { empty, imported, types, routed, pairedCounters, vkaLogs, gtdeLogs, gtdePpr, excludesUnpairedUnits,
         maximas, orderedInputs: first.orderedInputs, leftLog, rightLog, noDuplicates, rulesPersisted, unitPreserved, rulesCancel, rulesDiscard, rulesSavedOnBack,
-        aggregatePreview, aggregateJournal, repairBalances, aggregateTotals, aggregateHistory, aggregateReport, aggregateReportPeriod,
+        aggregatePreview, aggregateJournal, repairBalances, aggregateTotals, aggregateHistory, aggregateReport, aggregateReportPeriod, aggregateResourceCharge,
         logBeforeSettings, repairs, replaces, preview: first.preview.includes('00:43'),
         rowsRemoved: first.rowsRemoved, pending: pending.pending && !pending.blockId && pendingRecord.preview.includes('ожидает привязки'), showsRaw };
     })()`);
@@ -343,7 +358,7 @@ async function main() {
       maximas: [3,8,12], orderedInputs: true, leftLog: true, rightLog: true, logBeforeSettings: true,
       noDuplicates: true, rulesPersisted: true, unitPreserved: true, rulesCancel: true, rulesDiscard: true, rulesSavedOnBack: true,
       aggregatePreview: true, aggregateJournal: true, repairBalances: true,
-      aggregateTotals: true, aggregateHistory: true, aggregateReport: true, aggregateReportPeriod: true,
+      aggregateTotals: true, aggregateHistory: true, aggregateReport: true, aggregateReportPeriod: true, aggregateResourceCharge: true,
       repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
     results.templateExperiment = "ok";
     await evaluate(`(() => {
@@ -1893,6 +1908,17 @@ async function main() {
       document.querySelector('[data-rule="factor"]').value = '0.5';
       document.querySelector('[data-rule="sne"]').value = '5';
       submit('#aggregate-rules-form');
+      click('[data-action="add-resource"]');
+      const pumpResourceForm = document.querySelector('#resource-form');
+      pumpResourceForm.elements.name.value = 'Лимит испытаний';
+      pumpResourceForm.elements.unit.value = 'шт.';
+      pumpResourceForm.elements.unit.dispatchEvent(new Event('change'));
+      pumpResourceForm.elements.limit.value = '40';
+      pumpResourceForm.elements.remaining.value = '40';
+      const pumpCounter = read().blocks.find(block => block.name === 'Гидронасос').usageCounters[0].id;
+      pumpResourceForm.querySelector('[data-source="aggregate:' + pumpCounter + '"]').value = '2';
+      submit('#resource-form');
+      window.handleAndroidBack();
       window.handleAndroidBack();
       click('[data-view="shift"]');
       const form = document.querySelector('#shift-form');
@@ -1921,15 +1947,18 @@ async function main() {
       const pumpAfterWork = board.blocks.find(item => item.name === 'Гидронасос');
       const manualRevised = previousManual === '8' && pumpAfterWork.usageTotals[pumpAfterWork.usageCounters[0].id].sne === 8 &&
         shift.aggregateAccruals[0].amount === 3 && shift.revisions[0].aggregateAccruals[0].amount === 4;
+      const resourceRevised = board.resources.find(item => item.name === 'Лимит испытаний').remaining === 34 &&
+        shift.accruals.find(item => item.name === 'Лимит испытаний').amount === 6 &&
+        shift.revisions[0].accruals.find(item => item.name === 'Лимит испытаний').amount === 8;
       return { map, connected, unlinkedWithCounters, preview, copied, amount: shift.accruals.find(item => item.resourceId === saved.id).amount,
         remaining: saved.remaining, previous: shift.revisions[0].raw.arresterHooks, kind: shift.operationLabel,
         rightFlight: shift.engineAccruals.find(item => item.blockId === 'engine-right').flightMinutes,
         rightTotal: shift.engineAccruals.find(item => item.blockId === 'engine-right').minutes,
         historyBeforeRepair: hook.historicalRepairs[2].beforeRepair.sneMinutes, repairs: hook.repairs,
-        hookPpr: hook.pprMinutes, manualRevised };
+        hookPpr: hook.pprMinutes, manualRevised, resourceRevised };
     })()`);
     assert.deepEqual(routing, { map: true, connected: true, unlinkedWithCounters: true, preview: true, copied: true, amount: 4, remaining: 46, previous: '1',
-      kind: 'Руление', rightFlight: 30, rightTotal: 36, historyBeforeRepair: 360, repairs: 2, hookPpr: 120, manualRevised: true });
+      kind: 'Руление', rightFlight: 30, rightTotal: 36, historyBeforeRepair: 360, repairs: 2, hookPpr: 120, manualRevised: true, resourceRevised: true });
     results.resourceRouting = "ok";
 
     const cardIntegrity = await evaluate(`(() => {
