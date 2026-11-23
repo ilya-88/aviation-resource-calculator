@@ -15,7 +15,7 @@
   const layoutKeys = ["flightSne", "flightPpr", "landingSne", "landingPpr", "widget:resources", "widget:shift",
     "widget:add-block:aggregates", "widget:add-resource:works", "widget:add-resource:least-reliable", "widget:reports"];
   const formKeys = new Set([
-    ...["name", "caption", "serialNumber", "rfNumber", "drawingNumber", "installed", "repairs", "model",
+    ...["name", "caption", "serialNumber", "rfNumber", "drawingNumber", "manufactureDate", "installed", "repairs", "model",
       "pprFlightMinutes", "pprLandings", "sneMinutes", "pprMinutes", "sneLandings", "starts", "groundPercent",
       "groundStep", "groundDirection"].map((key) => `form-field:${key}`),
     ...["journal", "resources-title", "resources-empty", "events-title", "events-empty", "airframe-usage-title",

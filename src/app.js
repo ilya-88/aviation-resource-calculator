@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.22";
+  const APP_VERSION = "0.2.38-exp.23";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -3049,6 +3049,7 @@
             <label>Заводской номер<input name="serialNumber" type="text" value="${escapeHtml(aircraft.serialNumber || "")}" placeholder="—"></label>
             <label>RF<input name="rfNumber" type="text" value="${escapeHtml(aircraft.rfNumber || "")}" placeholder="—"></label>` : `
           <label><span>Заводской номер</span><input name="serialNumber" type="text" value="${escapeHtml(block.serialNumber || "")}"></label>
+          <label><span>Дата выпуска</span><input name="manufactureDate" type="date" value="${escapeHtml(block.manufactureDate || "")}"></label>
           <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(block.drawingNumber || "")}"></label>
           <label><span>Установка</span><select name="installed"><option value="true" ${blockInstalledOn(block, todayIso()) ? "selected" : ""}>Установлен</option><option value="false" ${!blockInstalledOn(block, todayIso()) ? "selected" : ""}>Демонтирован</option></select></label>`}
           <label data-form-field="repairs">Ремонтов<output>${block.repairs}</output></label>
@@ -3104,6 +3105,7 @@
       } else {
         if (data.has("model")) block.model = String(data.get("model")).trim();
         block.serialNumber = String(data.get("serialNumber") || "").trim();
+        if (data.has("manufactureDate")) block.manufactureDate = data.get("manufactureDate");
         block.drawingNumber = String(data.get("drawingNumber") || "").trim();
         const installed = data.get("installed") === "true";
         if (blockInstalledOn(block, todayIso()) !== installed) {
