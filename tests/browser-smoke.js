@@ -311,9 +311,22 @@ async function main() {
       const aggregateTotals = JSON.stringify(firstTotals) === JSON.stringify([{sne:7,ppr:null},{sne:5,ppr:null},{sne:3,ppr:null}]) &&
         JSON.stringify(aggregateBalances()) === JSON.stringify([{sne:11,ppr:4},{sne:10,ppr:5},{sne:6,ppr:3}]);
       const aggregateHistory = board().shifts.at(-1).aggregateAccruals.map(entry => entry.amount).join(',') === '4,5,3';
+      click('[data-aircraft-tab="works"]');
+      click('[data-view="reports"]');
+      const report = document.querySelector('[data-report-aggregates]');
+      const aggregateReport = report.textContent.includes('ГАК (проверка учёта)') &&
+        report.textContent.includes('Циклы от посадок · 8 пос.') && report.textContent.includes('Проверки · 10 шт.');
+      const reportForm = document.querySelector('#report-form');
+      reportForm.elements.period.value = 'custom';
+      reportForm.elements.from.value = '2000-01-01';
+      reportForm.elements.to.value = '2000-01-02';
+      reportForm.requestSubmit();
+      const aggregateReportPeriod = !document.querySelector('[data-report-aggregates]');
+      back();
+      click('[data-aircraft-tab="aggregates"]');
       return { empty, imported, types, routed, pairedCounters, vkaLogs, gtdeLogs, gtdePpr, excludesUnpairedUnits,
         maximas, orderedInputs: first.orderedInputs, leftLog, rightLog, noDuplicates, rulesPersisted, rulesCancel, rulesDiscard, rulesSavedOnBack,
-        aggregatePreview, aggregateJournal, repairBalances, aggregateTotals, aggregateHistory,
+        aggregatePreview, aggregateJournal, repairBalances, aggregateTotals, aggregateHistory, aggregateReport, aggregateReportPeriod,
         logBeforeSettings, repairs, replaces, preview: first.preview.includes('00:43'),
         rowsRemoved: first.rowsRemoved, pending: pending.pending && !pending.blockId && pendingRecord.preview.includes('ожидает привязки'), showsRaw };
     })()`);
@@ -322,7 +335,7 @@ async function main() {
       maximas: [3,8,12], orderedInputs: true, leftLog: true, rightLog: true, logBeforeSettings: true,
       noDuplicates: true, rulesPersisted: true, rulesCancel: true, rulesDiscard: true, rulesSavedOnBack: true,
       aggregatePreview: true, aggregateJournal: true, repairBalances: true,
-      aggregateTotals: true, aggregateHistory: true,
+      aggregateTotals: true, aggregateHistory: true, aggregateReport: true, aggregateReportPeriod: true,
       repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
     results.templateExperiment = "ok";
     await evaluate(`(() => {

@@ -106,10 +106,23 @@
     const totals = Object.fromEntries(fields.map((field) => [field, 0]));
     const rows = shifts.filter((shift) => shift.date >= from && shift.date <= to)
       .sort((a, b) => a.date.localeCompare(b.date));
+    const aggregates = new Map();
     for (const shift of rows) {
       for (const field of fields) totals[field] += Number(shift[field] ?? 0);
+      for (const entry of shift.aggregateAccruals || []) {
+        const { blockId, blockName, serialNumber, counterId, name, unit, amount } = entry;
+        if (!Number.isFinite(amount)) continue;
+        if (!aggregates.has(blockId)) aggregates.set(blockId, { counters: new Map() });
+        const block = aggregates.get(blockId);
+        block.name = blockName;
+        if (serialNumber) block.serialNumber = serialNumber;
+        const key = JSON.stringify([counterId, unit]);
+        const total = (block.counters.get(key)?.total ?? 0) + amount;
+        block.counters.set(key, { name, unit, total });
+      }
     }
-    return { rows, totals };
+    const aggregateTotals = [...aggregates].map(([id, block]) => ({ id, ...block, counters: [...block.counters.values()] }));
+    return { rows, totals, aggregateTotals };
   }
 
   return {

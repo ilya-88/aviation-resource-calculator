@@ -37,6 +37,24 @@ test("отчёт включает обе границы периода и под
   assert.equal(report.totals.rightStarts, 0);
 });
 
+test("итоги по агрегатам разделяют экземпляры и единицы, сохраняя переименованные показатели", () => {
+  const entry = { blockId: "a1", blockName: "Агрегат", counterId: "c1", name: "Показатель", unit: "шт.", amount: 0.6 };
+  const shifts = [
+    { date: "2026-01-31", aggregateAccruals: [{ ...entry, amount: 40 }] },
+    { date: "2026-02-01", aggregateAccruals: [entry, { ...entry, blockId: "a2", serialNumber: "02" }] },
+    { date: "2026-02-28", aggregateAccruals: [
+      { ...entry, blockName: "Левый агрегат", name: "Циклы", amount: 1.4 },
+      { ...entry, blockName: "Левый агрегат", unit: "ч", amount: 2 },
+    ] },
+  ];
+  assert.deepEqual(calc.summarizeShifts(shifts, "2026-02-01", "2026-02-28").aggregateTotals, [
+    { id: "a1", name: "Левый агрегат", counters: [
+      { name: "Циклы", unit: "шт.", total: 2 }, { name: "Показатель", unit: "ч", total: 2 },
+    ] },
+    { id: "a2", name: "Агрегат", serialNumber: "02", counters: [{ name: "Показатель", unit: "шт.", total: 0.6 }] },
+  ]);
+});
+
 test("13 минут округляются до 15, 20% дают 3 минуты", () => {
   assert.deepEqual(calc.calculateGroundContribution(13), {
     actualMinutes: 13,

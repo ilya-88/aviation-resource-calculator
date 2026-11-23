@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.11";
+  const APP_VERSION = "0.2.38-exp.12";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -345,7 +345,7 @@
         const entered = manual && workData.get(manualCounterName(rule));
         const value = manual ? (entered == null || entered === "" ? null : Number(entered)) : values.get(rule.source);
         if (!Number.isFinite(value) || value < 0 || !Number.isFinite(value * rule.factor)) return [];
-        return [{ blockId: block.id, blockName: block.name, counterId: rule.id, name: rule.name, unit: rule.unit,
+        return [{ blockId: block.id, blockName: block.name, serialNumber: block.serialNumber, counterId: rule.id, name: rule.name, unit: rule.unit,
           sourceKey: rule.source, source: rule.sourceLabel, input: value, factor: rule.factor, amount: value * rule.factor,
           ppr: countsTowardPpr(block, date) }];
       });
@@ -3673,12 +3673,18 @@
         output.textContent = "Укажи корректный период.";
         return;
       }
-      const { rows, totals } = calc.summarizeShifts(aircraft.shifts, start, end);
+      const { rows, totals, aggregateTotals } = calc.summarizeShifts(aircraft.shifts, start, end);
       const reportEngines = aircraft.workTemplate ? templateEngineReport(aircraft.workTemplate, rows) :
         `<p>Левый двигатель: ${calc.formatDuration(totals.leftEngineMinutes)}, запусков: ${totals.leftStarts}. Правый двигатель: ${calc.formatDuration(totals.rightEngineMinutes)}, запусков: ${totals.rightStarts}.</p>`;
       output.innerHTML = `<h2>${formatDate(start)} — ${formatDate(end)}</h2>
         <p>Смен: ${rows.length} · ${escapeHtml(usageRule("flight").label)}: ${calc.formatDuration(totals.flightMinutes)} · Посадки: ${totals.actualLandings} / ${formatNumber(totals.equivalentLandings)} в зачёт · Зацепы: ${totals.arresterHooks}</p>
         ${reportEngines}
+        ${aggregateTotals.length ? `<details data-report-aggregates><summary>Наработка агрегатов за период (${aggregateTotals.length})</summary>
+          <ul class="accrual-items">${aggregateTotals.map((block) => {
+            const serial = block.serialNumber || aircraft.blocks.find((item) => item.id === block.id)?.serialNumber;
+            return `<li><strong>${escapeHtml(block.name)}${serial ? ` · № ${escapeHtml(serial)}` : ""}</strong>
+              ${block.counters.map(({ name, total, unit }) => `<small>${escapeHtml(name)} · ${formatNumber(total, 6)} ${escapeHtml(unit)}</small>`).join("")}</li>`;
+          }).join("")}</ul></details>` : ""}
         ${rows.map((row) => `<button class="history-row" data-report-shift="${escapeHtml(row.id)}"><div><strong>${formatDate(row.date)} · ${escapeHtml(row.operationLabel || "Лётная смена")}</strong><span>${escapeHtml(usageRule("flight").label)} ${calc.formatDuration(row.flightMinutes)} · ${row.actualLandings} посадок</span></div>${icon("chevron")}</button>`).join("")}`;
     }
     output.addEventListener("click", (event) => {
