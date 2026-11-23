@@ -95,6 +95,23 @@ test("шаблон переносит определения счётчиков 
   assert.throws(() => templates.validateTemplate(raw), /Не найден источник показателя/);
 });
 
+test("раскладки формуляров используют позиции и индексы вместо идентификаторов экземпляров", () => {
+  const raw = structuredClone(su33);
+  raw.positions[0].formLayout = { tiles: [{ keys: ["form-field:name", "form:assembly-slot:vka-1"], span: 8.5 }],
+    hidden: ["form-field:serialNumber"] };
+  raw.positions[3].usageCounters = [{ name: "Циклы", source: "manual", unit: "шт.", factor: 1 }];
+  const counter = "form:aggregate-counter-index:0";
+  raw.positions[3].formLayout = { tiles: [{ keys: [counter], height: 83, font: 1.15, labels: { [counter]: "Включения" } }], hidden: [] };
+  const parsed = templates.validateTemplate(raw);
+  assert.deepEqual(parsed.positions[0].formLayout.tiles[0].keys, ["form-field:name", "form:assembly-slot:vka-1"]);
+  assert.equal(parsed.positions[3].formLayout.tiles[0].labels[counter], "Включения");
+  assert.deepEqual(templates.validateTemplate(parsed), parsed);
+  raw.positions[3].formLayout.hidden.push(counter);
+  assert.throws(() => templates.validateTemplate(raw), /указана в раскладке дважды/);
+  raw.positions[3].formLayout.hidden[0] = "form:event:instance-id";
+  assert.throws(() => templates.validateTemplate(raw), /Неизвестная скрытая карточка/);
+});
+
 test("неподдерживаемая операция и несовместимый тип отклоняются при импорте", () => {
   const copy = structuredClone(su33);
   copy.rules[0].operation = "unknown";

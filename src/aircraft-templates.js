@@ -14,6 +14,17 @@
   const navigationKeys = ["widget:board-tabs", "widget:board-aggregates", "widget:board-resources"];
   const layoutKeys = ["flightSne", "flightPpr", "landingSne", "landingPpr", "widget:resources", "widget:shift",
     "widget:add-block:aggregates", "widget:add-resource:works", "widget:add-resource:least-reliable", "widget:reports"];
+  const formKeys = new Set([
+    ...["name", "caption", "serialNumber", "rfNumber", "drawingNumber", "installed", "repairs", "model",
+      "pprFlightMinutes", "pprLandings", "sneMinutes", "pprMinutes", "sneLandings", "starts", "groundPercent",
+      "groundStep", "groundDirection"].map((key) => `form-field:${key}`),
+    ...["journal", "resources-title", "resources-empty", "events-title", "events-empty", "airframe-usage-title",
+      "assemblies-title", "assemblies-empty", "installation-history-title", "installation-history-empty",
+      "aggregate-settings", "aggregate-log"].map((key) => `form:${key}`),
+    ...["add-resource", "attach-existing-resource", "correct-usage", "save", "save-event"].map((key) => `form-action:${key}`),
+    ...["type", "date", "note"].map((key) => `event-field:${key}`),
+  ]);
+  const isFormKey = (key) => formKeys.has(key) || (typeof key === "string" && /^form-metric:\d{1,3}$/.test(key));
   const legacySu33Units = [
     { id: "vka-1", oldLabel: "ВКА № 1", label: "Левая ВКА", source: "engine-left", counters: "all" },
     { id: "vka-2", oldLabel: "ВКА № 2", label: "Правая ВКА", source: "engine-right", counters: "all" },
@@ -83,32 +94,33 @@
     return template.engineCounters.filter((field) => position.engineLink.counters.includes(field.id));
   }
 
+  function layoutTile(row, allowed) {
+    requireValue(Array.isArray(row.keys) && row.keys.length > 0 && row.keys.every(allowed),
+      "Раскладка ссылается на неизвестную карточку");
+    const clean = { keys: [...row.keys], wide: row.wide === true };
+    for (const [key, min, max] of [["span", 2, 12], ["columnStart", 1, 120], ["height", 0, 10000], ["font", 0.65, 1.7]]) {
+      if (row[key] == null) continue;
+      requireValue(Number.isFinite(row[key]) && row[key] >= min && row[key] <= max &&
+        (key !== "columnStart" || Number.isInteger(row[key])), `Недопустимый размер или положение карточки: ${key}`);
+      clean[key] = row[key];
+    }
+    if (row.labels) clean.labels = Object.fromEntries(row.keys.filter((key) => Object.hasOwn(row.labels, key))
+      .map((key) => [key, label(row.labels[key], "подпись карточки")]));
+    return clean;
+  }
+
   function validateLayout(layout, positions) {
     requireValue(layout && typeof layout === "object" && !Array.isArray(layout), "Некорректная раскладка карточек");
-    const validKeys = [...layoutKeys, ...positions.map((position) => `slot:${position.id}`)];
-    function tile(row, allowed) {
-      requireValue(Array.isArray(row.keys) && row.keys.length > 0 && row.keys.every((key) => allowed.includes(key)),
-        "Раскладка ссылается на неизвестную карточку");
-      const clean = { keys: [...row.keys], wide: row.wide === true };
-      for (const [key, min, max] of [["span", 2, 12], ["columnStart", 1, 120], ["height", 0, 10000], ["font", 0.65, 1.7]]) {
-        if (row[key] == null) continue;
-        requireValue(Number.isFinite(row[key]) && row[key] >= min && row[key] <= max &&
-          (key !== "columnStart" || Number.isInteger(row[key])), `Недопустимый размер или положение карточки: ${key}`);
-        clean[key] = row[key];
-      }
-      if (row.labels) clean.labels = Object.fromEntries(row.keys.filter((key) => Object.hasOwn(row.labels, key))
-        .map((key) => [key, label(row.labels[key], "подпись карточки")]));
-      return clean;
-    }
+    const validKeys = new Set([...layoutKeys, ...positions.map((position) => `slot:${position.id}`)]);
     const tabs = Object.fromEntries(layoutTabs.filter((tab) => layout.tabs?.[tab] != null).map((tab) => {
-      const tiles = list(layout.tabs[tab], "карточки", (row) => tile(row, validKeys));
+      const tiles = list(layout.tabs[tab], "карточки", (row) => layoutTile(row, (key) => validKeys.has(key)));
       const keys = tiles.flatMap((row) => row.keys);
       requireValue(new Set(keys).size === keys.length, "Карточка указана в раскладке дважды");
       return [tab, tiles];
     }));
     const navigation = layout.navigation == null ? null : list(layout.navigation, "вкладки раскладки", (row) => {
       requireValue(Number.isInteger(row.index) && row.index >= 0 && row.index <= 120 && row.tile, "Некорректное положение вкладки");
-      return { index: row.index, tile: tile(row.tile, navigationKeys) };
+      return { index: row.index, tile: layoutTile(row.tile, (key) => navigationKeys.includes(key)) };
     });
     if (navigation) {
       const keys = navigation.flatMap((row) => row.tile.keys);
@@ -116,6 +128,21 @@
         "Раскладка должна содержать все вкладки по одному разу");
     }
     return { tabs, ...(navigation && { navigation }) };
+  }
+
+  function validateFormLayout(layout, position, positions) {
+    requireValue(layout && typeof layout === "object" && !Array.isArray(layout), "Некорректная раскладка формуляра");
+    const extra = new Set((position.usageCounters || []).map((_, index) => `form:aggregate-counter-index:${index}`));
+    if (position.kind === "airframe") {
+      for (const item of positions.filter(({ kind }) => kind !== "airframe")) extra.add(`form:assembly-slot:${item.id}`);
+    }
+    const allowed = (key) => isFormKey(key) || extra.has(key);
+    const tiles = list(layout.tiles, "карточки формуляра", (row) => layoutTile(row, allowed));
+    const hidden = layout.hidden || [];
+    requireValue(Array.isArray(hidden) && hidden.length <= 120 && hidden.every(allowed), "Неизвестная скрытая карточка формуляра");
+    const keys = [...tiles.flatMap((tile) => tile.keys), ...hidden];
+    requireValue(new Set(keys).size === keys.length, "Карточка указана в раскладке дважды");
+    return { tiles, hidden: [...hidden] };
   }
 
   function validateTemplate(document) {
@@ -129,7 +156,8 @@
       requireValue(["airframe", "engine", "unit"].includes(row.kind), `Неизвестный вид формуляра: ${position}`);
       return { id: position, label: label(row.label, position), kind: row.kind, model: row.model ? label(row.model, position) : "",
         ...(row.engineLink != null && { engineLink: row.engineLink }),
-        ...(row.usageCounters != null && { usageCounters: row.usageCounters }) };
+        ...(row.usageCounters != null && { usageCounters: row.usageCounters }),
+        ...(row.formLayout != null && { formLayout: row.formLayout }) };
     });
     unique(positions, "id", "позиции");
     requireValue(positions.filter((row) => row.kind === "airframe").length === 1, "Шаблону нужен один формуляр самолёта");
@@ -244,6 +272,9 @@
     requireValue(positions.some((row) => row.kind === "engine") || (counters.length === 0 && !inputs.some((row) => row.scope === "engine")),
       "Поля двигателя требуют хотя бы одну позицию двигателя");
     const layout = document.layout == null ? null : validateLayout(document.layout, positions);
+    for (const position of positions) {
+      if (position.formLayout != null) position.formLayout = validateFormLayout(position.formLayout, position, positions);
+    }
     return { schemaVersion: 1, id, name, workTitle: label(document.workTitle || "Исходные данные работы", "форма ввода"),
       positions, repeatGroups: groups, inputs, engineCounters: counters, rules, checks,
       ...(boardUsage && { boardUsage }), ...(layout && { layout }) };
@@ -314,5 +345,6 @@
     return { values, counters, steps };
   }
 
-  return { validateTemplate, calculate, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits, normalizeFlightLabel, normalizeTemplateFlightLabel };
+  return { validateTemplate, calculate, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits,
+    isFormKey, normalizeFlightLabel, normalizeTemplateFlightLabel };
 });

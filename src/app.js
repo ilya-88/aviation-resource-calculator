@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.18";
+  const APP_VERSION = "0.2.38-exp.19";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1233,6 +1233,17 @@
     });
   }
 
+  function remapFormLayout(layout, toKey) {
+    return { tiles: remapTemplateTiles(layout.tiles, toKey), hidden: (layout.hidden || []).map(toKey).filter(Boolean) };
+  }
+
+  function formCounterKeys(block, reverse = false) {
+    return new Map((block.usageCounters || []).map(({ id }, index) => {
+      const keys = [`form:aggregate-counter:${id}`, `form:aggregate-counter-index:${index}`];
+      return reverse ? keys.reverse() : keys;
+    }));
+  }
+
   function boardTemplate(aircraft) {
     const template = structuredClone(aircraft.workTemplate);
     const currentBlocks = new Map();
@@ -1249,6 +1260,8 @@
       }
     }
     const toSlot = new Map([...currentBlocks].map(([slot, block]) => [`widget:${block.id}`, `slot:${slot}`]));
+    const toAssemblySlot = new Map([...currentBlocks].filter(([, block]) => block.kind !== "airframe")
+      .map(([slot, block]) => [`form:assembly:${block.id}`, `form:assembly-slot:${slot}`]));
     for (const position of template.positions) {
       const block = currentBlocks.get(position.id);
       if (block) {
@@ -1259,6 +1272,14 @@
             name, source, unit, factor,
             ...(additionalInputs?.length && { additionalInputs: additionalInputs.map(({ source, factor }) => ({ source, factor })) }),
           }));
+        }
+        if (block.formLayout) {
+          const toCounterIndex = formCounterKeys(block);
+          position.formLayout = remapFormLayout(block.formLayout, (key) => toCounterIndex.get(key) ||
+            (block.kind === "airframe" && toAssemblySlot.get(key)) || (aircraftTemplates.isFormKey(key) ? key : null));
+          for (const tile of position.formLayout.tiles) {
+            if (rfInCaption(tile.labels?.["form-field:rfNumber"])) tile.labels["form-field:rfNumber"] = "RF";
+          }
         }
       }
     }
@@ -1284,6 +1305,17 @@
     aircraft.boardLayouts = Object.fromEntries(Object.entries(template.layout.tabs).map(([tab, tiles]) =>
       [tab, remapTemplateTiles(tiles, (key) => key.startsWith("slot:") ? bySlot.get(key) : key)]));
     if (template.layout.navigation) aircraft.boardNavigationLayout = structuredClone(template.layout.navigation);
+  }
+
+  function applyTemplateFormLayouts(aircraft) {
+    const bySlot = new Map(aircraft.blocks.map((block) => [`form:assembly-slot:${block.templateSlotId}`, `form:assembly:${block.id}`]));
+    for (const block of aircraft.blocks) {
+      const layout = templatePositionFor(aircraft, block)?.formLayout;
+      if (!layout) continue;
+      const byIndex = formCounterKeys(block, true);
+      block.formLayout = remapFormLayout(layout, (key) => byIndex.get(key) || bySlot.get(key) ||
+        (aircraftTemplates.isFormKey(key) ? key : null));
+    }
   }
 
   function exportTemplate(template) {
@@ -4516,8 +4548,9 @@
           if (key === "positions") {
             const { linkSource, linkCounters, ...position } = row;
             if (linkSource) position.engineLink = { source: linkSource, counters: linkCounters === "all" ? "all" : commaList(linkCounters || "") };
-            const counters = draft.positions[index].usageCounters;
-            if (counters) position.usageCounters = counters;
+            const { usageCounters, formLayout } = draft.positions[index];
+            if (usageCounters) position.usageCounters = usageCounters;
+            if (formLayout) position.formLayout = formLayout;
             return position;
           }
           if (key === "checks") return { ascending: commaList(row.ascending || "") };
@@ -4528,6 +4561,11 @@
     function cleanDraft() {
       readDraft();
       const clean = structuredClone(draft);
+      const assemblySlots = new Set(clean.positions.map(({ id }) => `form:assembly-slot:${id}`));
+      for (const position of clean.positions) {
+        if (position.formLayout) position.formLayout = remapFormLayout(position.formLayout, (key) =>
+          !key.startsWith("form:assembly-slot:") || assemblySlots.has(key) ? key : null);
+      }
       if (clean.layout) {
         const slots = new Set(clean.positions.map((position) => `slot:${position.id}`));
         clean.layout.tabs = Object.fromEntries(Object.entries(clean.layout.tabs).map(([tab, tiles]) =>
@@ -5155,6 +5193,7 @@
           block.usageTotals = {};
         }
       }
+      applyTemplateFormLayouts(aircraft);
     }
     state.aircraft.push(aircraft);
     state.selectedAircraftId = boardId;

@@ -599,6 +599,23 @@ async function main() {
       rule('Запуски мотора', 'position:motor-4:starts', 1, 0);
       document.querySelector('#aggregate-rules-form').requestSubmit();
       const originalRule = board().blocks.find(block => block.id === sourceUnit.id).usageCounters[0];
+      const sourceCounterKey = 'form:aggregate-counter:' + originalRule.id;
+      const counterTile = key => '[data-tile-key="' + key + '"]';
+      click('#edit-form-layout');
+      click(counterTile(sourceCounterKey) + ' .counter-value');
+      click(counterTile(sourceCounterKey) + ' [data-layout-action="size"]');
+      click(counterTile(sourceCounterKey) + ' [data-layout-action="edit"]');
+      dialog = document.querySelector('dialog[open]');
+      dialog.querySelector('input').value = 'Циклы клапана';
+      await new Promise(resolve => {
+        dialog.addEventListener('close', resolve, { once: true });
+        dialog.querySelector('[value="save"]').click();
+      });
+      click(counterTile('form-field:drawingNumber') + ' .counter-value');
+      click(counterTile('form-field:drawingNumber') + ' [data-layout-action="hide"]');
+      click('#layout-save');
+      const sourceFormLayout = board().blocks.find(block => block.id === sourceUnit.id).formLayout;
+      const sourceTile = sourceFormLayout.tiles.find(item => item.keys.includes(sourceCounterKey));
       back();
       click('[data-action="settings"]');
       let payload;
@@ -613,6 +630,11 @@ async function main() {
         tile.labels['slot:motor-4'] === 'Мой двигатель 4' && Boolean(tile.span) &&
         !payload.json.includes(oldId) && !exported.shifts && !exported.boardNumber;
       const exportedRules = exported.positions.find(position => position.id === 'unit-four').usageCounters;
+      const exportedForm = exported.positions.find(position => position.id === 'unit-four').formLayout;
+      const indexedKey = 'form:aggregate-counter-index:0';
+      const indexedTile = exportedForm.tiles.find(item => item.keys.includes(indexedKey));
+      const exportedFormLayout = exportedForm.hidden.includes('form-field:drawingNumber') &&
+        indexedTile.span === sourceTile.span && indexedTile.labels[indexedKey] === 'Циклы клапана';
       const exportedUsage = exported.boardUsage.find(source => source.key === custom.key).factor === 0.8 &&
         exportedRules[0].factor === 2 && exportedRules[1].source === 'position:motor-4:starts' &&
         exportedRules[0].additionalInputs[0].source === 'manual' &&
@@ -647,6 +669,13 @@ async function main() {
       const importedUnit = instance.blocks.find(block => block.templateSlotId === 'unit-four');
       const importedUsage = importedUnit.id !== sourceUnit.id && importedUnit.usageCounters[0].id !== originalRule.id &&
         importedUnit.usageCounters.every(rule => !importedUnit.usageTotals[rule.id]) && !importedUnit.serialNumber;
+      click('[data-block-id="' + importedUnit.id + '"]');
+      const importedKey = 'form:aggregate-counter:' + importedUnit.usageCounters[0].id;
+      const importedTile = document.querySelector(counterTile(importedKey));
+      const importedFormLayout = importedUnit.formLayout.hidden.includes('form-field:drawingNumber') &&
+        !document.querySelector(counterTile('form-field:drawingNumber')) && importedTile.textContent.includes('Циклы клапана') &&
+        importedTile.style.getPropertyValue('--tile-span') === String(sourceTile.span * 10);
+      back();
       click('[data-view="shift"]');
       const importedWork = document.querySelector('#template-work-form');
       importedWork.elements[custom.key].value = '3';
@@ -657,10 +686,10 @@ async function main() {
       const importedAccrual = preview.includes('Клапан') && preview.includes('3 × 2 = 6 шт.') && preview.includes('Итого 6,5 шт.') &&
         preview.includes('Запуски мотора') && preview.includes('1 × 1 = 1 зап.');
       back();
-      return { blankSaved, fourTotals, report, exportOk, remapped, exportedUsage, importedUsage, importedAccrual };
+      return { blankSaved, fourTotals, report, exportOk, remapped, exportedUsage, exportedFormLayout, importedUsage, importedFormLayout, importedAccrual };
     })()`);
     assert.deepEqual(portable, { blankSaved: true, fourTotals: true, report: "Двигатель 1|Двигатель 2|Двигатель 3|Двигатель 4",
-      exportOk: true, remapped: true, exportedUsage: true, importedUsage: true, importedAccrual: true });
+      exportOk: true, remapped: true, exportedUsage: true, exportedFormLayout: true, importedUsage: true, importedFormLayout: true, importedAccrual: true });
     results.portableFourEngineTemplate = "ok";
     const formResources = await evaluate(`(() => {
       const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft.find(row => row.boardNumber === '402');
