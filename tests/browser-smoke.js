@@ -463,7 +463,7 @@ async function main() {
       click('[data-aircraft-id]');
       const counters = [...document.querySelectorAll('#counter-preview [data-tile-caption]')];
       const value = label => counters.find(node => node.textContent === label)?.nextElementSibling?.textContent;
-      const cards = value('Налёт СНЭ') !== undefined && value('Налёт ППР') === '0' && value('Посадки ППР') === '0';
+      const cards = value('Налёт СНЭ') !== undefined && value('Налёт ППР') === '—' && value('Посадки ППР') === '—';
       click('[data-view="shift"]');
       const input = document.querySelector('[data-template-field="board-flight"]').closest('label').textContent.trim() === 'Налёт';
       back();
@@ -476,8 +476,9 @@ async function main() {
       const board = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0];
       click('[data-block-id="' + board.blocks.find(block => block.kind === 'airframe').id + '"]');
       const ppr = document.querySelector('#block-form [name=pprFlightMinutes]');
-      const form = ppr.placeholder === '0' && ppr.disabled && ppr.value === '' &&
-        [...document.querySelectorAll('#block-form .metric span')].some(node => node.textContent === 'Налёт СНЭ');
+      const form = ppr.placeholder === '—' && ppr.disabled && ppr.value === '' &&
+        ['Налёт СНЭ', 'Налёт ППР', 'Посадки СНЭ', 'Посадки ППР'].every(label =>
+          [...document.querySelectorAll('#block-form span')].some(node => node.textContent === label));
       back();
       return { cards, input, history, form };
     })()`);

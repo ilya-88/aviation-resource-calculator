@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.21";
+  const APP_VERSION = "0.2.38-exp.22";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1385,12 +1385,12 @@
   }
 
   function counterTiles(aircraft, layout, editing = false, catalog = new Map(), removable) {
-    const name = escapeHtml(usageRule("flight").label);
+    const name = escapeHtml(usageRule("flight", aircraft).label);
     const values = {
       flightSne: [name + " СНЭ", flightCounterValue(aircraft.totalFlightMinutes)],
-      flightPpr: [name + " ППР", flightCounterValue(aircraft.pprFlightMinutes)],
+      flightPpr: [name + " ППР", aircraft.pprFlightMinutes == null ? "—" : flightCounterValue(aircraft.pprFlightMinutes)],
       landingSne: ["Посадки СНЭ", aircraft.actualLandings],
-      landingPpr: ["Посадки ППР", aircraft.pprLandings ?? 0],
+      landingPpr: ["Посадки ППР", aircraft.pprLandings ?? "—"],
     };
     return `<section class="counter-tiles" aria-label="Наработка борта">${layout.map((tile, index) => `
       <article class="counter-tile ${editing && activeCounterIndex === index ? "counter-tile-active" : ""}" data-counter-index="${index}" data-tile-key="${escapeHtml(tile.keys[0])}" style="--tile-start:${tile.columnStart == null ? "auto" : Math.max(1, Math.min(tile.columnStart, 121 - tileSpan(tile)))};--tile-span:${tileSpan(tile)};--tile-height:${tile.height ?? 0}px;--tile-font:${tile.font ?? 1}rem;--tile-density:${tileDensity(tileSpan(tile))}">
@@ -2981,13 +2981,11 @@
       <h2 data-form-widget="airframe-usage-title" aria-label="Наработка планера">Наработка планера</h2>
       <section class="metric-grid" aria-label="Наработка планера">
         <div class="metric"><span>${escapeHtml(usageRule("flight", aircraft).label)} СНЭ</span><strong>${flightCounterValue(aircraft.totalFlightMinutes)}</strong></div>
-        <div class="metric"><span>Фактические посадки</span><strong>${aircraft.actualLandings}</strong></div>
+        <label>${escapeHtml(usageRule("flight", aircraft).label)} ППР<input name="pprFlightMinutes" type="text" pattern="[0-9]{1,9}:[0-5][0-9](:[0-5][0-9])?" title="Часы:минуты или часы:минуты:секунды" value="${aircraft.pprFlightMinutes == null ? "" : calc.formatDuration(aircraft.pprFlightMinutes)}" placeholder="${repaired ? "0:00" : "—"}" ${repaired ? "" : "disabled"}></label>
+        <div class="metric"><span>Посадки СНЭ</span><strong>${aircraft.actualLandings}</strong></div>
+        <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}" placeholder="${repaired ? "0" : "—"}" ${repaired ? "" : "disabled"}></label>
         <div class="metric"><span>Зацепы</span><strong>${aircraft.arresterHooks}</strong></div>
-      </section>
-      <fieldset class="form-grid"><legend>ППР планера</legend>
-        <label>${escapeHtml(usageRule("flight", aircraft).label)} ППР, мин<input name="pprFlightMinutes" type="number" min="0" step="1" value="${aircraft.pprFlightMinutes ?? ""}" placeholder="0" ${repaired ? "" : "disabled"}></label>
-        <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}" placeholder="0" ${repaired ? "" : "disabled"}></label>
-      </fieldset>` : "";
+      </section>` : "";
     const installations = block.kind === "airframe" ? `
       <section id="form-installations" class="section-stack settings-section-heading">
         <h2 data-form-widget="assemblies-title">Установленные агрегаты</h2>
@@ -3113,7 +3111,8 @@
         }
       }
       if (block.kind === "airframe" && repaired) {
-        aircraft.pprFlightMinutes = data.get("pprFlightMinutes") === "" ? null : Number(data.get("pprFlightMinutes"));
+        const pprDuration = data.get("pprFlightMinutes");
+        aircraft.pprFlightMinutes = pprDuration ? calc.parseClockDuration(pprDuration) / 60 : null;
         aircraft.pprLandings = data.get("pprLandings") === "" ? null : Number(data.get("pprLandings"));
       } else if (legacyUsage) {
         block.sneMinutes = Number(data.get("sneMinutes"));
