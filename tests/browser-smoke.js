@@ -258,6 +258,13 @@ async function main() {
         input('sne').value = initial;
       }
       addRule('Посадки', 'board:runway', 2, 3);
+      click('[data-rule-id] [data-rule-add-input]');
+      const additionalSource = aggregateForm.querySelector('[data-additional-source]');
+      additionalSource.value = 'board:runway';
+      aggregateForm.requestSubmit();
+      const duplicateSourceBlocked = document.querySelector('#creation-error').textContent.includes('источник указан дважды');
+      additionalSource.value = 'board:arresterHooks';
+      aggregateForm.querySelector('[data-additional-factor]').value = '0.5';
       addRule('Проверки', 'manual', 0.5, 0);
       addRule('Запуски правого', 'position:engine-right:starts', 3, 0);
       aggregateForm.requestSubmit();
@@ -266,7 +273,8 @@ async function main() {
       click('[data-block-id="' + aggregate().id + '"]');
       click('[data-view="block-usage-rules"]');
       const rulesPersisted = document.querySelectorAll('[data-rule-id]').length === 3 &&
-        document.querySelector('[data-rule-id] [data-rule="sne"]').value === '3';
+        document.querySelector('[data-rule-id] [data-rule="sne"]').value === '3' &&
+        document.querySelector('[data-additional-factor]').value === '0.5';
       const firstSource = document.querySelector('[data-rule-id] [data-rule="source"]');
       const firstUnit = document.querySelector('[data-rule-id] [data-rule="unit"]');
       firstSource.value = 'board:flight';
@@ -311,11 +319,12 @@ async function main() {
         const form = document.querySelector('#template-work-form');
         form.querySelector('[data-template-field="board-flight"]').value = '00:01';
         form.querySelector('[data-template-field="runway"]').value = '2';
+        form.querySelector('[data-template-field="hooks"]').value = '2';
         form.querySelector('[data-template-scope="engine-right"] [data-template-field="starts"]').value = '1';
         form.querySelector('[data-aggregate-manual-block] input').value = '10';
         form.dispatchEvent(new Event('input'));
         const preview = document.querySelector('#template-preview').textContent;
-        const previewed = preview.includes('Наработка агрегатов (3)') && preview.includes('Расход 2 шт.');
+        const previewed = preview.includes('Наработка агрегатов (3)') && preview.includes('Итого 5 пос.') && preview.includes('Расход 2,5 шт.');
         form.requestSubmit();
         return previewed;
       }
@@ -324,21 +333,23 @@ async function main() {
       click('[data-block-id="' + aggregate().id + '"]');
       const aggregateJournal = document.querySelector('[data-tile-key="form:aggregate-log"]').textContent.includes('Циклы от посадок');
       document.querySelector('#block-event-form').requestSubmit();
-      const repairBalances = aggregate().events.at(-1).beforeRepair.aggregate[0].sne === 7 &&
+      const repairBalances = aggregate().events.at(-1).beforeRepair.aggregate[0].sne === 8 &&
         aggregateBalances().every(total => total.ppr === 0);
       back();
       recordAggregate();
-      const aggregateTotals = JSON.stringify(firstTotals) === JSON.stringify([{sne:7,ppr:null},{sne:5,ppr:null},{sne:3,ppr:null}]) &&
-        JSON.stringify(aggregateBalances()) === JSON.stringify([{sne:11,ppr:4},{sne:10,ppr:5},{sne:6,ppr:3}]);
-      const aggregateHistory = board().shifts.at(-1).aggregateAccruals.map(entry => entry.amount).join(',') === '4,5,3';
+      const aggregateTotals = JSON.stringify(firstTotals) === JSON.stringify([{sne:8,ppr:null},{sne:5,ppr:null},{sne:3,ppr:null}]) &&
+        JSON.stringify(aggregateBalances()) === JSON.stringify([{sne:13,ppr:5},{sne:10,ppr:5},{sne:6,ppr:3}]);
+      const latestAccruals = board().shifts.at(-1).aggregateAccruals;
+      const aggregateHistory = latestAccruals.map(entry => entry.amount).join(',') === '5,5,3' &&
+        latestAccruals[0].inputs.map(entry => entry.amount).join(',') === '4,1';
       const charged = board().shifts.at(-1).accruals.find(entry => entry.name === 'Лимит циклов');
-      const aggregateResourceCharge = charged?.inputs[0].key === consumptionKey && charged.inputs[0].input === 4 &&
-        charged.amount === 2 && board().resources.find(resource => resource.name === 'Лимит циклов').remaining === 26;
+      const aggregateResourceCharge = charged?.inputs[0].key === consumptionKey && charged.inputs[0].input === 5 &&
+        charged.amount === 2.5 && board().resources.find(resource => resource.name === 'Лимит циклов').remaining === 25;
       click('[data-aircraft-tab="works"]');
       click('[data-view="reports"]');
       const report = document.querySelector('[data-report-aggregates]');
       const aggregateReport = report.textContent.includes('ГАК (проверка учёта)') &&
-        report.textContent.includes('Циклы от посадок · 8 пос.') && report.textContent.includes('Проверки · 10 шт.');
+        report.textContent.includes('Циклы от посадок · 10 пос.') && report.textContent.includes('Проверки · 10 шт.');
       const reportForm = document.querySelector('#report-form');
       reportForm.elements.period.value = 'custom';
       reportForm.elements.from.value = '2000-01-01';
@@ -375,7 +386,7 @@ async function main() {
       const localKey = 'aggregate:' + duplicate().usageCounters[0].id;
       const copiedConsumption = copyResource?.objectId === duplicate().id && copyResource.limit === 30 &&
         copyResource.remaining === 30 && copyResource.consumption[localKey] === 0.5 &&
-        !(consumptionKey in copyResource.consumption) && originalResource.remaining === 26;
+        !(consumptionKey in copyResource.consumption) && originalResource.remaining === 25;
       back();
       click('[data-view="correct-usage"]');
       const currentReadings = document.querySelector('#correct-usage-form');
@@ -414,7 +425,7 @@ async function main() {
       return { empty, imported, types, routed, pairedCounters, vkaLogs, gtdeLogs, gtdePpr, excludesUnpairedUnits,
         maximas, orderedInputs: first.orderedInputs, leftLog, rightLog, noDuplicates, rulesPersisted, unitPreserved, rulesCancel, rulesDiscard, rulesSavedOnBack,
         aggregatePreview, aggregateJournal, repairBalances, aggregateTotals, aggregateHistory, aggregateReport, aggregateReportPeriod, aggregateResourceCharge,
-        copiedRules, copiedConsumption, currentCustomReadings, pastCustomReadings,
+        copiedRules, copiedConsumption, currentCustomReadings, pastCustomReadings, duplicateSourceBlocked,
         logBeforeSettings, repairs, replaces, preview: first.preview.includes('00:43'),
         rowsRemoved: first.rowsRemoved, pending: pending.pending && !pending.blockId && pendingRecord.preview.includes('ожидает привязки'), showsRaw };
     })()`);
@@ -424,7 +435,7 @@ async function main() {
       noDuplicates: true, rulesPersisted: true, unitPreserved: true, rulesCancel: true, rulesDiscard: true, rulesSavedOnBack: true,
       aggregatePreview: true, aggregateJournal: true, repairBalances: true,
       aggregateTotals: true, aggregateHistory: true, aggregateReport: true, aggregateReportPeriod: true, aggregateResourceCharge: true,
-      copiedRules: true, copiedConsumption: true, currentCustomReadings: true, pastCustomReadings: true,
+      copiedRules: true, copiedConsumption: true, currentCustomReadings: true, pastCustomReadings: true, duplicateSourceBlocked: true,
       repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
     results.templateExperiment = "ok";
     await evaluate(`(() => {
@@ -582,6 +593,9 @@ async function main() {
         row.querySelector('[data-rule="sne"]').value = initial;
       }
       rule('Клапан', 'board:' + custom.key, 2, 15);
+      click('[data-rule-id] [data-rule-add-input]');
+      document.querySelector('[data-additional-source]').value = 'manual';
+      document.querySelector('[data-additional-factor]').value = '0.5';
       rule('Запуски мотора', 'position:motor-4:starts', 1, 0);
       document.querySelector('#aggregate-rules-form').requestSubmit();
       const originalRule = board().blocks.find(block => block.id === sourceUnit.id).usageCounters[0];
@@ -601,6 +615,7 @@ async function main() {
       const exportedRules = exported.positions.find(position => position.id === 'unit-four').usageCounters;
       const exportedUsage = exported.boardUsage.find(source => source.key === custom.key).factor === 0.8 &&
         exportedRules[0].factor === 2 && exportedRules[1].source === 'position:motor-4:starts' &&
+        exportedRules[0].additionalInputs[0].source === 'manual' &&
         !payload.json.includes('PRIVATE-SERIAL-401') && !payload.json.includes(originalRule.id) &&
         !Object.hasOwn(exportedRules[0], 'sne');
       back();
@@ -635,10 +650,11 @@ async function main() {
       click('[data-view="shift"]');
       const importedWork = document.querySelector('#template-work-form');
       importedWork.elements[custom.key].value = '3';
+      importedWork.querySelector('[data-aggregate-manual-block] input').value = '1';
       importedWork.querySelector('[data-template-scope="motor-4"] [data-template-field="starts"]').value = '1';
       importedWork.dispatchEvent(new Event('input'));
       const preview = document.querySelector('#template-preview').textContent;
-      const importedAccrual = preview.includes('Клапан') && preview.includes('3 × 2 = 6 шт.') &&
+      const importedAccrual = preview.includes('Клапан') && preview.includes('3 × 2 = 6 шт.') && preview.includes('Итого 6,5 шт.') &&
         preview.includes('Запуски мотора') && preview.includes('1 × 1 = 1 зап.');
       back();
       return { blankSaved, fourTotals, report, exportOk, remapped, exportedUsage, importedUsage, importedAccrual };

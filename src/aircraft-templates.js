@@ -222,12 +222,17 @@
       requireValue(position.kind !== "airframe", "Для планера используй показатели борта");
       position.usageCounters = list(position.usageCounters, position.id, (row) => {
         const name = label(row.name, position.id);
-        const source = row.source;
-        requireValue(source === "manual" || (typeof source === "string" && source.startsWith("board:") && boardKeys.has(source.slice(6))) ||
-          engineKeys.has(source), `Не найден источник показателя «${name}» в формуляре «${position.label}»`);
-        requireValue(aggregateUnits.includes(row.unit) && Number.isFinite(row.factor) && row.factor >= 0 && row.factor <= 1000000,
-          `Проверь единицу и коэффициент показателя «${name}»`);
-        return { name, source, unit: row.unit, factor: row.factor };
+        function parseInput({ source, factor }) {
+          requireValue(source === "manual" || (typeof source === "string" && source.startsWith("board:") && boardKeys.has(source.slice(6))) ||
+            engineKeys.has(source), `Не найден источник показателя «${name}» в формуляре «${position.label}»`);
+          requireValue(Number.isFinite(factor) && factor >= 0 && factor <= 1000000, `Проверь коэффициент показателя «${name}»`);
+          return { source, factor };
+        }
+        requireValue(aggregateUnits.includes(row.unit), `Проверь единицу показателя «${name}»`);
+        const primary = parseInput(row);
+        const additionalInputs = row.additionalInputs == null ? [] : list(row.additionalInputs, `источники показателя «${name}»`, parseInput);
+        unique([primary, ...additionalInputs], "source", `источники показателя «${name}»`);
+        return { name, source: primary.source, unit: row.unit, factor: primary.factor, ...(additionalInputs.length && { additionalInputs }) };
       });
     }
     const checks = list(document.checks || [], "проверки вложенности", (row) => {

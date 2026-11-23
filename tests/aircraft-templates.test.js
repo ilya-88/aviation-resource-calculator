@@ -75,7 +75,8 @@ test("раскладка принимает позицию шаблона, чи�
 test("шаблон переносит определения счётчиков и проверяет источники", () => {
   const raw = structuredClone(su33);
   raw.boardUsage = [{ key: "custom-clock", label: "Работа насоса", kind: "time", format: "seconds", factor: 2, enabled: true }];
-  const rule = { name: "Циклы", source: "board:custom-clock", unit: "шт.", factor: 3 };
+  const rule = { name: "Циклы", source: "board:custom-clock", unit: "шт.", factor: 3,
+    additionalInputs: [{ source: "manual", factor: 2 }] };
   raw.positions[3].usageCounters = [
     { ...rule, id: "local", sne: 400, ppr: 23 },
     { name: "Запуски", source: "position:engine-right:starts", unit: "зап.", factor: 1 },
@@ -87,6 +88,9 @@ test("шаблон переносит определения счётчиков 
   raw.positions[3].usageCounters[1].source = "position:missing:starts";
   assert.throws(() => templates.validateTemplate(raw), /Не найден источник показателя/);
   raw.positions[3].usageCounters.pop();
+  raw.positions[3].usageCounters[0].additionalInputs.push({ source: rule.source, factor: 1 });
+  assert.throws(() => templates.validateTemplate(raw), /Повторяются ключи/);
+  raw.positions[3].usageCounters[0].additionalInputs.pop();
   raw.boardUsage = [];
   assert.throws(() => templates.validateTemplate(raw), /Не найден источник показателя/);
 });

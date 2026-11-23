@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.17";
+  const APP_VERSION = "0.2.38-exp.18";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -209,6 +209,8 @@
     engineMinutes: usage.minutes / 60, starts: usage.starts, maximum: usage.maximumSeconds, afterburner: usage.afterburnerSeconds, ...usage.modes,
   });
   const manualCounterName = (counter) => `aggregate-input:${counter.id}`;
+  const aggregateRuleInputs = ({ source, factor, sourceLabel, additionalInputs }) =>
+    [{ source, factor, sourceLabel }, ...(additionalInputs || [])];
 
   function aggregateUsageSources(aircraft, includeDisabled = false) {
     const sources = [{ key: "manual", label: "Вручную при записи работы" }];
@@ -235,14 +237,16 @@
   }
 
   function aggregateRuleFields() {
-    return `<p class="field-help">Добавление в формуляр = значение источника × коэффициент.</p>
+    return `<p class="field-help">Значение каждого источника умножается на его коэффициент. Полученные значения складываются.</p>
       <div class="section-stack" data-aggregate-rules></div>
       <button type="button" class="secondary-button" data-aggregate-rule-add>Добавить показатель</button>
       <div data-aggregate-rule-copy hidden></div>`;
   }
 
-  function aggregateRuleIdentity({ name, source, unit, factor }) {
-    return JSON.stringify([name.trim().toLocaleLowerCase("ru-RU"), source, unit, factor]);
+  function aggregateRuleIdentity(rule) {
+    const inputs = aggregateRuleInputs(rule).map(({ source, factor }) => [source, factor]);
+    inputs.sort(([left], [right]) => left.localeCompare(right));
+    return JSON.stringify([rule.name.trim().toLocaleLowerCase("ru-RU"), rule.unit, inputs]);
   }
 
   function bindAggregateRules(root, aircraft, block) {
@@ -257,8 +261,15 @@
     }
     const savedRules = new Map((block?.usageCounters || []).map((rule) => [rule.id, rule]));
     const sourceLabels = new Map();
-    const readFields = (row) => Object.fromEntries([...row.querySelectorAll("[data-rule]")].map((input) =>
-      [input.dataset.rule, input.type === "number" ? input.valueAsNumber : input.value.trim()]));
+    function readFields(row) {
+      const standard = Object.fromEntries([...row.querySelectorAll("[data-rule]")].map((input) =>
+        [input.dataset.rule, input.type === "number" ? input.valueAsNumber : input.value.trim()]));
+      const additionalInputs = [...row.querySelectorAll("[data-rule-input]")].map((part) => ({
+        source: part.querySelector("[data-additional-source]").value,
+        factor: part.querySelector("[data-additional-factor]").valueAsNumber,
+      }));
+      return { ...standard, ...(additionalInputs.length && { additionalInputs }) };
+    }
     function unitLocked(ruleId) {
       const totals = block?.usageTotals?.[ruleId];
       return recorded.has(ruleId) || Boolean(totals?.sne || totals?.ppr);
@@ -267,14 +278,19 @@
       const row = document.createElement("fieldset");
       row.className = "form-grid";
       row.dataset.ruleId = rule.id;
-      if (rule.sourceLabel) sourceLabels.set(rule.id, rule.sourceLabel);
-      const choices = sources.some(({ key }) => key === rule.source) ? sources :
-        [...sources, { key: rule.source, label: `${rule.sourceLabel || "Исходный показатель"} · недоступен` }];
+      sourceLabels.set(rule.id, new Map(aggregateRuleInputs(rule).map(({ source, sourceLabel }) => [source, sourceLabel])));
+      function sourceOptions({ source, sourceLabel }) {
+        const choices = sources.some(({ key }) => key === source) ? sources :
+          [...sources, { key: source, label: `${sourceLabel || "Исходный показатель"} · недоступен` }];
+        return choices.map(({ key, label }) => `<option value="${escapeHtml(key)}"${key === source ? " selected" : ""}>${escapeHtml(label)}</option>`).join("");
+      }
       row.innerHTML = `
         <label class="form-span">Показатель<input data-rule="name" type="text" maxlength="80" required value="${escapeHtml(rule.name)}" placeholder="Например, циклы"></label>
-        <label class="form-span">Источник<select data-rule="source">${choices.map(({ key, label }) => `<option value="${escapeHtml(key)}"${key === rule.source ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
+        <label class="form-span">Источник<select data-rule="source">${sourceOptions(rule)}</select></label>
         <label>Единица итога<select data-rule="unit"${unitLocked(rule.id) ? " disabled" : ""}>${AGGREGATE_UNITS.map((unit) => `<option${unit === rule.unit ? " selected" : ""}>${unit}</option>`).join("")}</select></label>
         <label>Коэффициент<input data-rule="factor" type="number" min="0" max="1000000" step="any" value="${rule.factor}" required></label>
+        <div class="form-span section-stack" data-rule-inputs hidden></div>
+        <button type="button" class="small-button" data-rule-add-input>Добавить источник</button>
         <label>Текущее СНЭ<input data-rule="sne" type="number" min="0" max="1000000000" step="any" value="${block?.usageTotals?.[rule.id]?.sne ?? 0}" required></label>
         ${block?.repairs ? `<label>Текущее ППР<input data-rule="ppr" type="number" min="0" max="1000000000" step="any" value="${block.usageTotals?.[rule.id]?.ppr ?? 0}" required></label>` : ""}
         <p class="form-span field-help" data-rule-example></p>
@@ -282,10 +298,37 @@
         <button type="button" class="small-button danger-button" data-rule-remove>Убрать показатель</button>`;
       const factor = row.querySelector('[data-rule="factor"]');
       const unit = row.querySelector('[data-rule="unit"]');
+      const additional = row.querySelector("[data-rule-inputs]");
       function updateExample() {
-        row.querySelector("[data-rule-example]").textContent = factor.validity.valid ?
-          `Пример: 2 × ${formatNumber(factor.valueAsNumber, 6)} = ${formatNumber(2 * factor.valueAsNumber, 6)} ${unit.value}` : "";
+        const factors = [factor, ...additional.querySelectorAll("[data-additional-factor]")];
+        const example = factors.map((input) => 2 * input.valueAsNumber).reduce((sum, amount) => sum + amount, 0);
+        row.querySelector("[data-rule-example]").textContent = factors.every((input) => input.validity.valid) ?
+          `Пример: ${factors.map((input) => `2 × ${formatNumber(input.valueAsNumber, 6)}`).join(" + ")} = ${formatNumber(example, 6)} ${unit.value}` : "";
       }
+      function addInput(input) {
+        const part = document.createElement("div");
+        part.className = "form-grid";
+        part.dataset.ruleInput = "";
+        part.innerHTML = `<label class="form-span">Источник<select data-additional-source>${sourceOptions(input)}</select></label>
+          <label>Коэффициент<input data-additional-factor type="number" min="0" max="1000000" step="any" value="${input.factor}" required></label>
+          <button type="button" class="small-button" data-remove-input>Убрать источник</button>`;
+        part.querySelector("[data-additional-factor]").addEventListener("input", updateExample);
+        part.querySelector("[data-remove-input]").onclick = () => {
+          part.remove();
+          additional.hidden = !additional.children.length;
+          updateExample();
+        };
+        additional.append(part);
+        additional.hidden = false;
+        updateExample();
+      }
+      for (const input of rule.additionalInputs || []) addInput(input);
+      row.querySelector("[data-rule-add-input]").onclick = () => {
+        const selected = new Set(aggregateRuleInputs(readFields(row)).map(({ source }) => source));
+        const next = sources.find(({ key }) => !selected.has(key));
+        if (next) addInput({ source: next.key, factor: 1 });
+        else showToast("Все доступные источники уже добавлены");
+      };
       row.querySelector('[data-rule="source"]').addEventListener("change", (event) => {
         const source = sources.find(({ key }) => key === event.target.value);
         if (source?.unit && !rule.name) unit.value = source.unit;
@@ -329,15 +372,21 @@
       };
     }
     const draft = () => [...list.children].map((row) => [row.dataset.ruleId,
-      ...[...row.querySelectorAll("[data-rule]")].map((input) => [input.value, input.validity.badInput])]);
+      ...[...row.querySelectorAll("[data-rule], [data-additional-source], [data-additional-factor]")].map((input) => [input.value, input.validity.badInput])]);
     return { draft, read: () => [...list.children].map((row) => {
       const values = readFields(row);
       if (!values.name) throw new Error("Укажи название показателя");
       if (row.querySelector("input[type=number]:invalid")) throw new Error("Проверь коэффициент и начальные показания");
-      const source = sources.find(({ key }) => key === values.source);
+      const inputs = aggregateRuleInputs(values);
+      if (new Set(inputs.map(({ source }) => source)).size !== inputs.length) throw new Error(`У показателя «${values.name}» источник указан дважды`);
+      function named(input) {
+        const label = sources.find(({ key }) => key === input.source)?.label || sourceLabels.get(row.dataset.ruleId)?.get(input.source);
+        return { source: input.source, factor: input.factor, sourceLabel: label || "Исходный показатель" };
+      }
       const previous = savedRules.get(row.dataset.ruleId);
       if (unitLocked(row.dataset.ruleId) && previous?.unit !== values.unit) throw new Error("Единица накопленной наработки закреплена за показателем");
-      return { id: row.dataset.ruleId, ...values, sourceLabel: source?.label || sourceLabels.get(row.dataset.ruleId) || "Исходный показатель" };
+      return { id: row.dataset.ruleId, ...values, sourceLabel: named(inputs[0]).sourceLabel,
+        ...(inputs.length > 1 && { additionalInputs: inputs.slice(1).map(named) }) };
     }) };
   }
 
@@ -351,7 +400,7 @@
 
   function aggregateManualInputs(aircraft) {
     const rows = aircraft.blocks.flatMap((block) => {
-      const manual = (block.usageCounters || []).filter(({ source }) => source === "manual");
+      const manual = (block.usageCounters || []).filter((rule) => aggregateRuleInputs(rule).some(({ source }) => source === "manual"));
       return manual.length ? `<fieldset class="form-grid" data-aggregate-manual-block="${escapeHtml(block.id)}"><legend>${escapeHtml(block.name)}</legend>
         ${manual.map((rule) => `<label>${escapeHtml(rule.name)} (${escapeHtml(rule.unit)})<input name="${manualCounterName(rule)}" type="number" min="0" max="1000000000" step="any"></label>`).join("")}
       </fieldset>` : [];
@@ -392,12 +441,18 @@
     return aircraft.blocks.flatMap((block) => {
       if (!block.usageCounters?.length || !blockInstalledOn(block, date)) return [];
       return block.usageCounters.flatMap((rule) => {
-        const manual = rule.source === "manual";
-        const entered = manual && workData.get(manualCounterName(rule));
-        const value = manual ? (entered == null || entered === "" ? null : Number(entered)) : values.get(rule.source);
-        if (!Number.isFinite(value) || value < 0 || !Number.isFinite(value * rule.factor)) return [];
+        const inputs = aggregateRuleInputs(rule).flatMap(({ source, factor, sourceLabel }) => {
+          const entered = source === "manual" ? workData.get(manualCounterName(rule)) : values.get(source);
+          const input = entered == null || entered === "" ? null : Number(entered);
+          const amount = input * factor;
+          if (!Number.isFinite(input) || input < 0 || !Number.isFinite(amount)) return [];
+          return [{ sourceKey: source, source: sourceLabel, input, factor, amount }];
+        });
+        if (!inputs.length) return [];
+        const amount = inputs.reduce((sum, item) => sum + item.amount, 0);
+        if (!Number.isFinite(amount)) return [];
         return [{ blockId: block.id, blockName: block.name, serialNumber: block.serialNumber, counterId: rule.id, name: rule.name, unit: rule.unit,
-          sourceKey: rule.source, source: rule.sourceLabel, input: value, factor: rule.factor, amount: value * rule.factor,
+          ...(rule.additionalInputs?.length ? { inputs } : inputs[0]), amount,
           ppr: countsTowardPpr(block, date) }];
       });
     });
@@ -416,8 +471,15 @@
     if (!entries?.length) return "";
     return `<details><summary>Наработка агрегатов (${entries.length})</summary><ul class="accrual-items">
       ${entries.map((entry) => `<li><strong>${escapeHtml(entry.blockName)} · ${escapeHtml(entry.name)}</strong>
-        <small>${escapeHtml(entry.source)} · ${formatNumber(entry.input, 6)} × ${formatNumber(entry.factor, 6)} = ${formatNumber(entry.amount, 6)} ${escapeHtml(entry.unit)}</small></li>`).join("")}
+        ${aggregateAccrualCalculation(entry)}</li>`).join("")}
     </ul></details>`;
+  }
+
+  function aggregateAccrualCalculation(entry) {
+    const unit = escapeHtml(entry.unit);
+    const parts = (entry.inputs || [entry]).map(({ source, input, factor, amount }) =>
+      `<small>${escapeHtml(source)} · ${formatNumber(input, 6)} × ${formatNumber(factor, 6)} = ${formatNumber(amount, 6)} ${unit}</small>`);
+    return parts.join("") + (entry.inputs ? `<small>Итого ${formatNumber(entry.amount, 6)} ${unit}</small>` : "");
   }
 
   function sourceCheckboxes(aircraft = {}) {
@@ -506,7 +568,8 @@
     if (!owner?.usageCounters?.length) return sources;
     const available = new Set(aggregateUsageSources(aircraft).map(({ key }) => key));
     return [...sources, ...owner.usageCounters.map((rule) => ({
-      key: aggregateResourceKey(rule.id), label: `Формуляр · ${rule.name} (${rule.unit})`, enabled: available.has(rule.source),
+      key: aggregateResourceKey(rule.id), label: `Формуляр · ${rule.name} (${rule.unit})`,
+      enabled: aggregateRuleInputs(rule).some(({ source, factor }) => factor > 0 && available.has(source)),
     }))];
   }
 
@@ -1192,7 +1255,10 @@
         position.label = block.name;
         position.model = block.model;
         if (block.usageCounters) {
-          position.usageCounters = block.usageCounters.map(({ name, source, unit, factor }) => ({ name, source, unit, factor }));
+          position.usageCounters = block.usageCounters.map(({ name, source, unit, factor, additionalInputs }) => ({
+            name, source, unit, factor,
+            ...(additionalInputs?.length && { additionalInputs: additionalInputs.map(({ source, factor }) => ({ source, factor })) }),
+          }));
         }
       }
     }
@@ -2819,7 +2885,7 @@
     const entries = aircraft.shifts.slice().reverse().flatMap((shift) => (shift.aggregateAccruals || [])
       .filter((entry) => entry.blockId === block.id)
       .map((entry) => `<li><strong>${formatDate(shift.date)} · ${escapeHtml(entry.name)}</strong>
-        <small>${escapeHtml(entry.source)} · ${formatNumber(entry.input, 6)} × ${formatNumber(entry.factor, 6)} = ${formatNumber(entry.amount, 6)} ${escapeHtml(entry.unit)}</small></li>`));
+        ${aggregateAccrualCalculation(entry)}</li>`));
     return `
       <button type="button" class="secondary-button" data-form-widget="aggregate-settings" data-view="block-usage-rules">Настроить учёт наработки</button>
       ${counters}
@@ -3615,12 +3681,13 @@
       }),
     ];
     const aggregateSources = new Map(aggregateUsageSources(aircraft).map(({ key, label }) => [key, label]));
-    const aggregateEdges = shift ? (shift.aggregateAccruals || []).map((entry) => ({
-      ...entry, key: entry.sourceKey, target: entry.blockId, counter: true, enabled: true, installed: true,
-    })) : blocks.flatMap((block) => (block.usageCounters || []).map((rule) => ({
-      key: rule.source, source: rule.sourceLabel, target: block.id, name: rule.name, factor: rule.factor,
-      enabled: aggregateSources.has(rule.source), installed: blockInstalledOn(block, todayIso()), counter: true, condition: pprCondition,
-    })));
+    const aggregateEdges = shift ? (shift.aggregateAccruals || []).flatMap((entry) => (entry.inputs || [entry]).map((part) => ({
+      ...part, key: part.sourceKey, name: entry.name, target: entry.blockId, counter: true, enabled: true, installed: true,
+    }))) : blocks.flatMap((block) => (block.usageCounters || []).flatMap((rule) =>
+      aggregateRuleInputs(rule).map(({ source, sourceLabel, factor }) => ({
+        key: source, source: sourceLabel, target: block.id, name: rule.name, factor,
+        enabled: factor > 0 && aggregateSources.has(source), installed: blockInstalledOn(block, todayIso()), counter: true, condition: pprCondition,
+      }))));
     const edges = [...resourceEdges, ...counterEdges, ...aggregateEdges];
     const sourceLabels = new Map(usageSources(aircraft, { kind: "engine" }).map((source) => [source.key, calculationSourceLabel(source)]));
     for (const [key, label] of Object.entries(shift?.sourceLabels || {})) sourceLabels.set(key, label);
@@ -5080,7 +5147,11 @@
         for (const block of aircraft.blocks) {
           const rules = templatePositionFor(aircraft, block)?.usageCounters;
           if (!rules) continue;
-          block.usageCounters = rules.map((rule) => ({ ...rule, id: id(), sourceLabel: labels.get(rule.source) }));
+          block.usageCounters = rules.map((rule) => ({
+            ...rule, id: id(), sourceLabel: labels.get(rule.source),
+            ...(rule.additionalInputs?.length && { additionalInputs: rule.additionalInputs.map((input) =>
+              ({ ...input, sourceLabel: labels.get(input.source) })) }),
+          }));
           block.usageTotals = {};
         }
       }

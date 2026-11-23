@@ -235,7 +235,7 @@ fieldset.field-tiles > legend { margin-bottom: 6px; padding: 0; }
 .field-tiles > label > output { min-height: 44px; display: flex; align-items: center; }
 .field-tiles > #resource-owner-choice[hidden] { display: none; }
 .form-details { min-width: 0; }
-#new-block-usage[hidden], [data-aggregate-manual-block][hidden] { display: none; }
+#new-block-usage[hidden], [data-aggregate-manual-block][hidden], [data-rule-inputs][hidden] { display: none; }
 [data-aggregate-rules] { grid-column: 1 / -1; }
 [data-aggregate-rules]:empty { display: none; }
 [data-rule-example] { margin: 0; }
