@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.25";
+  const APP_VERSION = "0.2.38-exp.26";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1015,13 +1015,18 @@
     `, { title: "Самолёты", subtitle: "Авиаресурс" });
   }
 
+  function componentSerialLine(block) {
+    const serial = String(block.serialNumber ?? "").trim();
+    return block.kind !== "airframe" && serial ? `<small class="component-serial">Зав. № ${escapeHtml(serial)}</small>` : "";
+  }
+
   function renderAircraft(layoutEditing = false) {
     const aircraft = selectedAircraft();
     const activeTab = state.aircraftTab || "aggregates";
     const renderBlockTile = (block) => `
       <button class="equipment-block" data-block-id="${block.id}">
         <span class="equipment-block__icon">${block.kind === "engine" ? "◉" : block.kind === "airframe" ? "△" : "⬡"}</span>
-        <span class="equipment-block__body"><strong>${escapeHtml(block.name)}</strong><small>${escapeHtml(block.caption)}</small></span>
+        <span class="equipment-block__body"><strong>${escapeHtml(block.name)}</strong>${componentSerialLine(block)}${block.caption ? `<small>${escapeHtml(block.caption)}</small>` : ""}</span>
         <span class="status-dot status-${block.status}" aria-label="${statusLabel(block.status)}"></span>
         <span>${icon("chevron")}</span>
       </button>`;
@@ -2733,7 +2738,7 @@
     const aircraft = selectedAircraft();
     const blockRows = aircraft.blocks.map((block) => `
       <div class="setting-row block-setting-row">
-        <span><strong>${escapeHtml(block.name)}</strong><small>${escapeHtml(block.caption)}</small></span>
+        <span><strong>${escapeHtml(block.name)}</strong>${componentSerialLine(block)}${block.caption ? `<small>${escapeHtml(block.caption)}</small>` : ""}</span>
         <span class="inline-actions">
           <button type="button" class="small-button" data-rename-block-id="${block.id}">Переименовать</button>
           <button type="button" class="small-button danger-button" data-remove-block-id="${block.id}">Удалить</button>
@@ -3095,6 +3100,7 @@
           return `<div class="form-assembly" data-form-widget="assembly:${escapeHtml(item.id)}">
             <button type="button" class="form-assembly-open" data-block-id="${escapeHtml(item.id)}">
               <strong data-tile-caption>${escapeHtml(item.name)}</strong>
+              ${componentSerialLine(item)}
               <small>${entry ? `Установлен ${formatOptionalDate(entry.date)}${entry.note ? ` · ${escapeHtml(entry.note)}` : ""}` : "Установлен"}</small>
             </button>
             <button type="button" class="small-button danger-button" data-dismantle-block="${escapeHtml(item.id)}">Демонтировать</button>

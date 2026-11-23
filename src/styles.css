@@ -176,6 +176,7 @@ h2 { font-size: 18px; }
 .equipment-block__icon { width: 34px; height: 34px; border-radius: 10px; background: #edf2f6; display: grid; place-items: center; font-size: 18px; }
 .equipment-block__body { display: grid; gap: 4px; }
 .equipment-block__body small { color: var(--ink-soft); }
+.component-serial { display: block; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; }
 .status-dot.status-ok { background: var(--green); }
 .status-dot.status-warning { background: var(--amber); }
