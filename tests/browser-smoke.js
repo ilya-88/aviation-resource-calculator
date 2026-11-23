@@ -1227,6 +1227,53 @@ async function main() {
     assert.equal(await evaluate(`!document.querySelector('[data-aircraft-id]') &&
       document.querySelector('main').textContent.includes('Самолётов пока нет')`), true);
     results.boardDeletion = "ok";
+    await evaluate(`(() => {
+      const key = 'aviation-resource-prototype-v1';
+      localStorage.setItem('test-reminder-original', localStorage.getItem(key));
+      const usage = (id, remaining, options = {}) => ({ id, object: 'Самолёт', name: id, unit: 'ч', limit: 25, remaining,
+        advanceValue: 3, notificationCategory: 'resourceUsage', ...options });
+      localStorage.setItem(key, JSON.stringify({ globalNotifications: true, aircraft: [
+        { id: 'reminder-a', type: 'Проверка', boardNumber: 'A', totalFlightMinutes: 0, notifications: true, blocks: [], shifts: [],
+          notificationConfig: { mode: 'selected', categories: { resourceUsage: true, workUsage: false } },
+          resources: [usage('порог', 2), usage('превышение', 4), usage('без срока', 0, { notifyOnDue: false }),
+            usage('другой канал', 1, { notifyApp: false }), usage('другая категория', 1, { notificationCategory: 'workUsage' })] },
+        { id: 'reminder-b', type: 'Проверка', boardNumber: 'B', totalFlightMinutes: 0, notifications: false, blocks: [], shifts: [],
+          notificationConfig: { mode: 'selected', leadDays: 4, categories: { resourceDate: true, resourceUsage: false } },
+          resources: [{ id: 'date', object: 'Самолёт', name: 'Календарный срок', unit: 'дн.', expiryDate: '2099-12-10', advanceValue: null }] },
+      ] }));
+    })()`);
+    await command("Page.reload");
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (await evaluate("Boolean(document.querySelector('[data-aircraft-id=reminder-b]'))").catch(() => false)) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const reminderSync = await evaluate(`(async () => {
+      let schedule;
+      let requests = 0;
+      window.AndroidBridge = { syncResourceReminders(json) { schedule = JSON.parse(json); }, requestNotifications() { requests += 1; } };
+      document.querySelector('[data-action="settings"]').click();
+      const b = document.querySelector('[data-aircraft-notification-id=reminder-b]');
+      b.click();
+      const all = schedule;
+      const expectedDates = [new Date(2099, 11, 6, 9).getTime(), new Date(2099, 11, 10, 9).getTime()];
+      const planned = all.length === 3 && all[0].at === 0 && all[0].body.includes('порог') &&
+        JSON.stringify(all.slice(1).map(item => item.at)) === JSON.stringify(expectedDates) && requests === 1;
+      document.querySelector('[data-aircraft-notification-id=reminder-a]').click();
+      const filtered = schedule.length === 2 && schedule.every(item => item.body.includes('борт B'));
+      document.querySelector('#global-notifications').click();
+      const dialog = document.querySelector('dialog[open]');
+      await new Promise(resolve => {
+        dialog.addEventListener('close', resolve, { once: true });
+        dialog.querySelector('[value=disable]').click();
+      });
+      const cleared = Array.isArray(schedule) && schedule.length === 0;
+      const key = 'aviation-resource-prototype-v1';
+      localStorage.setItem(key, localStorage.getItem('test-reminder-original'));
+      localStorage.removeItem('test-reminder-original');
+      return { planned, filtered, cleared };
+    })()`);
+    assert.deepEqual(reminderSync, { planned: true, filtered: true, cleared: true });
+    results.reminderSync = "ok";
     if (process.argv.includes("--templates-only")) {
       process.stdout.write(`${JSON.stringify(results)}\n`);
       return;

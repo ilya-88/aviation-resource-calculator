@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.20";
+  const APP_VERSION = "0.2.38-exp.21";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -741,10 +741,11 @@
         aircraft: state.aircraft,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
-      return true;
     } catch (_) {
       return false;
     }
+    syncAndroidReminders();
+    return true;
   }
 
   function normalizeState(raw) {
@@ -2683,8 +2684,7 @@
 
     document.getElementById("export-board-template")?.addEventListener("click", () => exportTemplate(boardTemplate(aircraft)));
     document.getElementById("aircraft-notifications").addEventListener("change", (event) => {
-      aircraft.notifications = state.globalNotifications && event.target.checked;
-      saveState();
+      if (!setBoardNotifications(aircraft, event.target.checked)) { render(); return; }
       showToast(`Уведомления борта ${aircraft.boardNumber} ${aircraft.notifications ? "включены" : "выключены"}`);
       render();
     });
@@ -3977,7 +3977,7 @@
       notificationCategory: state.pendingWork ? "workUsage" : "resourceUsage",
       notifyApp: true,
       notifyCalendar: false,
-      advanceValue: 3,
+      advanceValue: null,
       notifyOnDue: true,
     };
     const objectOptions = ["Самолёт", ...aircraft.blocks.map((block) => block.name)]
@@ -4044,7 +4044,7 @@
         <fieldset aria-label="Уведомления этой работы">
           <label><span>Категория</span><select name="notificationCategory"><option value="workUsage" ${draft.notificationCategory === "workUsage" ? "selected" : ""}>Работы по наработке</option><option value="workDate" ${draft.notificationCategory === "workDate" ? "selected" : ""}>Работы по дате</option><option value="resourceUsage" ${draft.notificationCategory === "resourceUsage" ? "selected" : ""}>Ресурс по наработке</option><option value="resourceDate" ${draft.notificationCategory === "resourceDate" ? "selected" : ""}>Ресурс по дате</option></select></label>
           <div class="field-pair"><label class="checkbox-row"><input name="notifyApp" type="checkbox" ${draft.notifyApp !== false ? "checked" : ""}><span>Уведомление приложения</span></label><label class="checkbox-row"><input name="notifyCalendar" type="checkbox" ${draft.notifyCalendar ? "checked" : ""}><span>Штатный календарь</span></label></div>
-          <div class="field-pair"><label><span>Предварительно за</span><input name="advanceValue" type="number" min="0" step="0.01" value="${draft.advanceValue ?? 3}"></label><label class="checkbox-row"><input name="notifyOnDue" type="checkbox" ${draft.notifyOnDue !== false ? "checked" : ""}><span>Повторить в день/момент выполнения</span></label></div>
+          <div class="field-pair"><label><span>Предварительно за</span><input name="advanceValue" type="number" min="0" step="any" value="${draft.advanceValue ?? ""}" placeholder="По умолчанию"></label><label class="checkbox-row"><input name="notifyOnDue" type="checkbox" ${draft.notifyOnDue !== false ? "checked" : ""}><span>Напомнить при наступлении срока</span></label></div>
         </fieldset>
         </details>
         <div class="operation-tags">
@@ -4206,7 +4206,7 @@
         notificationCategory: String(data.get("notificationCategory")),
         notifyApp: data.get("notifyApp") === "on",
         notifyCalendar: data.get("notifyCalendar") === "on",
-        advanceValue: Number(data.get("advanceValue")),
+        advanceValue: data.get("advanceValue") === "" ? null : Number(data.get("advanceValue")),
         notifyOnDue: data.get("notifyOnDue") === "on",
         history: Array.isArray(resource?.history) ? resource.history : [],
       });
@@ -4970,9 +4970,18 @@
     `, { title: "Общие настройки", subtitle: "Приложение и все самолёты", back: true, settings: false });
 
     function setAllNotifications(enabled) {
+      const previous = state.globalNotifications;
+      const flags = state.aircraft.map((item) => item.notifications);
       state.globalNotifications = enabled;
       state.aircraft.forEach((item) => { item.notifications = enabled; });
-      saveState();
+      if (!saveState()) {
+        state.globalNotifications = previous;
+        state.aircraft.forEach((item, index) => { item.notifications = flags[index]; });
+        render();
+        showToast("Не удалось сохранить уведомления");
+        return;
+      }
+      if (enabled) window.AndroidBridge?.requestNotifications?.();
       render();
       showToast(enabled ? "Уведомления всех самолётов включены" : "Уведомления всех самолётов выключены");
     }
@@ -5000,8 +5009,7 @@
       toggle.addEventListener("change", (event) => {
         const targetAircraft = state.aircraft.find((item) => item.id === event.target.dataset.aircraftNotificationId);
         if (!targetAircraft) return;
-        targetAircraft.notifications = event.target.checked;
-        saveState();
+        if (!setBoardNotifications(targetAircraft, event.target.checked)) { render(); return; }
         showToast(`${targetAircraft.type}, борт ${targetAircraft.boardNumber}: уведомления ${targetAircraft.notifications ? "включены" : "выключены"}`);
       });
     });
@@ -5343,8 +5351,68 @@
     showToast("Блок удалён");
   }
 
+  function setBoardNotifications(aircraft, enabled) {
+    const previous = aircraft.notifications;
+    aircraft.notifications = state.globalNotifications && enabled;
+    if (!saveState()) {
+      aircraft.notifications = previous;
+      showToast("Не удалось сохранить уведомления");
+      return false;
+    }
+    if (aircraft.notifications) window.AndroidBridge?.requestNotifications?.();
+    return true;
+  }
+
+  function syncAndroidReminders() {
+    if (typeof window.AndroidBridge?.syncResourceReminders !== "function") return;
+    try { window.AndroidBridge.syncResourceReminders(JSON.stringify(resourceReminders())); }
+    catch (_) { recordDiagnostic("reminders.sync.error"); }
+  }
+
+  function resourceReminders() {
+    if (!state.globalNotifications) return [];
+    const now = Date.now();
+    const today = todayIso();
+    return state.aircraft.filter((aircraft) => aircraft.notifications).flatMap((aircraft) => {
+      const config = aircraft.notificationConfig;
+      return aircraft.resources.flatMap((resource) => {
+        const category = resource.notificationCategory || "resourceUsage";
+        if (resource.notifyApp === false || (config.mode === "selected" && !config.categories[category]) ||
+            (resource.installed && resource.installed > today)) return [];
+        const label = `${aircraft.type}, борт ${aircraft.boardNumber} · ${resource.name}`;
+        const key = JSON.stringify([aircraft.id, resource.id]);
+        const dueAlert = resource.notifyOnDue !== false;
+        if (resource.unit === "дн." || category.endsWith("Date")) {
+          if (!resource.expiryDate) return [];
+          const end = new Date(`${resource.expiryDate}T09:00:00`);
+          const when = end.getTime();
+          if (!Number.isFinite(when)) return [];
+          const days = Math.max(0, Math.trunc(resource.advanceValue ?? config.leadDays));
+          const alerts = [];
+          if (days && now < when) {
+            end.setDate(end.getDate() - days);
+            alerts.push({ key: `${key}:date:${resource.expiryDate}:advance`, at: end.getTime(), body: `${label} · приближается срок` });
+          }
+          if (dueAlert) alerts.push({ key: `${key}:date:${resource.expiryDate}:due`, at: when, body: `${label} · наступил срок` });
+          return alerts;
+        }
+        const owner = resourceOwner(aircraft, resource);
+        if ((resource.objectId && !owner) || (owner && !blockInstalledOn(owner, today))) return [];
+        const remaining = Number(resource.remaining);
+        if (!(resource.limit > 0) || !Number.isFinite(remaining)) return [];
+        const threshold = resource.advanceValue ?? 3;
+        const phase = remaining <= 0 ? (dueAlert ? "due" : "") : (remaining <= threshold ? "advance" : "");
+        return phase ? [{
+          key: `${key}:usage:${resource.limit}:${phase}`, at: 0,
+          body: `${label} · остаток ${formatNumber(remaining, 6)} ${resource.unit}`,
+        }] : [];
+      });
+    });
+  }
+
   function addNearestWorkToCalendar() {
     const aircraft = selectedAircraft();
+    if (!aircraft) { showToast("Добавь самолёт для календарных работ"); return; }
     const nearest = [...aircraft.resources]
       .filter((resource) => resource.unit === "дн.")
       .sort((a, b) => a.remaining - b.remaining)[0];
@@ -5429,7 +5497,7 @@
       notificationCategory: "resourceUsage",
       notifyApp: true,
       notifyCalendar: false,
-      advanceValue: 3,
+      advanceValue: null,
       notifyOnDue: true,
       ...resource,
     };
@@ -5438,6 +5506,9 @@
       if (Number.isFinite(end)) {
         normalized.remaining = Math.max(0, (end - Date.parse(todayIso())) / 86400000);
       }
+    }
+    if (normalized.unit === "дн.") {
+      normalized.notificationCategory = normalized.notificationCategory?.startsWith("work") ? "workDate" : "resourceDate";
     }
     normalized.status = resourceStatus(Number(normalized.remaining), Number(normalized.limit));
     return normalized;
@@ -5495,4 +5566,5 @@
   };
 
   render();
+  syncAndroidReminders();
 })();

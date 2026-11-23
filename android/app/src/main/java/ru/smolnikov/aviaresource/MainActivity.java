@@ -2,7 +2,6 @@ package ru.smolnikov.aviaresource;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
@@ -68,7 +67,6 @@ public class MainActivity extends Activity {
         return handled;
     }
 
-    private static final String CHANNEL_ID = "resource_reminders";
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1001;
     private WebView webView;
     private String pendingNotificationTitle;
@@ -80,7 +78,7 @@ public class MainActivity extends Activity {
         if (savedInstanceState != null) pendingTemplate = savedInstanceState.getByteArray("pendingAircraftTemplate");
         getWindow().setStatusBarColor(Color.rgb(18, 38, 58));
         getWindow().setNavigationBarColor(Color.rgb(255, 255, 255));
-        createNotificationChannel();
+        ResourceReminderReceiver.ensureChannel(this);
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(243, 246, 248));
@@ -173,16 +171,10 @@ public class MainActivity extends Activity {
         webView.loadUrl("file:///android_asset/index.html");
     }
 
-    private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "Ресурсы и регламентные работы",
-                    NotificationManager.IMPORTANCE_HIGH
-            );
-            channel.setDescription("Напоминания о приближении работ и ограничений ресурсов");
-            getSystemService(NotificationManager.class).createNotificationChannel(channel);
-        }
+    @Override
+    protected void onResume() {
+        super.onResume();
+        ResourceReminderReceiver.dispatch(this);
     }
 
     @Override
@@ -341,10 +333,13 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
-                } else {
-                    Toast.makeText(MainActivity.this, "Уведомления разрешены", Toast.LENGTH_SHORT).show();
                 }
             });
+        }
+
+        @JavascriptInterface
+        public void syncResourceReminders(String json) {
+            runOnUiThread(() -> ResourceReminderReceiver.replaceSchedule(MainActivity.this, json));
         }
 
         @JavascriptInterface
@@ -386,7 +381,7 @@ public class MainActivity extends Activity {
                 launchIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
-        android.app.Notification notification = new android.app.Notification.Builder(this, CHANNEL_ID)
+        android.app.Notification notification = new android.app.Notification.Builder(this, ResourceReminderReceiver.CHANNEL)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(title)
                 .setContentText(body)
@@ -400,9 +395,9 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode != NOTIFICATION_PERMISSION_REQUEST) return;
-        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED
-                && pendingNotificationTitle != null) {
-            showLocalNotification(pendingNotificationTitle, pendingNotificationBody);
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            if (pendingNotificationTitle != null) showLocalNotification(pendingNotificationTitle, pendingNotificationBody);
+            ResourceReminderReceiver.dispatch(this);
         }
         pendingNotificationTitle = null;
         pendingNotificationBody = null;
