@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.7";
+  const APP_VERSION = "0.2.38-exp.8";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -380,8 +380,9 @@
     const custom = key.startsWith("custom-") && (aircraft?.customUsageSources?.find((source) => source.key === key) ??
       profile?.customSources?.find((source) => source.key === key));
     const enabledByDefault = profile?.enabled && BOARD_USAGE_TYPES.includes(key) ? CORE_USAGE_TYPES.includes(key) : defaults.enabled;
+    const label = profile?.labels?.[key] ?? custom?.label ?? defaults.label;
     return {
-      label: profile?.labels?.[key] ?? custom?.label ?? defaults.label,
+      label: key === "flight" ? aircraftTemplates.normalizeFlightLabel(label) : label,
       factor: aircraft?.usageFactors?.[key] ?? profile?.factors?.[key] ?? custom?.factor ?? defaults.factor,
       enabled: profile?.enabled?.[key] ?? enabledByDefault,
     };
@@ -442,8 +443,13 @@
   function normalizeState(raw) {
     const normalized = Object.assign({}, structuredClone(seedState), raw || {}, { view: "home" });
     normalized.typeSettings = Array.isArray(raw?.typeSettings) ? raw.typeSettings : [];
-    normalized.usageTypeOverrides = Array.isArray(raw?.usageTypeOverrides) ? raw.usageTypeOverrides : [];
-    normalized.templateCatalog = Array.isArray(raw?.templateCatalog) ? raw.templateCatalog.map(aircraftTemplates.upgradeLegacySu33) : [];
+    normalized.usageTypeOverrides = Array.isArray(raw?.usageTypeOverrides) ? raw.usageTypeOverrides.map((profile) => {
+      const current = profile.labels?.flight;
+      const flight = aircraftTemplates.normalizeFlightLabel(current);
+      return flight === current ? profile : { ...profile, labels: { ...profile.labels, flight } };
+    }) : [];
+    normalized.templateCatalog = Array.isArray(raw?.templateCatalog) ? raw.templateCatalog
+      .map(aircraftTemplates.upgradeLegacySu33).map(aircraftTemplates.normalizeTemplateFlightLabel) : [];
     normalized.archivedAircraftTypes = Array.isArray(raw?.archivedAircraftTypes) ? raw.archivedAircraftTypes : [];
     normalized.removedAircraftTypes = Array.isArray(raw?.removedAircraftTypes) ? raw.removedAircraftTypes : [];
     if (!Array.isArray(normalized.aircraft)) normalized.aircraft = [];
@@ -506,7 +512,8 @@
   function upgradeAircraftTemplate(aircraft) {
     const previous = aircraft.workTemplate;
     const upgraded = aircraftTemplates.upgradeLegacySu33(previous);
-    if (previous === upgraded) return aircraft;
+    const workTemplate = aircraftTemplates.normalizeTemplateFlightLabel(upgraded);
+    if (previous === upgraded) return workTemplate === previous ? aircraft : { ...aircraft, workTemplate };
     const renamed = new Map();
     const blocks = (aircraft.blocks || []).map((block) => {
       if (block.kind !== "unit" || block.templateSlotId) return block;
@@ -522,7 +529,7 @@
       if (!renamed.has(owner?.id)) return resource;
       return { ...resource, objectId: owner.id, object: renamed.get(owner.id) };
     });
-    return { ...aircraft, workTemplate: upgraded, blocks, resources };
+    return { ...aircraft, workTemplate, blocks, resources };
   }
 
   function migrateUsageSourceInheritance(data) {
@@ -1007,13 +1014,17 @@
     return span >= 60 ? 1 + (span - 60) / 1000 : 0.75 + (span - 20) / 160;
   }
 
+  function flightCounterValue(minutes) {
+    return minutes ? calc.formatDuration(minutes) : "0";
+  }
+
   function counterTiles(aircraft, layout, editing = false, catalog = new Map(), removable) {
     const name = escapeHtml(usageRule("flight").label);
     const values = {
-      flightSne: [name + " СНЭ", calc.formatDuration(aircraft.totalFlightMinutes)],
-      flightPpr: [name + " ППР", aircraft.pprFlightMinutes == null ? "Не задано" : calc.formatDuration(aircraft.pprFlightMinutes)],
+      flightSne: [name + " СНЭ", flightCounterValue(aircraft.totalFlightMinutes)],
+      flightPpr: [name + " ППР", flightCounterValue(aircraft.pprFlightMinutes)],
       landingSne: ["Посадки СНЭ", aircraft.actualLandings],
-      landingPpr: ["Посадки ППР", aircraft.pprLandings ?? "Не задано"],
+      landingPpr: ["Посадки ППР", aircraft.pprLandings ?? 0],
     };
     return `<section class="counter-tiles" aria-label="Наработка борта">${layout.map((tile, index) => `
       <article class="counter-tile ${editing && activeCounterIndex === index ? "counter-tile-active" : ""}" data-counter-index="${index}" data-tile-key="${escapeHtml(tile.keys[0])}" style="--tile-start:${tile.columnStart == null ? "auto" : Math.max(1, Math.min(tile.columnStart, 121 - tileSpan(tile)))};--tile-span:${tileSpan(tile)};--tile-height:${tile.height ?? 0}px;--tile-font:${tile.font ?? 1}rem;--tile-density:${tileDensity(tileSpan(tile))}">
@@ -2440,13 +2451,13 @@
     const airframeFields = block.kind === "airframe" ? `
       <h2 data-form-widget="airframe-usage-title" aria-label="Наработка планера">Наработка планера</h2>
       <section class="metric-grid" aria-label="Наработка планера">
-        <div class="metric"><span>${escapeHtml(usageRule("flight").label)}</span><strong>${calc.formatDuration(aircraft.totalFlightMinutes)}</strong></div>
+        <div class="metric"><span>${escapeHtml(usageRule("flight", aircraft).label)} СНЭ</span><strong>${flightCounterValue(aircraft.totalFlightMinutes)}</strong></div>
         <div class="metric"><span>Фактические посадки</span><strong>${aircraft.actualLandings}</strong></div>
         <div class="metric"><span>Зацепы</span><strong>${aircraft.arresterHooks}</strong></div>
       </section>
       <fieldset class="form-grid"><legend>ППР планера</legend>
-        <label>${escapeHtml(usageRule("flight").label)} ППР, минут<input name="pprFlightMinutes" type="number" min="0" step="1" value="${aircraft.pprFlightMinutes ?? ""}" ${repaired ? "" : "disabled"}></label>
-        <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}" ${repaired ? "" : "disabled"}></label>
+        <label>${escapeHtml(usageRule("flight", aircraft).label)} ППР, мин<input name="pprFlightMinutes" type="number" min="0" step="1" value="${aircraft.pprFlightMinutes ?? ""}" placeholder="0" ${repaired ? "" : "disabled"}></label>
+        <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}" placeholder="0" ${repaired ? "" : "disabled"}></label>
       </fieldset>` : "";
     const installations = block.kind === "airframe" ? `
       <section id="form-installations" class="section-stack settings-section-heading">
@@ -2881,7 +2892,8 @@
     };
     const names = airframe ? ["totalFlightMinutes", "actualLandings", "pprFlightMinutes", "pprLandings"] :
       ["sneMinutes", "sneLandings", "pprMinutes", "pprLandings"];
-    const labels = ["Наработка СНЭ, минут", "Посадки СНЭ", "Наработка ППР, минут", "Посадки ППР"];
+    const durationLabel = airframe ? usageRule("flight", aircraft).label : "Наработка";
+    const labels = [`${durationLabel} СНЭ, мин`, "Посадки СНЭ", `${durationLabel} ППР, мин`, "Посадки ППР"];
     const counters = startsOnly ? [] : names.flatMap((key, index) => position?.engineLink && index % 2 === 1 ? [] :
       [[key, labels[index], subject[key], index >= 2]]);
     if (block.kind === "engine" || position?.engineLink) {
@@ -3041,7 +3053,8 @@
       return fields.map((field) => {
         const values = field.group ? (raw.groups[field.group] || []).map((row, index) => row[field.id] ? `${index + 1}. ${row[field.id]}` : "").filter(Boolean) :
           [raw.fields[field.id]].filter(Boolean);
-        return values.length ? `<dt>${escapeHtml(field.label)}</dt><dd>${values.map(escapeHtml).join(" · ")}</dd>` : "";
+        const label = field.role === "flight" ? aircraftTemplates.normalizeFlightLabel(field.label) : field.label;
+        return values.length ? `<dt>${escapeHtml(label)}</dt><dd>${values.map(escapeHtml).join(" · ")}</dd>` : "";
       }).join("");
     }
     app.innerHTML = shell(`<section class="section-stack">

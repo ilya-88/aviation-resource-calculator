@@ -49,6 +49,15 @@ test("старый Су-33 сохраняет позиции и получает
   assert.throws(() => templates.validateTemplate(legacy), /Укажи существующие графы/);
 });
 
+test("старое название налёта заменяется без изменений структуры поля", () => {
+  const legacy = structuredClone(su33);
+  const flight = legacy.inputs.find((field) => field.role === "flight");
+  flight.label = "Налёт по вылету";
+  assert.deepEqual(templates.validateTemplate(legacy), templates.validateTemplate(su33));
+  flight.label = "Налёт в журнале";
+  assert.equal(templates.validateTemplate(legacy).inputs.find((field) => field.role === "flight").label, flight.label);
+});
+
 test("раскладка принимает позицию шаблона, числовые размеры и подпись карточки", () => {
   const document = structuredClone(su33);
   const tile = { keys: ["slot:engine-left"], span: 4.3, height: 128, columnStart: 10, font: 0.87,

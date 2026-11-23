@@ -17,7 +17,7 @@
     { "id": "runs", "scope": "engine", "label": "Земля по запускам", "countField": "starts" }
   ],
   "inputs": [
-    { "id": "board-flight", "scope": "board", "group": "sorties", "type": "duration", "format": "HH:MM", "label": "Налёт по вылету", "role": "flight" },
+    { "id": "board-flight", "scope": "board", "group": "sorties", "type": "duration", "format": "HH:MM", "label": "Налёт", "role": "flight" },
     { "id": "runway", "scope": "board", "type": "count", "label": "Посадки БВПП", "role": "runway" },
     { "id": "hooks", "scope": "board", "type": "count", "label": "Зацепы за аэрофинишер", "role": "arresterHooks" },
     { "id": "starts", "scope": "engine", "type": "count", "label": "Запуски за работу" },

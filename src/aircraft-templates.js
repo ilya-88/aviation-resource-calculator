@@ -54,6 +54,16 @@
     return { id, label: label(row.label, id), type, format: type === "duration" ? row.format : "count", scope };
   }
 
+  function normalizeFlightLabel(value) {
+    return typeof value === "string" && /^нал[её]т по вылету$/iu.test(value.trim()) ? "Налёт" : value;
+  }
+
+  function normalizeTemplateFlightLabel(template) {
+    const needsUpdate = (field) => field?.scope === "board" && field.role === "flight" && normalizeFlightLabel(field.label) !== field.label;
+    if (!Array.isArray(template?.inputs) || !template.inputs.some(needsUpdate)) return template;
+    return { ...template, inputs: template.inputs.map((field) => needsUpdate(field) ? { ...field, label: normalizeFlightLabel(field.label) } : field) };
+  }
+
   function upgradeLegacySu33(template) {
     if (template?.id !== "su-33" || template.schemaVersion !== 1 || !Array.isArray(template.positions) ||
         !legacySu33Units.every((unit) => template.positions.some((position) =>
@@ -107,7 +117,7 @@
   }
 
   function validateTemplate(document) {
-    document = upgradeLegacySu33(document);
+    document = normalizeTemplateFlightLabel(upgradeLegacySu33(document));
     requireValue(document && document.schemaVersion === 1, "Поддерживается версия шаблона 1");
     const id = identifier(document.id, "шаблон");
     const name = label(document.name, id);
@@ -266,5 +276,5 @@
     return { values, counters, steps };
   }
 
-  return { validateTemplate, calculate, formatValue, positionCounters, upgradeLegacySu33, layoutKeys };
+  return { validateTemplate, calculate, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, normalizeFlightLabel, normalizeTemplateFlightLabel };
 });

@@ -247,6 +247,49 @@ async function main() {
       maximas: [3,8,12], orderedInputs: true, leftLog: true, rightLog: true, logBeforeSettings: true,
       repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
     results.templateExperiment = "ok";
+    await evaluate(`(() => {
+      const key = 'aviation-resource-prototype-v1';
+      const saved = JSON.parse(localStorage.getItem(key));
+      const aircraft = saved.aircraft.find(row => row.boardNumber === '101');
+      const previousLabel = 'Налёт по вылету';
+      saved.usageTypeOverrides.find(row => row.type === 'су-33').labels.flight = previousLabel;
+      for (const template of [aircraft.workTemplate, saved.templateCatalog[0]]) {
+        template.inputs.find(field => field.role === 'flight').label = previousLabel;
+      }
+      for (const shift of aircraft.shifts) shift.templateWork.boardFields.find(field => field.role === 'flight').label = previousLabel;
+      localStorage.setItem(key, JSON.stringify(saved));
+    })()`);
+    await command("Page.reload");
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (await evaluate("Boolean(document.querySelector('[data-aircraft-id]'))").catch(() => false)) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const updatedFlightLabels = await evaluate(`(() => {
+      const click = selector => document.querySelector(selector).click();
+      const back = () => window.handleAndroidBack();
+      click('[data-aircraft-id]');
+      const counters = [...document.querySelectorAll('#counter-preview [data-tile-caption]')];
+      const value = label => counters.find(node => node.textContent === label)?.nextElementSibling?.textContent;
+      const cards = value('Налёт СНЭ') !== undefined && value('Налёт ППР') === '0' && value('Посадки ППР') === '0';
+      click('[data-view="shift"]');
+      const input = document.querySelector('[data-template-field="board-flight"]').closest('label').textContent.trim() === 'Налёт';
+      back();
+      click('[data-aircraft-tab="works"]');
+      click('[data-shift-id]');
+      const history = [...document.querySelectorAll('dt')].some(node => node.textContent === 'Налёт') &&
+        !document.querySelector('main').textContent.includes('Налёт по вылету');
+      back();
+      click('[data-aircraft-tab="aggregates"]');
+      const board = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft[0];
+      click('[data-block-id="' + board.blocks.find(block => block.kind === 'airframe').id + '"]');
+      const ppr = document.querySelector('#block-form [name=pprFlightMinutes]');
+      const form = ppr.placeholder === '0' && ppr.disabled && ppr.value === '' &&
+        [...document.querySelectorAll('#block-form .metric span')].some(node => node.textContent === 'Налёт СНЭ');
+      back();
+      return { cards, input, history, form };
+    })()`);
+    assert.deepEqual(updatedFlightLabels, { cards: true, input: true, history: true, form: true });
+    results.flightLabels = "ok";
     const portable = await evaluate(`(async () => {
       const click = selector => {
         const node = document.querySelector(selector);
