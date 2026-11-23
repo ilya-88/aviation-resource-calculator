@@ -5,6 +5,36 @@ const { test } = require("node:test");
 const templates = require("../src/aircraft-templates");
 const su33 = require("../templates/su-33.json");
 
+test("перенос стартового борта сохраняет типы чисел и связи после повторной сериализации", () => {
+  const pack = {
+    kind: "aircraft-start", version: 1,
+    template: { schemaVersion: 1, id: "school", name: "Учебный", rules: [], engineCounters: [],
+      inputs: [{ id: "flight", label: "Время", scope: "board", role: "flight", type: "duration", format: "HH:MM" }],
+      positions: [{ id: "frame", kind: "airframe", label: "Планер" },
+        { id: "meter", kind: "unit", label: "Счётчик", usageCounters: [
+          { name: "Количество", source: "board:runway", unit: "пос.", factor: 0.5 }] }] },
+    aircraft: { boardNumber: "01", serialNumber: "001", readings: { actualLandings: 40, pprLandings: 7 },
+      blocks: [{ position: "frame", repairs: 1, lastRepairDate: "2024-02-29" }],
+      resources: [{ position: "meter", name: "Остаток", unit: "пос.", remaining: 9.5, limit: 20,
+        inputs: [{ source: "counter:0", factor: 1 }] }] },
+  };
+  const parsed = templates.validateStartingAircraft(pack);
+  assert.deepEqual(templates.validateStartingAircraft(JSON.parse(JSON.stringify(parsed))), parsed);
+  for (const mutate of [
+    (doc) => { doc.aircraft.readings.actualLandings = "40"; },
+    (doc) => { doc.aircraft.blocks[0].lastRepairDate = "2023-02-29"; },
+    (doc) => { doc.aircraft.blocks[0].repairs = 0; },
+    (doc) => { doc.aircraft.blocks.push(doc.aircraft.blocks[0]); },
+    (doc) => { doc.aircraft.resources[0].position = "missing"; },
+    (doc) => { doc.aircraft.resources[0].inputs[0].source = "counter:1"; },
+    (doc) => { doc.aircraft.resources[0].inputs[0].factor = -1; },
+  ]) {
+    const invalid = structuredClone(pack);
+    mutate(invalid);
+    assert.throws(() => templates.validateStartingAircraft(invalid));
+  }
+});
+
 test("шаблон переносит семь позиций и сохраняется без потери схемы", () => {
   const parsed = templates.validateTemplate(su33);
   assert.deepEqual(templates.validateTemplate(JSON.parse(JSON.stringify(parsed))), parsed);

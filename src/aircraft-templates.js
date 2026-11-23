@@ -15,6 +15,7 @@
   const layoutKeys = ["flightSne", "flightPpr", "landingSne", "landingPpr", "widget:resources", "widget:shift",
     "widget:add-block:aggregates", "widget:add-resource:works", "widget:add-resource:least-reliable", "widget:reports"];
   const formKeys = new Set([
+    ...landingRoles.map((key) => `form:landing-count-${key}`),
     ...["name", "caption", "serialNumber", "rfNumber", "drawingNumber", "manufactureDate", "installed", "repairs", "model",
       "pprFlightMinutes", "pprLandings", "sneMinutes", "pprMinutes", "sneLandings", "starts", "groundPercent",
       "groundStep", "groundDirection"].map((key) => `form-field:${key}`),
@@ -345,6 +346,80 @@
     return { values, counters, steps };
   }
 
-  return { validateTemplate, calculate, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits,
+  function validateStartingAircraft(doc) {
+    requireValue(doc?.kind === "aircraft-start" && doc.version === 1, "Неизвестный формат файла борта");
+    const template = validateTemplate(doc.template);
+    const data = doc.aircraft;
+    requireValue(data && typeof data === "object", "Не указан борт");
+    const number = (v, key, integer = false) => {
+      requireValue(typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= Number.MAX_SAFE_INTEGER &&
+        (!integer || Number.isInteger(v)), `Проверь числовое значение: ${key}`);
+      return v;
+    };
+    function readings(row, allowed, integers = []) {
+      requireValue(row && typeof row === "object" && !Array.isArray(row), "Неизвестный формат показаний");
+      return Object.fromEntries(Object.entries(row).map(([key, value]) => {
+        requireValue(allowed.includes(key), `Неизвестное показание: ${key}`);
+        return [key, number(value, key, integers.includes(key))];
+      }));
+    }
+    function date(value) {
+      if (value == null || value === "") return "";
+      requireValue(typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+        Number.isFinite(Date.parse(value)) && new Date(value).toISOString().startsWith(value), "Проверь календарную дату");
+      return value;
+    }
+    const text = (value) => value == null || value === "" ? "" : label(value, "реквизиты");
+    const counts = ["actualLandings", "pprLandings", "arresterHooks"];
+    const board = readings(data.readings || {}, ["totalFlightMinutes", "pprFlightMinutes", "equivalentLandings", ...counts], counts);
+    const landingCounts = readings(data.landingCounts || {}, landingRoles.filter((key) => key !== "arresterHooks"), landingRoles);
+    const blocks = list(data.blocks || [], "формуляры борта", (row) => {
+      const position = template.positions.find((item) => item.id === row.position);
+      requireValue(position, "В файле есть экземпляр без позиции шаблона");
+      const rules = position.usageCounters || [];
+      const totals = list(row.totals || [], position.label, (entry) => {
+        const counter = number(entry.counter, "номер показателя", true);
+        requireValue(counter < rules.length, "Неизвестный показатель формуляра");
+        return { counter, ...readings(Object.fromEntries(Object.entries(entry).filter(([k]) => k !== "counter")), ["sne", "ppr"]) };
+      });
+      unique(totals, "counter", position.label);
+      const repairs = number(row.repairs ?? 0, "ремонты", true);
+      const blockCounts = ["starts", "pprStarts", "sneLandings", "pprLandings"];
+      const values = readings(row.readings || {}, ["sneMinutes", "pprMinutes", ...blockCounts], blockCounts);
+      const ppr = position.kind === "airframe" ? board : values;
+      requireValue(repairs || (!Object.keys(ppr).some((k) => k.startsWith("ppr")) && totals.every((entry) => entry.ppr == null)),
+        `Для ППР укажи ремонт: ${position.label}`);
+      const repairDate = date(row.lastRepairDate);
+      requireValue(!repairDate || repairs > 0, "Дата ремонта задана при нулевом числе ремонтов");
+      return { position: position.id, serialNumber: text(row.serialNumber), manufactureDate: date(row.manufactureDate),
+        repairs, lastRepairDate: repairDate, readings: values, totals };
+    });
+    unique(blocks, "position", "экземпляры");
+    if (board.pprLandings != null || board.pprFlightMinutes != null) requireValue(blocks.some((row) =>
+      row.repairs && template.positions.find((p) => p.id === row.position).kind === "airframe"), "Для ППР борта укажи ремонт планера");
+    const resources = list(data.resources || [], "ресурсы", (row) => {
+      const position = template.positions.find((item) => item.id === row.position);
+      requireValue(position && [...aggregateUnits, "дн."].includes(row.unit), "Проверь позицию и единицу ресурса");
+      const limit = number(row.limit, "лимит"), remaining = number(row.remaining, "остаток");
+      requireValue(remaining <= limit, "Остаток превышает полный ресурс");
+      const inputs = list(row.inputs || [], "правила расхода", (input) => {
+        const source = input.source;
+        requireValue(typeof source === "string" && (boardRoles.includes(source) ||
+          template.boardUsage?.some((item) => item.key === source) ||
+          (/^counter:(0|[1-9]\d*)$/.test(source) && Number(source.slice(8)) < (position.usageCounters?.length || 0)) ||
+          (/^[a-zA-Z][a-zA-Z0-9]{0,47}$/.test(source) &&
+            (position.kind === "engine" || position.engineLink))), "Неизвестный источник расхода");
+        return { source, factor: number(input.factor, "коэффициент") };
+      });
+      unique(inputs, "source", "источники расхода");
+      requireValue(row.unit !== "дн." || !inputs.length, "Для календарного срока указывается дата");
+      return { position: position.id, name: label(row.name, "ресурс"), unit: row.unit, limit, remaining, inputs,
+        installed: date(row.installed), produced: date(row.produced), expiryDate: date(row.expiryDate) };
+    });
+    return { kind: doc.kind, version: 1, template, aircraft: { boardNumber: label(data.boardNumber, "бортовой номер"),
+      serialNumber: text(data.serialNumber), rfNumber: text(data.rfNumber), readings: board, landingCounts, blocks, resources } };
+  }
+
+  return { validateTemplate, validateStartingAircraft, calculate, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits,
     isFormKey, normalizeFlightLabel, normalizeTemplateFlightLabel };
 });

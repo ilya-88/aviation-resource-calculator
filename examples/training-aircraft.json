@@ -1,0 +1,131 @@
+{
+  "kind": "aircraft-start",
+  "version": 1,
+  "template": {
+    "schemaVersion": 1,
+    "id": "training-import",
+    "name": "Учебный · импорт",
+    "workTitle": "Запись работы",
+    "positions": [
+      {
+        "id": "airframe",
+        "kind": "airframe",
+        "label": "Формуляр самолёта"
+      },
+      {
+        "id": "unit-a",
+        "kind": "unit",
+        "label": "Контроль А",
+        "usageCounters": [
+          {
+            "name": "Посадки",
+            "unit": "пос.",
+            "source": "board:runway",
+            "factor": 1
+          }
+        ]
+      },
+      {
+        "id": "unit-b",
+        "kind": "unit",
+        "label": "Контроль Б",
+        "usageCounters": [
+          {
+            "name": "Посадки",
+            "unit": "пос.",
+            "source": "board:runway",
+            "factor": 0.5
+          }
+        ]
+      },
+      {
+        "id": "unit-c",
+        "kind": "unit",
+        "label": "Контроль В",
+        "usageCounters": [
+          {
+            "name": "Часы",
+            "unit": "ч",
+            "source": "board:flight",
+            "factor": 1
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "id": "flight",
+        "label": "Налёт",
+        "scope": "board",
+        "type": "duration",
+        "format": "HH:MM",
+        "role": "flight"
+      },
+      {
+        "id": "runway",
+        "label": "Посадки на ВПП",
+        "scope": "board",
+        "type": "count",
+        "role": "runway"
+      }
+    ],
+    "engineCounters": [],
+    "rules": []
+  },
+  "aircraft": {
+    "boardNumber": "У-01",
+    "readings": {
+      "totalFlightMinutes": 2400,
+      "pprFlightMinutes": 420,
+      "actualLandings": 40,
+      "pprLandings": 7
+    },
+    "blocks": [
+      {
+        "position": "airframe",
+        "repairs": 1
+      }
+    ],
+    "resources": [
+      {
+        "position": "unit-a",
+        "name": "Контроль А",
+        "unit": "пос.",
+        "limit": 20,
+        "remaining": 10,
+        "inputs": [
+          {
+            "source": "counter:0",
+            "factor": 1
+          }
+        ]
+      },
+      {
+        "position": "unit-b",
+        "name": "Контроль Б",
+        "unit": "пос.",
+        "limit": 20,
+        "remaining": 10,
+        "inputs": [
+          {
+            "source": "counter:0",
+            "factor": 1
+          }
+        ]
+      },
+      {
+        "position": "unit-c",
+        "name": "Контроль В",
+        "unit": "ч",
+        "limit": 20,
+        "remaining": 12,
+        "inputs": [
+          {
+            "source": "counter:0",
+            "factor": 1
+          }
+        ]
+      }
+    ]
+  }
+}

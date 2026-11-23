@@ -506,8 +506,18 @@ async function main() {
       click('#create-aircraft-template');
       const blank = document.querySelector('#template-editor-form');
       blank.elements.name.value = 'Шаблон с нуля';
+      click('[data-template-edit="add"][data-list="positions"]');
+      blank.querySelectorAll('[data-template-entry="positions"]')[1].querySelector('[data-property="label"]').value = 'Учебный счётчик';
+      click('[data-counter-add][data-slot-index="1"]');
+      const definition = blank.querySelector('[data-position-counter]');
+      definition.querySelector('[data-counter-name]').value = 'Время работы';
+      definition.querySelector('[data-counter-source]').value = 'board:flight';
+      definition.querySelector('[data-counter-unit]').value = 'мин';
+      definition.querySelector('[data-counter-factor]').value = '0.5';
       blank.requestSubmit();
-      const blankSaved = read().templateCatalog.some(item => item.name === 'Шаблон с нуля' && item.positions.length === 1);
+      const savedCounter = read().templateCatalog.find(item => item.name === 'Шаблон с нуля')?.positions[1]?.usageCounters[0];
+      const blankSaved = savedCounter?.name === 'Время работы' && savedCounter.source === 'board:flight' &&
+        savedCounter.unit === 'мин' && savedCounter.factor === 0.5;
       click('[data-copy-template="0"]');
       const form = document.querySelector('#template-editor-form');
       form.elements.name.value = 'Четыре двигателя';

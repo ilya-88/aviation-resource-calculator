@@ -10,8 +10,8 @@ android {
         applicationId = "ru.smolnikov.aviaresource.templates"
         minSdk = 26
         targetSdk = 36
-        versionCode = 62
-        versionName = "0.2.38-exp.23"
+        versionCode = 63
+        versionName = "0.2.38-exp.24"
     }
 
     buildTypes {
