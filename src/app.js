@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.8";
+  const APP_VERSION = "0.2.38-exp.9";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1018,6 +1018,19 @@
     return minutes ? calc.formatDuration(minutes) : "0";
   }
 
+  const formIdentifierFields = new Map([
+    ["form-field:serialNumber", "serialNumber"], ["form-field:rfNumber", "rfNumber"],
+  ]);
+
+  function rfInCaption(label) {
+    return /^RF[\s:-]+(\d(?:[\d\s-]*\d)?)$/i.exec(label || "")?.[1];
+  }
+
+  function normalizeIdentifier(field, value) {
+    const text = value.trim();
+    return field === "rfNumber" ? text.replace(/^RF[\s:-]*/i, "") : text;
+  }
+
   function counterTiles(aircraft, layout, editing = false, catalog = new Map(), removable) {
     const name = escapeHtml(usageRule("flight").label);
     const values = {
@@ -1038,7 +1051,7 @@
         </div><svg class="counter-edit-outline" aria-hidden="true"><rect pathLength="100" rx="22"/></svg>` : ""}
         <div class="${isNavigationTile(tile) && tile.keys.length > 1 ? "board-navigation-group" : "counter-group"}">
         ${tile.keys.map((key) => `<div class="counter-value">${catalog.has(key)
-          ? labelledWidget(catalog.get(key), tile.labels?.[key])
+          ? labelledWidget(catalog.get(key), key === "form-field:rfNumber" && rfInCaption(tile.labels?.[key]) ? "RF" : tile.labels?.[key])
           : `<span data-tile-caption>${tile.labels?.[key] ? escapeHtml(tile.labels[key]) : values[key][0]}</span> <strong>${values[key][1]}</strong>`}</div>`).join("")}</div>
         ${editing ? `<div class="counter-controls" hidden>
           ${[["up","↑","Вверх"],["down","↓","Вниз"],["left","←","Влево"],["right","→","Вправо"],["size",(tile.span ?? (tile.wide ? 12 : 6)) > 6 ? "Сузить" : "Расширить","Изменить ширину"],
@@ -1073,11 +1086,12 @@
     const scrollY = window.scrollY;
     activeCounterIndex ??= 0;
     counterGesture = "";
-    const { layout, catalog, activeTab, formBlock, hidden = [], protectedKeys = new Set() } = existingBoard ?? renderAircraft(true);
-    const removable = formBlock ? (key) => !protectedKeys.has(key) : undefined;
+    const { layout, catalog, activeTab, formBlock, hidden = [] } = existingBoard ?? renderAircraft(true);
+    const removable = formBlock ? () => true : undefined;
     let draft = structuredClone(layout);
     const removed = new Set(hidden);
-    const snapshot = () => JSON.stringify([draft, [...removed]]);
+    const identifiers = new Map();
+    const snapshot = () => JSON.stringify([draft, [...removed], [...identifiers]]);
     const initial = snapshot();
     const preview = document.getElementById("counter-preview");
     const surface = preview.closest("main");
@@ -1121,6 +1135,10 @@
     }
     const paint = () => { preview.innerHTML = counterTiles(aircraft, draft, true, catalog, removable);
       if (formBlock) restoreFormInputDraft(formBlock);
+      for (const [field, value] of identifiers) {
+        const input = preview.querySelector(`input[name="${field}"]`);
+        if (input) input.value = value;
+      }
       preview.querySelectorAll(".counter-value :is(button,input,select,textarea)").forEach((button) => { button.disabled = true; });
       placeToolbar();
       updateFontControl();
@@ -1160,6 +1178,7 @@
     let drag;
     let hold;
     let resize;
+    let selectionTouch;
     function clearDrag() {
       drag?.ghost?.remove();
       preview.querySelectorAll(".counter-tile").forEach((card, index) => {
@@ -1236,13 +1255,18 @@
       hold = null;
     }
     surface.addEventListener("touchstart", (event) => {
+      selectionTouch = null;
       if (hold && drag?.touch === hold.id) clearDrag();
       cancelHold();
-      const card = event.target.closest(".counter-tile");
+      const targetCard = event.target.closest(".counter-tile");
       if ((counterGesture === "resize" || counterGesture === "font") && event.touches.length === 1 && !event.target.closest("button:not(:disabled)")) {
+        const finger = event.touches[0];
+        if (targetCard && Number(targetCard.dataset.counterIndex) !== activeCounterIndex) {
+          selectionTouch = { index: Number(targetCard.dataset.counterIndex), id: finger.identifier, x: finger.clientX, y: finger.clientY };
+          return;
+        }
         event.preventDefault();
         clearDrag();
-        const finger = event.touches[0];
         const index = activeCounterIndex;
         const card = preview.querySelector(`[data-counter-index="${index}"]`);
         const tile = draft[index];
@@ -1264,12 +1288,12 @@
         resize.feedbackHeight = resize.height;
         return;
       }
-      if (counterGesture !== "move" || drag || !card || Number(card.dataset.counterIndex) !== activeCounterIndex || event.target.closest("button") || event.touches.length !== 1) return;
+      if (counterGesture !== "move" || drag || !targetCard || Number(targetCard.dataset.counterIndex) !== activeCounterIndex || event.target.closest("button") || event.touches.length !== 1) return;
       const touch = event.touches[0];
       hold = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
       drag = { touch: hold.id, source: activeCounterIndex, target: null };
-      const rect = card.getBoundingClientRect();
-      const ghost = card.cloneNode(true);
+      const rect = targetCard.getBoundingClientRect();
+      const ghost = targetCard.cloneNode(true);
       ghost.className = "counter-tile counter-move-ghost";
       ghost.querySelector(".counter-gesture-toolbar")?.remove();
       ghost.setAttribute("aria-hidden", "true");
@@ -1278,9 +1302,14 @@
       ghost.style.top = `${rect.top}px`;
       surface.append(ghost);
       drag.ghost = ghost;
-      card.classList.add("counter-dragging");
+      targetCard.classList.add("counter-dragging");
     }, { passive: false });
     surface.addEventListener("touchmove", (event) => {
+      if (selectionTouch) {
+        const touch = [...event.touches].find((item) => item.identifier === selectionTouch.id);
+        if (!touch || Math.hypot(touch.clientX - selectionTouch.x, touch.clientY - selectionTouch.y) > 8) selectionTouch = null;
+        return;
+      }
       if (resize) {
         const finger = [...event.touches].find((item) => item.identifier === resize.finger);
         if (!finger) return;
@@ -1341,6 +1370,13 @@
       }
     }, { passive: false });
     surface.addEventListener("touchend", (event) => {
+      if (selectionTouch && [...event.changedTouches].some((item) => item.identifier === selectionTouch.id)) {
+        if (event.cancelable) event.preventDefault();
+        activeCounterIndex = selectionTouch.index;
+        selectionTouch = null;
+        paint();
+        return;
+      }
       if (resize && [...event.changedTouches].some((item) => item.identifier === resize.finger)) {
         resize = null;
         paint();
@@ -1354,6 +1390,7 @@
       cancelHold();
     });
     surface.addEventListener("touchcancel", () => {
+      selectionTouch = null;
       if (resize) { draft[resize.index] = resize.original; resize = null; paint(); }
       if (hold && drag?.touch === hold.id) clearDrag();
       cancelHold();
@@ -1362,15 +1399,33 @@
       if (event.target.closest(".counter-tile")) event.preventDefault();
     });
     function save() {
+      if (formBlock && snapshot() === initial) {
+        finishBackNavigation();
+        return;
+      }
       const previous = aircraft.boardLayouts;
       const previousTabs = aircraft.boardNavigationLayout;
       const previousForm = formBlock?.formLayout;
-      if (formBlock) formBlock.formLayout = { tiles: structuredClone(draft), hidden: [...removed] };
+      const owner = formBlock?.kind === "airframe" ? aircraft : formBlock;
+      const previousIdentifiers = Object.fromEntries([...identifiers.keys()].map((field) => [field, owner[field]]));
+      if (formBlock) {
+        const tiles = structuredClone(draft);
+        for (const [index, tile] of (previousForm?.tiles || []).entries()) {
+          const absent = tile.keys.filter((key) => !catalog.has(key));
+          if (absent.length) tiles.splice(index, 0, { ...tile, keys: absent });
+        }
+        const dormant = (previousForm?.hidden || []).filter((key) => !catalog.has(key));
+        formBlock.formLayout = { tiles, hidden: [...removed, ...dormant] };
+      }
       else {
         aircraft.boardNavigationLayout = draft.flatMap((tile, index) => isNavigationTile(tile) ? [{ index, tile: structuredClone(tile) }] : []);
         aircraft.boardLayouts = { ...previous, [activeTab]: structuredClone(draft.filter((tile) => !isNavigationTile(tile))) };
       }
+      if (identifiers.size) Object.assign(owner, Object.fromEntries(identifiers));
       if (saveState()) {
+        if (identifiers.size && formInputDraft?.blockId === formBlock.id) {
+          Object.assign(formInputDraft.values["block-form"], Object.fromEntries(identifiers));
+        }
         recordDiagnostic("layout.save.ok");
         const currentScroll = window.scrollY;
         finishBackNavigation();
@@ -1378,7 +1433,10 @@
       }
       else {
         recordDiagnostic("layout.save.error");
-        if (formBlock) formBlock.formLayout = previousForm;
+        if (formBlock) {
+          formBlock.formLayout = previousForm;
+          Object.assign(owner, previousIdentifiers);
+        }
         else {
           aircraft.boardLayouts = previous;
           aircraft.boardNavigationLayout = previousTabs;
@@ -1405,7 +1463,7 @@
         return;
       }
       const selected = event.target.closest("[data-counter-index]");
-      if (selected && !event.target.closest("button")) {
+      if (selected && !event.target.closest("button:not(:disabled)")) {
         activeCounterIndex = Number(selected.dataset.counterIndex);
         paint();
         return;
@@ -1435,19 +1493,36 @@
         const dialog = document.createElement("dialog");
         dialog.className = "confirm-dialog";
         const captions = [...button.closest(".counter-tile").querySelectorAll(".counter-value")];
-        dialog.innerHTML = `<form method="dialog" class="shift-form"><h2>Названия показателей</h2>
+        const originalValues = new Map();
+        dialog.innerHTML = `<form method="dialog" class="shift-form"><h2>Редактировать карточку</h2>
           ${tile.keys.map((key, offset) => {
             const caption = captions[offset];
             const heading = caption.querySelector("[data-tile-caption], strong, button");
-            const title = tile.labels?.[key] ?? (key === "widget:board-tabs" ? "Панель вкладок" : (heading ?? caption).textContent.trim());
-            return `<label>${escapeHtml(title)}
-            <input name="${escapeHtml(key)}" type="text" value="${escapeHtml(tile.labels?.[key] ?? "")}" placeholder="Стандартное название"></label>`;
+            const field = formBlock && formIdentifierFields.get(key);
+            const alias = key === "form-field:rfNumber" && rfInCaption(tile.labels?.[key]) ? "RF" : tile.labels?.[key];
+            const title = alias ?? (key === "widget:board-tabs" ? "Панель вкладок" : (heading ?? caption).textContent.trim());
+            if (field) originalValues.set(field, caption.querySelector("input").value);
+            return `<label>${field ? "Подпись" : escapeHtml(title)}
+            <input name="${escapeHtml(key)}" type="text" value="${escapeHtml(alias ?? "")}" placeholder="${field ? escapeHtml(title) : "Стандартное название"}"></label>
+            ${field ? `<label>Значение<input name="identifier:${field}" type="text" value="${escapeHtml(originalValues.get(field))}"></label>` : ""}`;
           }).join("")}
           <button class="primary-button" value="save">Применить</button><button class="secondary-button" value="cancel">Отмена</button></form>`;
         dialog.addEventListener("close", () => {
           if (dialog.returnValue === "save") {
             const data = new FormData(dialog.querySelector("form"));
-            tile.labels = Object.fromEntries([...data].map(([key, value]) => [key, value.trim()]).filter(([, value]) => value));
+            const labels = tile.keys.map((key) => {
+              const label = String(data.get(key) || "").trim();
+              const field = formBlock && formIdentifierFields.get(key);
+              const embedded = field === "rfNumber" ? rfInCaption(label) : undefined;
+              if (field) {
+                const entered = String(data.get(`identifier:${field}`) || "");
+                if (entered !== originalValues.get(field) || embedded) {
+                  identifiers.set(field, normalizeIdentifier(field, entered !== originalValues.get(field) ? entered : embedded));
+                }
+              }
+              return [key, embedded ? "RF" : label];
+            });
+            tile.labels = Object.fromEntries(labels.filter(([, value]) => value));
             paint();
           }
           dialog.remove();
@@ -2313,7 +2388,7 @@
         status.textContent = "Для шаблона создай новый борт, чтобы получить его формуляры.";
         return;
       }
-      data.rfNumber = data.rfNumber.replace(/^RF[\s-]*/i, "");
+      data.rfNumber = normalizeIdentifier("rfNumber", data.rfNumber);
       const previous = Object.fromEntries(Object.keys(data).map((key) => [key, aircraft[key]]));
       Object.assign(aircraft, data);
       if (saveState()) navigateBack();
@@ -2516,12 +2591,12 @@
           <label><span>Название</span><input name="name" type="text" value="${escapeHtml(block.name)}" required></label>
           <label><span>Описание</span><input name="caption" type="text" value="${escapeHtml(block.caption)}"></label>
           ${block.kind === "airframe" ? `
-            <label data-form-field="serialNumber">Заводской номер<output>${escapeHtml(aircraft.serialNumber || "Не указан")}</output></label>
-            <label data-form-field="rfNumber">RF<output>${escapeHtml(aircraft.rfNumber || "Не указан")}</output></label>` : `
+            <label>Заводской номер<input name="serialNumber" type="text" value="${escapeHtml(aircraft.serialNumber || "")}" placeholder="—"></label>
+            <label>RF<input name="rfNumber" type="text" value="${escapeHtml(aircraft.rfNumber || "")}" placeholder="—"></label>` : `
           <label><span>Заводской номер</span><input name="serialNumber" type="text" value="${escapeHtml(block.serialNumber || "")}"></label>
           <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(block.drawingNumber || "")}"></label>
           <label><span>Установка</span><select name="installed"><option value="true" ${blockInstalledOn(block, todayIso()) ? "selected" : ""}>Установлен</option><option value="false" ${!blockInstalledOn(block, todayIso()) ? "selected" : ""}>Демонтирован</option></select></label>`}
-          <label data-form-field="repairs">Количество ремонтов<output>${block.repairs}</output></label>
+          <label data-form-field="repairs">Ремонтов<output>${block.repairs}</output></label>
           ${block.kind === "unit" ? `<label><span>Модель</span><input name="model" type="text" value="${escapeHtml(block.model || "")}"></label>` : ""}
         </fieldset>
         ${airframeFields}
@@ -2563,7 +2638,10 @@
       const before = structuredClone(aircraft);
       updateBlockName(aircraft, block, name);
       block.caption = String(data.get("caption") || "").trim();
-      if (block.kind !== "airframe") {
+      if (block.kind === "airframe") {
+        aircraft.serialNumber = normalizeIdentifier("serialNumber", String(data.get("serialNumber") || ""));
+        aircraft.rfNumber = normalizeIdentifier("rfNumber", String(data.get("rfNumber") || ""));
+      } else {
         if (data.has("model")) block.model = String(data.get("model")).trim();
         block.serialNumber = String(data.get("serialNumber") || "").trim();
         block.drawingNumber = String(data.get("drawingNumber") || "").trim();
@@ -2665,7 +2743,6 @@
     const forms = [blockForm, eventForm];
     const catalog = new Map();
     const hiddenFields = new Map();
-    const protectedKeys = new Set(["form-field:serialNumber", "form-field:rfNumber"]);
     const selectors = [
       "[data-form-widget]", "#block-form label", "#block-form .metric", "#block-form button",
       "#block-form fieldset > p", "#block-event-form label", "#block-event-form button",
@@ -2703,7 +2780,7 @@
     }
 
     const saved = block.formLayout;
-    const hidden = (saved?.hidden || []).filter((key) => catalog.has(key) && !protectedKeys.has(key));
+    const hidden = (saved?.hidden || []).filter((key) => catalog.has(key));
     const defaultOrder = ["form:journal", "form-field:name", "form-field:caption", ...catalog.keys()];
     const visible = new Set(defaultOrder.filter((key) => catalog.has(key) && !hidden.includes(key)));
     const layout = (saved?.tiles || []).flatMap((tile) => {
@@ -2720,7 +2797,7 @@
       field.hidden = true;
       blockForm.append(field);
     }
-    const options = { layout, catalog, formBlock: block, hidden, protectedKeys };
+    const options = { layout, catalog, formBlock: block, hidden };
     if (editing) return options;
     preview.innerHTML = counterTiles(aircraft, layout, false, catalog);
     restoreFormInputDraft(block);
@@ -4467,7 +4544,7 @@
       usageFactors,
       ...(workTemplate && { workTemplate: structuredClone(workTemplate) }),
       serialNumber: serialNumber || "Не указан",
-      rfNumber: (rfNumber || "").replace(/^RF[\s-]*/i, ""),
+      rfNumber: normalizeIdentifier("rfNumber", rfNumber || ""),
       notifications: state.globalNotifications,
       totalFlightMinutes: 0,
       actualLandings: 0,

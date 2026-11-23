@@ -529,8 +529,11 @@ async function main() {
         }
       }
       function separateTiles(left, right) {
-        sideBySide(left, right);
         const tiles = [get(left), get(right)].map(control => control.closest('.counter-tile') || control.closest('label'));
+        if (!tiles[0].matches('.counter-tile')) sideBySide(left, right);
+        else if (Math.abs(tiles[0].getBoundingClientRect().top - tiles[1].getBoundingClientRect().top) > 2) {
+          throw new Error('Плитки формуляра должны стоять рядом');
+        }
         const group = tiles[0].parentElement;
         const width = group.getBoundingClientRect().width;
         if (tiles[1].parentElement !== group || tiles.some(tile => {
@@ -689,11 +692,11 @@ async function main() {
       const name = 'form-field:name';
       const caption = 'form-field:caption';
       const assembly = 'form:assembly:' + bySlot('vka-1').id;
-      const protectedKeys = ['form-field:serialNumber', 'form-field:rfNumber'];
-      let protectedCards = true;
-      for (const key of protectedKeys) {
+      const identifiers = ['form-field:serialNumber', 'form-field:rfNumber'];
+      let removableIdentifiers = true;
+      for (const key of identifiers) {
         await hold(key);
-        protectedCards &&= !document.querySelector(selector(key, 'hide'));
+        removableIdentifiers &&= Boolean(document.querySelector(selector(key, 'hide')));
         back();
       }
       const indexBefore = Number(get(keySelector(assembly)).dataset.counterIndex);
@@ -733,6 +736,7 @@ async function main() {
       const savedTile = bySlot('airframe').formLayout.tiles.find(tile => tile.keys.includes(assembly));
       const saved = moved && resized && live && restyled && savedTile.span < 6 && savedTile.font > 1 &&
         savedTile.labels[assembly] === 'ВКА слева' && get(keySelector(assembly)).textContent.includes('ВКА слева');
+      if (!saved) throw new Error(JSON.stringify({ moved, resized, live, restyled, savedTile }));
       await hold(caption);
       click(selector(caption, 'hide'));
       click('#layout-save');
@@ -776,11 +780,106 @@ async function main() {
       const manualForm = read().blocks.find(block => block.id === added.id).formLayout.hidden.includes(caption) &&
         !document.querySelector(keySelector(caption)) && bySlot('airframe').formLayout.hidden.length === 0;
       back();
-      return { protectedCards, saved, preservedInput, hidden, restored, cancelled, dismantled, independent, manualForm };
+      return { removableIdentifiers, saved, preservedInput, hidden, restored, cancelled, dismantled, independent, manualForm };
     })()`);
-    assert.deepEqual(formLayout, { protectedCards: true, saved: true, preservedInput: true, hidden: true, restored: true,
+    assert.deepEqual(formLayout, { removableIdentifiers: true, saved: true, preservedInput: true, hidden: true, restored: true,
       cancelled: true, dismantled: true, independent: true, manualForm: true });
     results.formLayout = "ok";
+    await evaluate(`(() => {
+      const key = 'aviation-resource-prototype-v1';
+      const saved = JSON.parse(localStorage.getItem(key));
+      const board = saved.aircraft.find(row => row.boardNumber === '402');
+      board.rfNumber = '330 037';
+      const tiles = board.blocks.find(block => block.templateSlotId === 'airframe').formLayout.tiles;
+      tiles.find(tile => tile.keys.includes('form-field:rfNumber')).labels = { 'form-field:rfNumber': 'RF 330 837' };
+      tiles.find(tile => tile.keys.includes('form-field:repairs')).height = 83;
+      localStorage.setItem(key, JSON.stringify(saved));
+    })()`);
+    await command("Page.reload");
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (await evaluate("Boolean(document.querySelector('[data-aircraft-id]'))").catch(() => false)) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const compactIdentifiers = await evaluate(`(async () => {
+      const saved = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
+      const board = () => saved().aircraft.find(row => row.boardNumber === '402');
+      const layout = () => board().blocks.find(block => block.templateSlotId === 'airframe').formLayout;
+      const get = selector => {
+        const element = document.querySelector(selector);
+        if (!element) throw new Error('Не найдено: ' + selector);
+        return element;
+      };
+      const click = selector => get(selector).click();
+      const rf = '[data-tile-key="form-field:rfNumber"]';
+      const repairs = '[data-tile-key="form-field:repairs"]';
+      const serial = '[data-tile-key="form-field:serialNumber"]';
+      const initialLayouts = JSON.stringify(saved().aircraft.map(row => ({ board: row.boardLayouts, blocks: row.blocks.map(block => block.formLayout) })));
+      click('[data-aircraft-id="' + board().id + '"]');
+      click('[data-block-id="' + board().blocks.find(block => block.templateSlotId === 'airframe').id + '"]');
+      function inOneLine(tile, control) {
+        const label = get(tile + ' [data-tile-caption]').getBoundingClientRect();
+        const value = get(tile + ' ' + control).getBoundingClientRect();
+        return value.left >= label.right && Math.abs((label.top + label.bottom - value.top - value.bottom) / 2) < 8;
+      }
+      const compactRf = inOneLine(rf, 'input') && get(rf + ' input').value === '330 037' &&
+        get(rf + ' [data-tile-caption]').textContent === 'RF';
+      const compactRepairs = inOneLine(repairs, 'output') && get(repairs + ' output').textContent === '0';
+      click('#edit-form-layout');
+      click('#layout-save');
+      const loadingKeepsLayouts = JSON.stringify(saved().aircraft.map(row => ({ board: row.boardLayouts, blocks: row.blocks.map(block => block.formLayout) }))) === initialLayouts;
+      click('#edit-form-layout');
+      click('[data-gesture=resize]');
+      function touch(element, type, x, y) {
+        const point = new Touch({ identifier: 29, target: element, clientX: x, clientY: y });
+        element.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true,
+          ...(type === 'touchend' ? { changedTouches: [point] } : { touches: [point] }) }));
+      }
+      function selectTile(tile) {
+        const target = get(tile + ' .counter-value');
+        const rect = target.getBoundingClientRect();
+        touch(target, 'touchstart', rect.left + 5, rect.top + 5);
+        touch(target, 'touchend', rect.left + 5, rect.top + 5);
+      }
+      selectTile(repairs);
+      const resizeSwitch = get('.counter-tile-active').matches(repairs) &&
+        get('[data-gesture=resize]').getAttribute('aria-pressed') === 'true';
+      const content = get(repairs + ' .counter-value');
+      touch(content, 'touchstart', 120, 400);
+      touch(content, 'touchmove', 120, 325);
+      const shrankVertically = get(repairs).getBoundingClientRect().height <= 39;
+      touch(content, 'touchend', 120, 325);
+      click('[data-gesture=font]');
+      selectTile(rf);
+      const fontSwitch = get('.counter-tile-active').matches(rf) &&
+        get('[data-gesture=font]').getAttribute('aria-pressed') === 'true';
+      function applyDialog() {
+        const dialog = get('dialog[open]');
+        return new Promise(resolve => {
+          dialog.addEventListener('close', resolve, { once: true });
+          dialog.querySelector('[value=save]').click();
+        });
+      }
+      click(rf + ' [data-layout-action=edit]');
+      get('dialog[open] [name="form-field:rfNumber"]').value = 'RF 330 837';
+      await applyDialog();
+      const previewValue = get(rf + ' input').value === '330 837' && get(rf + ' [data-tile-caption]').textContent === 'RF';
+      selectTile(serial);
+      click(serial + ' [data-layout-action=edit]');
+      get('dialog[open] [name="identifier:serialNumber"]').value = 'SN-402';
+      await applyDialog();
+      click(serial + ' [data-layout-action=hide]');
+      click('#layout-save');
+      const pencilSavesValues = board().rfNumber === '330 837' && board().serialNumber === 'SN-402' &&
+        layout().hidden.includes('form-field:serialNumber') && !document.querySelector(serial);
+      get(rf + ' input').value = 'RF 330 038';
+      get('#block-form').requestSubmit();
+      const inlineSaves = board().rfNumber === '330 038' && get(rf + ' input').value === '330 038' && inOneLine(rf, 'input');
+      window.handleAndroidBack();
+      return { compactRf, compactRepairs, loadingKeepsLayouts, resizeSwitch, shrankVertically, fontSwitch, previewValue, pencilSavesValues, inlineSaves };
+    })()`);
+    assert.deepEqual(compactIdentifiers, { compactRf: true, compactRepairs: true, loadingKeepsLayouts: true,
+      resizeSwitch: true, shrankVertically: true, fontSwitch: true, previewValue: true, pencilSavesValues: true, inlineSaves: true });
+    results.compactIdentifiers = "ok";
     const boardDeletion = await evaluate(`(async () => {
       window.handleAndroidBack();
       const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
@@ -993,7 +1092,7 @@ async function main() {
           engine: Boolean(document.querySelector('#block-form [name="starts"]')),
           hasModel: Boolean(document.querySelector('#block-form [name="model"]')),
           hasSerial: Boolean(document.querySelector('#block-form [name="serialNumber"]')),
-          boardSerial: document.querySelector('#block-form output')?.textContent,
+          boardSerial: document.querySelector('#block-form [name=serialNumber]')?.value,
           airframe: Boolean(document.querySelector('[aria-label="Наработка планера"]')),
           resource: Boolean(document.querySelector('[data-action="add-resource"]'))
         };
@@ -1482,9 +1581,9 @@ async function main() {
       document.querySelector('[data-aircraft-id]').click();
       const updatedRF = document.querySelector('.board-identifiers')?.textContent.includes('RF 33739');
       document.querySelector('[data-block-id="airframe"]').click();
-      const airframeSections = !document.querySelector('[name="rfNumber"], #block-form [name="model"], #block-form [name="drawingNumber"], #block-form [name="serialNumber"]') &&
-        [...document.querySelectorAll('#block-form output')].some((item) => item.textContent === '33739') &&
-        document.querySelector('#block-form output')?.textContent === '49051002905' &&
+      const airframeSections = !document.querySelector('#block-form [name="model"], #block-form [name="drawingNumber"]') &&
+        document.querySelector('#block-form [name=rfNumber]')?.value === '33739' &&
+        document.querySelector('#block-form [name=serialNumber]')?.value === '49051002905' &&
         [...document.querySelectorAll('h2')].some(item => item.textContent === 'Установленные агрегаты');
       window.handleAndroidBack();
       window.handleAndroidBack();
