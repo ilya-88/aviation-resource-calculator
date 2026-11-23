@@ -106,6 +106,13 @@ async function main() {
       const types = board().blocks.reduce((counts, block) => ({ ...counts, [block.kind]: (counts[block.kind] || 0) + 1 }), {});
       const engine = slot => board().blocks.find(block => block.templateSlotId === slot);
       const openEngine = slot => click('[data-block-id="' + engine(slot).id + '"]');
+      click('[data-action="add-block"]');
+      const creation = document.querySelector('#creation-form');
+      creation.elements.kind.value = 'engine';
+      creation.elements.kind.dispatchEvent(new Event('change'));
+      const noDuplicates = !creation.querySelector('option[value="airframe"]') && !creation.elements.templateSlotId &&
+        !document.querySelector('#no-engine-position').hidden && creation.querySelector('[type=submit]').disabled;
+      back();
       const engineInputOrder = 'starts ground-b ground-b-ub flight-b flight-b-ub maximum-or maximum-or-b maximum-b-ub';
       function record(both) {
         click('[data-view="shift"]');
@@ -237,14 +244,68 @@ async function main() {
       const replaces = next.blockId !== pair[1].blockId && next.serialNumber === 'TEST-02' &&
         board().shifts[0].templateWork.engines[1].blockId === pair[1].blockId;
       const excludesUnpairedUnits = latest.units.length === 0 && engine('gtde-2').starts === 2;
+      click('[data-action="add-block"]');
+      const aggregateForm = document.querySelector('#creation-form');
+      aggregateForm.elements.name.value = 'ГАК (проверка учёта)';
+      function addRule(name, source, factor, initial) {
+        click('[data-aggregate-rule-add]');
+        const row = document.querySelector('[data-rule-id]:last-child');
+        const input = key => row.querySelector('[data-rule="' + key + '"]');
+        input('name').value = name;
+        input('source').value = source;
+        input('source').dispatchEvent(new Event('change'));
+        input('factor').value = factor;
+        input('sne').value = initial;
+      }
+      addRule('Посадки', 'board:runway', 2, 3);
+      addRule('Проверки', 'manual', 0.5, 0);
+      addRule('Запуски правого', 'position:engine-right:starts', 3, 0);
+      aggregateForm.requestSubmit();
+      const aggregate = () => board().blocks.find(block => block.name === 'ГАК (проверка учёта)');
+      const aggregateBalances = () => aggregate().usageCounters.map(rule => aggregate().usageTotals[rule.id]);
+      click('[data-block-id="' + aggregate().id + '"]');
+      click('[data-view="block-usage-rules"]');
+      const rulesPersisted = document.querySelectorAll('[data-rule-id]').length === 3 &&
+        document.querySelector('[data-rule-id] [data-rule="sne"]').value === '3';
+      const rulesForm = document.querySelector('#aggregate-rules-form');
+      rulesForm.querySelector('[data-rule-id] [data-rule="name"]').value = 'Циклы от посадок';
+      rulesForm.requestSubmit();
+      back();
+      function recordAggregate() {
+        click('[data-view="shift"]');
+        const form = document.querySelector('#template-work-form');
+        form.querySelector('[data-template-field="board-flight"]').value = '00:01';
+        form.querySelector('[data-template-field="runway"]').value = '2';
+        form.querySelector('[data-template-scope="engine-right"] [data-template-field="starts"]').value = '1';
+        form.querySelector('[data-aggregate-manual-block] input').value = '10';
+        form.dispatchEvent(new Event('input'));
+        const previewed = document.querySelector('#template-preview').textContent.includes('Наработка агрегатов (3)');
+        form.requestSubmit();
+        return previewed;
+      }
+      const aggregatePreview = recordAggregate();
+      const firstTotals = aggregateBalances();
+      click('[data-block-id="' + aggregate().id + '"]');
+      const aggregateJournal = document.querySelector('[data-tile-key="form:aggregate-log"]').textContent.includes('Циклы от посадок');
+      document.querySelector('#block-event-form').requestSubmit();
+      const repairBalances = aggregate().events.at(-1).beforeRepair.aggregate[0].sne === 7 &&
+        aggregateBalances().every(total => total.ppr === 0);
+      back();
+      recordAggregate();
+      const aggregateTotals = JSON.stringify(firstTotals) === JSON.stringify([{sne:7,ppr:null},{sne:5,ppr:null},{sne:3,ppr:null}]) &&
+        JSON.stringify(aggregateBalances()) === JSON.stringify([{sne:11,ppr:4},{sne:10,ppr:5},{sne:6,ppr:3}]);
+      const aggregateHistory = board().shifts.at(-1).aggregateAccruals.map(entry => entry.amount).join(',') === '4,5,3';
       return { empty, imported, types, routed, pairedCounters, vkaLogs, gtdeLogs, gtdePpr, excludesUnpairedUnits,
-        maximas, orderedInputs: first.orderedInputs, leftLog, rightLog,
+        maximas, orderedInputs: first.orderedInputs, leftLog, rightLog, noDuplicates, rulesPersisted,
+        aggregatePreview, aggregateJournal, repairBalances, aggregateTotals, aggregateHistory,
         logBeforeSettings, repairs, replaces, preview: first.preview.includes('00:43'),
         rowsRemoved: first.rowsRemoved, pending: pending.pending && !pending.blockId && pendingRecord.preview.includes('ожидает привязки'), showsRaw };
     })()`);
     assert.deepEqual(experimental, { empty: true, imported: true, types: {airframe:1, engine:2, unit:4}, routed: true,
       pairedCounters: true, vkaLogs: true, gtdeLogs: true, gtdePpr: true, excludesUnpairedUnits: true,
       maximas: [3,8,12], orderedInputs: true, leftLog: true, rightLog: true, logBeforeSettings: true,
+      noDuplicates: true, rulesPersisted: true, aggregatePreview: true, aggregateJournal: true, repairBalances: true,
+      aggregateTotals: true, aggregateHistory: true,
       repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
     results.templateExperiment = "ok";
     await evaluate(`(() => {
@@ -770,7 +831,7 @@ async function main() {
       click('[data-action="add-block"]');
       const newForm = get('#creation-form');
       newForm.elements.name.value = 'Дополнительный формуляр';
-      newForm.elements.kind.value = 'airframe';
+      newForm.elements.kind.value = 'unit';
       newForm.requestSubmit();
       const added = read().blocks.find(block => block.name === 'Дополнительный формуляр');
       click('[data-block-id="' + added.id + '"]');
@@ -1737,6 +1798,12 @@ async function main() {
       const copied = document.querySelector('#resource-form').elements.limit.value === '50' &&
         document.querySelector('[data-source="arresterHooks"]').value === '2';
       window.handleAndroidBack();
+      click('[data-view="block-usage-rules"]');
+      click('[data-aggregate-rule-add]');
+      document.querySelector('[data-rule="name"]').value = 'Проверки гидронасоса';
+      document.querySelector('[data-rule="factor"]').value = '0.5';
+      document.querySelector('[data-rule="sne"]').value = '5';
+      submit('#aggregate-rules-form');
       window.handleAndroidBack();
       click('[data-view="shift"]');
       const form = document.querySelector('#shift-form');
@@ -1745,6 +1812,7 @@ async function main() {
       form.elements.rightFlight.value = '30';
       form.elements.rightGround.value = '13';
       form.elements.operationType.value = '2';
+      form.querySelector('[data-aggregate-manual] input').value = '8';
       form.elements.arresterHooks.dispatchEvent(new Event('input', { bubbles: true }));
       const preview = document.querySelector('#shift-summary').textContent.includes('Расход 2');
       submit('#shift-form');
@@ -1752,21 +1820,27 @@ async function main() {
       click('[data-shift-id]');
       click('[data-view="correct-shift"]');
       const revise = document.querySelector('#shift-form');
+      const manualInput = revise.querySelector('[data-aggregate-manual] input');
+      const previousManual = manualInput.value;
+      manualInput.value = '6';
       revise.elements.arresterHooks.value = '2';
       submit('#shift-form');
       const board = read();
       const shift = board.shifts.at(-1);
       const saved = board.resources.find(item => item.object === 'ГАК');
       const hook = board.blocks.find(item => item.name === 'ГАК');
+      const pumpAfterWork = board.blocks.find(item => item.name === 'Гидронасос');
+      const manualRevised = previousManual === '8' && pumpAfterWork.usageTotals[pumpAfterWork.usageCounters[0].id].sne === 8 &&
+        shift.aggregateAccruals[0].amount === 3 && shift.revisions[0].aggregateAccruals[0].amount === 4;
       return { map, connected, unlinkedWithCounters, preview, copied, amount: shift.accruals.find(item => item.resourceId === saved.id).amount,
         remaining: saved.remaining, previous: shift.revisions[0].raw.arresterHooks, kind: shift.operationLabel,
         rightFlight: shift.engineAccruals.find(item => item.blockId === 'engine-right').flightMinutes,
         rightTotal: shift.engineAccruals.find(item => item.blockId === 'engine-right').minutes,
         historyBeforeRepair: hook.historicalRepairs[2].beforeRepair.sneMinutes, repairs: hook.repairs,
-        hookPpr: hook.pprMinutes };
+        hookPpr: hook.pprMinutes, manualRevised };
     })()`);
     assert.deepEqual(routing, { map: true, connected: true, unlinkedWithCounters: true, preview: true, copied: true, amount: 4, remaining: 46, previous: '1',
-      kind: 'Руление', rightFlight: 30, rightTotal: 36, historyBeforeRepair: 360, repairs: 2, hookPpr: 120 });
+      kind: 'Руление', rightFlight: 30, rightTotal: 36, historyBeforeRepair: 360, repairs: 2, hookPpr: 120, manualRevised: true });
     results.resourceRouting = "ok";
 
     const cardIntegrity = await evaluate(`(() => {
