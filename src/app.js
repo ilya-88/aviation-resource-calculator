@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.24";
+  const APP_VERSION = "0.2.38-exp.25";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1407,7 +1407,7 @@
       for (const row of data.blocks) {
         const block = slots.get(row.position);
         Object.assign(block, row.readings, { serialNumber: row.serialNumber, manufactureDate: row.manufactureDate, repairs: row.repairs });
-        if (row.lastRepairDate) block.historicalRepairs = { [row.repairs]: { date: row.lastRepairDate } };
+        if (row.lastRepairDate) block.historicalRepairs = { [row.repairs]: { date: row.lastRepairDate, beforeRepair: {} } };
         for (const { counter, sne, ppr } of row.totals) block.usageTotals[block.usageCounters[counter].id] = { sne: sne ?? 0, ppr: ppr ?? null };
       }
       board.resources = data.resources.map(({ position, inputs, ...resource }) => {
@@ -3120,11 +3120,12 @@
         ${repairAggregateBalances(before?.aggregate)}</div></article>`;
     }).join("");
     const historicalRows = Object.entries(block.historicalRepairs || {}).map(([number, entry]) => {
-      const { sneMinutes, pprMinutes, sneLandings, pprLandings } = entry.beforeRepair;
+      const before = entry.beforeRepair || {};
+      const { sneMinutes, pprMinutes, sneLandings, pprLandings } = before;
       return `<article class="history-row" data-form-widget="repair:${escapeHtml(number)}"><div><strong>Ремонт № ${escapeHtml(number)}${entry.date ? ` · ${formatDate(entry.date)}` : ""}</strong>
         <span>До ремонта · СНЭ: ${sneMinutes == null ? "—" : calc.formatDuration(sneMinutes)}, посадки ${sneLandings ?? "—"}</span>
         <span>ППР: ${pprMinutes == null ? "—" : calc.formatDuration(pprMinutes)}, посадки ${pprLandings ?? "—"}</span>
-        ${repairAggregateBalances(entry.beforeRepair.aggregate)}
+        ${repairAggregateBalances(before.aggregate)}
         ${entry.note ? `<span>${escapeHtml(entry.note)}</span>` : ""}</div></article>`;
     }).join("");
     app.innerHTML = shell(`
