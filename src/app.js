@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.3";
+  const APP_VERSION = "0.2.38-exp.4";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -263,6 +263,11 @@
     return aircraft.blocks.find((block) => block.name === resource.object);
   }
 
+  function resourceBelongsTo(aircraft, resource, block) {
+    const owner = resourceOwner(aircraft, resource);
+    return owner === block || (!owner && !resource.objectId && resource.object === "Самолёт" && block.kind === "airframe");
+  }
+
   function resourceInputs(resource, owner, aircraft) {
     if (resource.unit === "дн.") return {};
     if (resource.consumption) return resource.consumption;
@@ -352,7 +357,8 @@
 
   function canCorrectShift(aircraft, shift) {
     return Boolean(shift?.beforeUsage && shift.afterUsage && shift === aircraft.shifts.at(-1) &&
-      sameRecordedUsageKinds(aircraft, shift) && JSON.stringify(shift.afterUsage) === JSON.stringify(usageSnapshot(aircraft)));
+      !shift.resourceAssignmentChanged && sameRecordedUsageKinds(aircraft, shift) &&
+      JSON.stringify(shift.afterUsage) === JSON.stringify(usageSnapshot(aircraft)));
   }
 
   function sameRecordedUsageKinds(aircraft, shift) {
@@ -2360,9 +2366,8 @@
           ${modeRow("Форсаж", block.afterburnerSeconds, block.pprAfterburnerSeconds, formatSeconds)}
         </div>` : ""}
       </fieldset>` : "";
-    const relatedResources = aircraft.resources.filter((resource) =>
-      resourceOwner(aircraft, resource) === block || (block.kind === "airframe" && resource.object === "Самолёт")
-    );
+    const relatedResources = aircraft.resources.filter((resource) => resourceBelongsTo(aircraft, resource, block));
+    const availableResources = aircraft.resources.filter((resource) => !relatedResources.includes(resource));
     const assemblies = aircraft.blocks.filter((item) => item.kind !== "airframe");
     const installedAssemblies = assemblies.filter((item) => blockInstalledOn(item, todayIso()));
     const assemblyHistory = assemblies.flatMap((item) =>
@@ -2418,6 +2423,14 @@
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>${escapeHtml(block.name)}</h1><p>${escapeHtml(block.caption)}</p></div></section>
       ${logFields.length ? templateFormLog(aircraft, block, position, logFields) : ""}
+      <section class="section-stack" aria-labelledby="block-resources-title">
+        <h2 id="block-resources-title">Ресурсы и работы</h2>
+        ${relatedResources.length ? `<div class="resource-list">${resourceRows(relatedResources, { editable: true })}</div>` : "<p>Ресурсы пока не добавлены.</p>"}
+        <div class="operation-tags">
+          <button type="button" class="secondary-button" data-action="add-resource" data-resource-object="${escapeHtml(block.name)}" data-resource-owner="${escapeHtml(block.id)}">${icon("plus")} Добавить ресурс</button>
+          ${availableResources.length ? '<button type="button" class="secondary-button" id="attach-existing-resource">Привязать существующий</button>' : ""}
+        </div>
+      </section>
       <form id="block-form" class="shift-form">
         <fieldset><legend>Формуляр</legend>
           <label><span>Название</span><input name="name" type="text" value="${escapeHtml(block.name)}" required></label>
@@ -2445,9 +2458,6 @@
       </form>
       <button type="button" class="add-block-button" data-view="correct-usage">Уточнить показания</button>
       ${installations}
-      <div class="section-heading settings-section-heading"><div><h2>Ресурсы и работы</h2><p>Связанные с этим формуляром ограничения.</p></div></div>
-      <section class="resource-list">${relatedResources.length ? resourceRows(relatedResources, { editable: true }) : `<div class="empty-state compact-empty"><p>Связанных ресурсов пока нет.</p></div>`}</section>
-      <button class="add-block-button" data-action="add-resource" data-resource-object="${escapeHtml(block.name)}" data-resource-owner="${escapeHtml(block.id)}">${icon("plus")} Добавить ограниченный ресурс</button>
       <div class="section-heading settings-section-heading"><div><h2>История событий</h2><p>Смены, ремонты, установки и продления.</p></div></div>
       <section class="history-list">${(eventRows + historicalRows) || `<div class="empty-state compact-empty"><p>Исторических операций для этого объекта пока нет.</p></div>`}</section>
       <form id="block-event-form" class="shift-form event-form">
@@ -2459,6 +2469,9 @@
       </form>
     `, { title: block.name, subtitle: "Формуляр объекта", back: true, settingsScope: "aircraft" });
 
+    document.getElementById("attach-existing-resource")?.addEventListener("click", () => {
+      attachExistingResource(aircraft, block, availableResources);
+    });
     document.getElementById("block-form").addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(event.currentTarget);
@@ -2553,6 +2566,71 @@
       render();
       showToast("Событие записано в историю");
     });
+  }
+
+  function attachExistingResource(aircraft, block, candidates) {
+    const dialog = document.createElement("dialog");
+    dialog.className = "confirm-dialog";
+    dialog.setAttribute("aria-labelledby", "attach-resource-title");
+    dialog.innerHTML = `<form class="shift-form">
+      <h2 id="attach-resource-title">Привязать ресурс к «${escapeHtml(block.name)}»</h2>
+      <label>Ресурс этого борта<select name="resource" required>
+        <option value="">Выбрать ресурс</option>
+        ${candidates.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.object)} · ${escapeHtml(item.name)} · ${formatNumber(item.remaining)} ${escapeHtml(item.unit)}</option>`).join("")}
+      </select></label>
+      <p class="field-help" role="status">При переносе сохраняются остаток и история ресурса.</p>
+      <div class="operation-tags">
+        <button type="button" class="secondary-button" data-cancel>Отмена</button>
+        <button type="submit" class="primary-button" disabled>Привязать</button>
+      </div>
+    </form>`;
+    const form = dialog.querySelector("form");
+    const status = form.querySelector("[role='status']");
+    const submit = form.querySelector("[type='submit']");
+    const allowed = new Set(usageSources(aircraft, block).map(({ key }) => key));
+    function checkSelected() {
+      const resource = candidates.find((item) => item.id === form.elements.resource.value);
+      if (!resource) {
+        submit.disabled = true;
+        status.textContent = "При переносе сохраняются остаток и история ресурса.";
+        return null;
+      }
+      const inputs = resourceInputs(resource, resourceOwner(aircraft, resource), aircraft);
+      const missing = Object.entries(inputs).filter(([key, factor]) => factor > 0 && !allowed.has(key))
+        .map(([key]) => ENGINE_SOURCES[key] || key);
+      submit.disabled = missing.length > 0;
+      status.textContent = missing.length
+        ? `Для этого формуляра недоступен расход по показателям: ${missing.join(", ")}. Измените расход в карточке ресурса перед переносом.`
+        : `Ресурс будет перенесён из «${resource.object}». Остаток и история сохранятся.`;
+      return missing.length ? null : { resource, inputs };
+    }
+    form.elements.resource.addEventListener("change", checkSelected);
+    form.querySelector("[data-cancel]").onclick = () => dialog.close();
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const selection = checkSelected();
+      if (!selection) return;
+      const { resource, inputs } = selection;
+      const previous = aircraft.resources;
+      const lastWork = aircraft.shifts.at(-1);
+      const preventRecalculation = resource.unit !== "дн." && lastWork?.afterUsage && !lastWork.resourceAssignmentChanged;
+      aircraft.resources = previous.map((item) => item === resource
+        ? { ...resource, object: block.name, objectId: block.id, consumption: inputs }
+        : item);
+      if (preventRecalculation) lastWork.resourceAssignmentChanged = true;
+      if (!saveState()) {
+        aircraft.resources = previous;
+        if (preventRecalculation) delete lastWork.resourceAssignmentChanged;
+        status.textContent = "Не удалось привязать ресурс. Попробуйте ещё раз.";
+        return;
+      }
+      dialog.close();
+      render();
+      showToast("Ресурс привязан к формуляру");
+    });
+    dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    app.append(dialog);
+    dialog.showModal();
   }
 
   function templateFormLog(aircraft, block, position, fields) {
@@ -2752,6 +2830,8 @@
         ${shift.accruals?.length ? accrualSummary(shift.accruals) : `<p>${shift.accruals ? "Начислений по ресурсам нет." : "Для этой записи разбивка по ресурсам не сохранялась."}</p>`}
         <button class="secondary-button" id="open-shift-map">Карта начислений</button>
         ${canCorrectShift(aircraft, shift) ? `<button class="secondary-button" data-view="correct-shift">Исправить запись</button>` : ""}
+        ${shift === aircraft.shifts.at(-1) && shift.resourceAssignmentChanged
+          ? '<p class="field-help">После записи изменилась привязка ресурса. Начисления этой записи сохранены в журнале.</p>' : ""}
         ${shift === aircraft.shifts.at(-1) && shift.beforeUsage && !sameRecordedUsageKinds(aircraft, shift)
           ? `<p class="field-help">Состав или единицы показателей изменились. В журнале сохранены исходные значения этой записи.</p>` : ""}
         ${(shift.revisions || []).map((revision) => `<details><summary>Предыдущая версия · ${escapeHtml(new Date(revision.correctedAt).toLocaleString("ru-RU"))}</summary>
@@ -3093,7 +3173,7 @@
     const objectOptions = ["Самолёт", ...aircraft.blocks.map((block) => block.name)]
       .map((name) => `<option value="${escapeHtml(name)}"></option>`).join("");
     app.innerHTML = shell(`
-      <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>${isNew ? "Новый ресурсный агрегат" : escapeHtml(draft.name)}</h1></div></section>
+      <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>${isNew ? (draft.objectId ? "Добавить ресурс" : "Новый ресурсный агрегат") : escapeHtml(draft.name)}</h1></div></section>
       <form id="resource-form" class="shift-form">
         <fieldset><legend>Агрегат и идентификация</legend>
           <label><span>Агрегат или объект</span><input name="object" type="text" list="resource-objects" value="${escapeHtml(draft.object)}" required><datalist id="resource-objects">${objectOptions}</datalist></label>
@@ -3143,7 +3223,7 @@
           <div class="field-pair"><label class="checkbox-row"><input name="notifyApp" type="checkbox" ${draft.notifyApp !== false ? "checked" : ""}><span>Уведомление приложения</span></label><label class="checkbox-row"><input name="notifyCalendar" type="checkbox" ${draft.notifyCalendar ? "checked" : ""}><span>Штатный календарь</span></label></div>
           <div class="field-pair"><label><span>Предварительно за</span><input name="advanceValue" type="number" min="0" step="0.01" value="${draft.advanceValue ?? 3}"></label><label class="checkbox-row"><input name="notifyOnDue" type="checkbox" ${draft.notifyOnDue !== false ? "checked" : ""}><span>Повторить в день/момент выполнения</span></label></div>
         </fieldset>
-        <button type="submit" class="primary-button wide">${isNew ? "Добавить агрегат с ограниченным ресурсом" : "Сохранить карточку"}</button>
+        <button type="submit" class="primary-button wide">${isNew ? (draft.objectId ? "Добавить ресурс" : "Добавить агрегат с ограниченным ресурсом") : "Сохранить карточку"}</button>
         ${isNew ? "" : `<button type="button" class="secondary-button wide danger-button" data-action="delete-resource">Удалить ресурсную карточку</button>`}
       </form>
       ${resource && resource.unit !== "дн." ? `
@@ -3263,7 +3343,7 @@
       const remaining = Number(data.get("remaining"));
       const saved = normalizeResource({
         ...(resource || {}),
-        id: resource?.id || `resource-${Date.now()}`,
+        id: resource?.id || `resource-${id()}`,
         object: objectName,
         objectId: currentOwner()?.id || (orphan ? resource.objectId : null),
         consumption: data.get("unit") === "дн." ? {} : readInputs(),

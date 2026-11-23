@@ -372,6 +372,88 @@ async function main() {
     })()`);
     assert.deepEqual(portable, { blankSaved: true, fourTotals: true, report: "Двигатель 1|Двигатель 2|Двигатель 3|Двигатель 4", exportOk: true, remapped: true });
     results.portableFourEngineTemplate = "ok";
+    const formResources = await evaluate(`(() => {
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft.find(row => row.boardNumber === '402');
+      const click = selector => {
+        const element = document.querySelector(selector);
+        if (!element) throw new Error('Не найдено: ' + selector);
+        element.click();
+      };
+      const back = () => window.handleAndroidBack();
+      const block = slot => read().blocks.find(item => item.templateSlotId === slot);
+      const visit = slot => click('[data-block-id="' + block(slot).id + '"]');
+      const bySlot = slot => read().resources.find(item => item.name === 'Ресурс ' + slot);
+      const slots = ['airframe', 'motor-1', 'motor-2', 'vka-1', 'vka-2', 'gtde-1', 'gtde-2'];
+      const added = slots.every((slot, index) => {
+        visit(slot);
+        click('[data-action="add-resource"]');
+        const form = document.querySelector('#resource-form');
+        const targeted = form.elements.ownerId.value === block(slot).id;
+        form.elements.name.value = 'Ресурс ' + slot;
+        form.elements.limit.value = '100';
+        form.elements.remaining.value = String(60.5 + index);
+        if (slot.startsWith('gtde')) {
+          form.elements.unit.value = 'зап.';
+          form.elements.unit.dispatchEvent(new Event('change'));
+        }
+        form.requestSubmit();
+        back();
+        const resource = bySlot(slot);
+        const result = targeted && resource.objectId === block(slot).id && resource.remaining === 60.5 + index &&
+          Boolean(document.querySelector('[aria-labelledby="block-resources-title"] [data-resource-id="' + resource.id + '"]'));
+        back();
+        return result;
+      });
+      visit('vka-1');
+      click('[data-resource-id="' + bySlot('vka-1').id + '"]');
+      const extension = document.querySelector('#extension-form');
+      extension.elements.limit.value = '105';
+      extension.elements.basis.value = 'Проверка';
+      extension.elements.documentNumber.value = 'TEST-1';
+      extension.elements.documentDate.value = extension.elements.date.value;
+      extension.requestSubmit();
+      back();
+      back();
+      const originalResource = bySlot('vka-1');
+      function selectExisting(id) {
+        click('#attach-existing-resource');
+        const form = document.querySelector('dialog[open] form');
+        form.elements.resource.value = id;
+        form.elements.resource.dispatchEvent(new Event('change'));
+        return form;
+      }
+      visit('gtde-1');
+      const incompatible = selectExisting(originalResource.id);
+      const blocked = incompatible.querySelector('[type=submit]').disabled && incompatible.textContent.includes('недоступен расход');
+      incompatible.querySelector('[data-cancel]').click();
+      back();
+      visit('motor-2');
+      const cancelled = selectExisting(originalResource.id);
+      cancelled.querySelector('[data-cancel]').click();
+      const intactOnCancel = bySlot('vka-1').objectId === block('vka-1').id;
+      const form = selectExisting(originalResource.id);
+      form.requestSubmit();
+      const moved = bySlot('vka-1');
+      const kept = JSON.stringify(moved) === JSON.stringify({ ...originalResource, object: block('motor-2').name, objectId: block('motor-2').id }) &&
+        originalResource.history.length === 1 && read().resources.length === slots.length &&
+        Boolean(document.querySelector('[data-resource-id="' + moved.id + '"]'));
+      back();
+      visit('vka-1');
+      const removedFromSource = !document.querySelector('[data-resource-id="' + moved.id + '"]');
+      back();
+      click('[data-view="shift"]');
+      const work = document.querySelector('#template-work-form');
+      const scope = work.querySelector('[data-template-scope="motor-2"]');
+      const inputs = { starts: '1', 'ground-b': '00:00', 'ground-b-ub': '00:00', 'flight-b': '00:30', 'flight-b-ub': '00:30' };
+      for (const [key, value] of Object.entries(inputs)) scope.querySelector('[data-template-field="' + key + '"]').value = value;
+      work.requestSubmit();
+      const accrual = read().shifts.at(-1).accruals.filter(item => item.resourceId === moved.id);
+      const chargedToNewOwner = accrual.length === 1 && accrual[0].blockId === block('motor-2').id &&
+        accrual[0].amount === 0.5 && bySlot('vka-1').remaining === moved.remaining - 0.5;
+      return { added, blocked, intactOnCancel, kept, removedFromSource, chargedToNewOwner };
+    })()`);
+    assert.deepEqual(formResources, { added: true, blocked: true, intactOnCancel: true, kept: true, removedFromSource: true, chargedToNewOwner: true });
+    results.formResources = "ok";
     const boardDeletion = await evaluate(`(async () => {
       window.handleAndroidBack();
       const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
