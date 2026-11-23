@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.26";
+  const APP_VERSION = "0.2.38-exp.27";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -542,9 +542,9 @@
     return aircraft.blocks.find((block) => block.name === resource.object);
   }
 
-  function resourceBelongsTo(aircraft, resource, block) {
-    const owner = resourceOwner(aircraft, resource);
-    return owner === block || (!owner && !resource.objectId && resource.object === "Самолёт" && block.kind === "airframe");
+  function resourceFormOwner(aircraft, resource) {
+    return resourceOwner(aircraft, resource) || (!resource.objectId && resource.object === "Самолёт"
+      ? aircraft.blocks.find((block) => block.kind === "airframe") : undefined);
   }
 
   function resourceInputs(resource, owner, aircraft) {
@@ -1023,13 +1023,26 @@
   function renderAircraft(layoutEditing = false) {
     const aircraft = selectedAircraft();
     const activeTab = state.aircraftTab || "aggregates";
-    const renderBlockTile = (block) => `
+    const resourceStatuses = new Map();
+    for (const resource of aircraft.resources) {
+      if (!(resource.limit > 0)) continue;
+      const owner = resourceFormOwner(aircraft, resource);
+      if (!owner) continue;
+      const previous = resourceStatuses.get(owner.id);
+      if (!previous || resource.status === "danger" || (resource.status === "warning" && previous === "ok")) {
+        resourceStatuses.set(owner.id, resource.status);
+      }
+    }
+    const renderBlockTile = (block) => {
+      const status = resourceStatuses.get(block.id) ?? block.status ?? "ok";
+      return `
       <button class="equipment-block" data-block-id="${block.id}">
         <span class="equipment-block__icon">${block.kind === "engine" ? "◉" : block.kind === "airframe" ? "△" : "⬡"}</span>
         <span class="equipment-block__body"><strong>${escapeHtml(block.name)}</strong>${componentSerialLine(block)}${block.caption ? `<small>${escapeHtml(block.caption)}</small>` : ""}</span>
-        <span class="status-dot status-${block.status}" aria-label="${statusLabel(block.status)}"></span>
+        <span class="status-dot status-${status}" aria-label="${statusLabel(status)}"></span>
         <span>${icon("chevron")}</span>
       </button>`;
+    };
     const aircraftForms = aircraft.blocks.filter((block) => block.kind === "airframe");
     const blocks = aircraft.blocks.filter((block) => block.kind !== "airframe").map(renderBlockTile).join("");
 
@@ -3072,7 +3085,7 @@
           ${modeRow("Форсаж", block.afterburnerSeconds, block.pprAfterburnerSeconds, formatSeconds)}
         </div>` : ""}
       </fieldset>` : "";
-    const relatedResources = aircraft.resources.filter((resource) => resourceBelongsTo(aircraft, resource, block));
+    const relatedResources = aircraft.resources.filter((resource) => resourceFormOwner(aircraft, resource) === block);
     const availableResources = aircraft.resources.filter((resource) => !relatedResources.includes(resource));
     const assemblies = aircraft.blocks.filter((item) => item.kind !== "airframe");
     const installedAssemblies = assemblies.filter((item) => blockInstalledOn(item, todayIso()));
