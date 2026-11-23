@@ -454,6 +454,147 @@ async function main() {
     })()`);
     assert.deepEqual(formResources, { added: true, blocked: true, intactOnCancel: true, kept: true, removedFromSource: true, chargedToNewOwner: true });
     results.formResources = "ok";
+    const compactAudit = await evaluate(`(() => {
+      const screens = [];
+      const back = () => window.handleAndroidBack();
+      const get = selector => {
+        const element = document.querySelector(selector);
+        if (!element) throw new Error('Не найдено: ' + selector);
+        return element;
+      };
+      const click = selector => get(selector).click();
+      function check(title) {
+        const width = document.documentElement.clientWidth;
+        const selectors = [
+          'fieldset', 'label', 'input:not([type=hidden])', 'textarea', 'select', 'summary', 'button', 'output', '.metric', '.setting-row',
+          '.aircraft-card', '.resource-row', '.history-row', '.counter-tile', '.template-table-wrap',
+        ].join(',');
+        for (const element of document.querySelectorAll('main :is(' + selectors + '), dialog[open] :is(' + selectors + ')')) {
+          if (!element.getClientRects().length || element.closest('.filter-row, .usage-map-scroll')) continue;
+          const bounds = element.getBoundingClientRect();
+          if (bounds.left < -1 || bounds.right > width + 1) {
+            throw new Error(title + ' выходит за ширину ' + width + ': ' + element.tagName + ' ' + (element.name || element.id || element.className));
+          }
+        }
+        screens.push(title);
+      }
+      function sideBySide(left, right) {
+        const a = get(left).getBoundingClientRect();
+        const b = get(right).getBoundingClientRect();
+        if (Math.abs(a.top - b.top) > 2 || a.right > b.left + 1 || a.height < 44 || b.height < 44) {
+          throw new Error('Поля должны стоять рядом и оставаться доступными для нажатия: ' + left + ' и ' + right);
+        }
+      }
+      const storage = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
+      const board = storage.aircraft.find(row => row.boardNumber === '402');
+      const card = '[data-aircraft-id="' + board.id + '"]';
+      for (const block of board.blocks) {
+        click('[data-block-id="' + block.id + '"]');
+        check('Формуляр · ' + block.name);
+        const table = document.querySelector('.template-table-wrap');
+        if (table) {
+          const date = table.querySelector('thead th');
+          const left = date.getBoundingClientRect().left;
+          table.scrollLeft = table.scrollWidth;
+          if (getComputedStyle(date).position !== 'sticky' || Math.abs(date.getBoundingClientRect().left - left) > 2) {
+            throw new Error('Дата не закреплена при прокрутке');
+          }
+          table.scrollLeft = 0;
+        }
+        click('[data-view="correct-usage"]');
+        check('Показания · ' + block.name);
+        back();
+        click('[data-action="add-resource"]');
+        check('Добавление ресурса · ' + block.name);
+        sideBySide('#resource-form [name=limit]', '#resource-form [name=remaining]');
+        sideBySide('#resource-form [name=produced]', '#resource-form [name=installed]');
+        if (get('#resource-form [type=submit]').getBoundingClientRect().width >= get('#resource-form').getBoundingClientRect().width - 1) {
+          throw new Error('Кнопка ресурса растянута на всю форму');
+        }
+        for (const details of document.querySelectorAll('#resource-form details')) details.open = true;
+        check('Дополнительные поля · ' + block.name);
+        back();
+        if (document.querySelector('#attach-existing-resource')) {
+          click('#attach-existing-resource');
+          check('Привязка · ' + block.name);
+          back();
+        }
+        back();
+      }
+      click('[data-view="shift"]');
+      check('Данные работы');
+      back();
+      click('[data-view="resources"]');
+      check('Остатки ресурсов');
+      const existing = board.resources.find(resource => resource.unit === 'ч');
+      click('[data-resource-id="' + existing.id + '"]');
+      check('Ресурс и продление');
+      back();
+      back();
+      click('[data-aircraft-tab="works"]');
+      check('Регламентные работы');
+      click('[data-view="reports"]');
+      check('Отчёт');
+      sideBySide('#report-form [name=from]', '#report-form [name=to]');
+      back();
+      click('[data-shift-id]');
+      check('История работы');
+      back();
+      click('[data-aircraft-tab="least-reliable"]');
+      check('Карточки ресурса');
+      click('[data-aircraft-tab="aggregates"]');
+      check('Карточки агрегатов');
+      click('[data-action="add-block"]');
+      check('Добавление агрегата');
+      back();
+      click('[data-view="usage-map"]');
+      check('Карта наработки');
+      back();
+      click('[data-action="settings"]');
+      check('Настройки борта');
+      click('[data-view="board-usage"]');
+      check('Показатели борта');
+      back();
+      back();
+      back();
+      check('Карточки самолётов');
+      const menu = get(card).closest('article').querySelector('.aircraft-card-menu');
+      menu.open = true;
+      check('Меню самолёта');
+      click('[data-board-menu="board-details"][data-board-id="' + board.id + '"]');
+      check('Реквизиты борта');
+      sideBySide('[name=serialNumber]', '[name=rfNumber]');
+      back();
+      click('[data-board-menu="board-image"][data-board-id="' + board.id + '"]');
+      check('Картинка борта');
+      back();
+      click('[data-action="add-aircraft"]');
+      check('Добавление самолёта');
+      back();
+      click('[data-action="settings"]');
+      check('Общие настройки');
+      click('[data-view="diagnostics"]');
+      check('Диагностика');
+      back();
+      click('[data-action="about"]');
+      check('О приложении');
+      back();
+      click('[data-view="usage-settings"]');
+      check('Виды наработки');
+      back();
+      click('[data-view="aircraft-types"]');
+      check('Справочник');
+      click('[data-copy-template]');
+      for (const details of document.querySelectorAll('#template-editor-form details')) details.open = true;
+      check('Редактор шаблона');
+      back();
+      back();
+      back();
+      click(card);
+      return screens.length;
+    })()`);
+    assert.ok(compactAudit >= 60);
+    results.compactAudit = compactAudit;
     const boardDeletion = await evaluate(`(async () => {
       window.handleAndroidBack();
       const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));

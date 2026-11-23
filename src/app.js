@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.4";
+  const APP_VERSION = "0.2.38-exp.5";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -689,7 +689,7 @@
         </div>
         <button class="primary-button" data-action="add-aircraft">${icon("plus")} Добавить самолёт</button>
       </section>
-      <section class="section-stack" aria-label="Список самолётов">
+      <section class="section-stack aircraft-list" aria-label="Список самолётов">
         ${aircraftCards || `<div class="empty-state"><h2>Самолётов пока нет</h2><p>Добавьте первый борт, чтобы начать учёт.</p></div>`}
       </section>
       ${nearestNote}
@@ -1624,17 +1624,19 @@
           </div>` : ""}
           ${showHooks ? `<label><span>${escapeHtml(usageRule("arresterHooks").label)}</span><input name="arresterHooks" type="number" min="0" value="0"></label>` : ""}
         </fieldset>` : ""}
-        ${customSources(aircraft).some(({ key }) => sourceEnabled(aircraft, key)) ? `<fieldset><legend>Другие показатели</legend>${customSources(aircraft)
+        ${customSources(aircraft).some(({ key }) => sourceEnabled(aircraft, key)) ? `<fieldset class="form-grid"><legend>Другие показатели</legend>${customSources(aircraft)
           .filter(({ key }) => sourceEnabled(aircraft, key)).map(customWorkInput).join("")}</fieldset>` : ""}
         <div id="operation-picker"></div>
         <fieldset><legend>${escapeHtml(usageRule("ground").label)}</legend>
           <p class="field-help">Процент и округление берутся из формуляра каждого двигателя.</p>
           <div class="field-pair"><label>Левый двигатель, налёт в минутах<input name="leftFlight" type="number" min="0" step="any" placeholder="По налёту борта"></label>
           <label>Правый двигатель, налёт в минутах<input name="rightFlight" type="number" min="0" step="any" placeholder="По налёту борта"></label></div>
-          <label><span>Левый двигатель, фактически</span><div class="input-with-unit"><input id="left-ground" name="leftGround" type="number" min="0" value="0"><span>мин</span></div></label>
-          <div id="left-calculation" class="calculation-preview"></div>
-          <label><span>Правый двигатель, фактически</span><div class="input-with-unit"><input id="right-ground" name="rightGround" type="number" min="0" value="0"><span>мин</span></div></label>
-          <div id="right-calculation" class="calculation-preview"></div>
+          <div class="field-pair">
+            <label><span>Левый двигатель, фактически</span><div class="input-with-unit"><input id="left-ground" name="leftGround" type="number" min="0" value="0"><span>мин</span></div></label>
+            <label><span>Правый двигатель, фактически</span><div class="input-with-unit"><input id="right-ground" name="rightGround" type="number" min="0" value="0"><span>мин</span></div></label>
+            <div id="left-calculation" class="calculation-preview"></div>
+            <div id="right-calculation" class="calculation-preview"></div>
+          </div>
           <div class="field-pair">
             <label><span>Запуски левого двигателя</span><input name="leftStarts" type="number" min="0" value="0"></label>
             <label><span>Запуски правого двигателя</span><input name="rightStarts" type="number" min="0" value="0"></label>
@@ -1652,7 +1654,7 @@
           <div class="mode-grid"><label><span>ОР</span><input name="rightOrMode" type="time" step="1" value="00:00:00"></label><label><span>Б, включая ОР</span><input name="rightCombatMode" type="time" step="1" value="00:00:00"></label><label><span>Б + УБ, включая Б и ОР</span><input name="rightCombinedMode" type="time" step="1" value="00:00:00"></label></div>
         </fieldset>
         ${additionalShiftEngines(aircraft).map(([prefix, block]) => `
-          <fieldset><legend>${escapeHtml(block.name)}</legend>
+          <fieldset class="form-grid"><legend>${escapeHtml(block.name)}</legend>
             <label>${escapeHtml(usageRule("ground").label)}, минут<input name="${prefix}Ground" type="number" min="0" value="0"></label>
             <label>Налёт двигателя, минут<input name="${prefix}Flight" type="number" min="0" step="any" placeholder="По налёту борта"></label>
             <label>Запуски<input name="${prefix}Starts" type="number" min="0" value="0"></label>
@@ -1736,7 +1738,7 @@
         <div id="operation-picker"></div>
         <label>Дата работы<input name="date" type="date" required value="${todayIso()}"></label>
         ${templateScopeMarkup(template, "board")}
-        ${customSources(aircraft).some(({ key }) => sourceEnabled(aircraft, key)) ? `<fieldset><legend>Другие показатели</legend>${customSources(aircraft)
+        ${customSources(aircraft).some(({ key }) => sourceEnabled(aircraft, key)) ? `<fieldset class="form-grid"><legend>Другие показатели</legend>${customSources(aircraft)
           .filter(({ key }) => sourceEnabled(aircraft, key)).map(customWorkInput).join("")}</fieldset>` : ""}
         ${positions.map((position) => templateScopeMarkup(template, "engine", position)).join("")}
         <section id="template-preview" class="shift-summary" aria-live="polite"></section>
@@ -2216,13 +2218,13 @@
   function renderBoardDetails() {
     const aircraft = selectedAircraft();
     app.innerHTML = shell(`<h1>Реквизиты борта</h1>
-      <form id="board-details-form" class="shift-form settings-form">
+      <form id="board-details-form" class="shift-form settings-form form-grid">
         ${aircraft.workTemplate ? `<label>Тип самолёта<output>${escapeHtml(aircraft.type)}</output></label>` :
           `<label>Тип самолёта${aircraftTypeSelect(aircraft.type)}</label>`}
         <label>Бортовой номер<input name="boardNumber" type="text" value="${escapeHtml(aircraft.boardNumber)}" required></label>
         <label>Заводской номер<input name="serialNumber" type="text" value="${escapeHtml(aircraft.serialNumber || "")}"></label>
         <label>RF<input name="rfNumber" type="text" value="${escapeHtml(aircraft.rfNumber || "")}" placeholder="Например, 33738"></label>
-        <p id="board-details-status" class="field-help" role="status"></p>
+        <p id="board-details-status" class="field-help form-span" role="status"></p>
         <button class="primary-button" type="submit">Сохранить реквизиты</button>
       </form>`, { title: "Реквизиты борта", subtitle: "", back: true, settings: false });
     const form = document.getElementById("board-details-form");
@@ -2380,7 +2382,7 @@
         <div class="metric"><span>Фактические посадки</span><strong>${aircraft.actualLandings}</strong></div>
         <div class="metric"><span>Зацепы</span><strong>${aircraft.arresterHooks}</strong></div>
       </section>
-      <fieldset><legend>ППР планера</legend>
+      <fieldset class="form-grid"><legend>ППР планера</legend>
         <label>${escapeHtml(usageRule("flight").label)} ППР, минут<input name="pprFlightMinutes" type="number" min="0" step="1" value="${aircraft.pprFlightMinutes ?? ""}" ${repaired ? "" : "disabled"}></label>
         <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}" ${repaired ? "" : "disabled"}></label>
       </fieldset>` : "";
@@ -2432,15 +2434,15 @@
         </div>
       </section>
       <form id="block-form" class="shift-form">
-        <fieldset><legend>Формуляр</legend>
-          <label><span>Название</span><input name="name" type="text" value="${escapeHtml(block.name)}" required></label>
-          <label><span>Описание</span><input name="caption" type="text" value="${escapeHtml(block.caption)}"></label>
+        <fieldset class="form-grid"><legend>Формуляр</legend>
+          <label class="form-span"><span>Название</span><input name="name" type="text" value="${escapeHtml(block.name)}" required></label>
+          <label class="form-span"><span>Описание</span><input name="caption" type="text" value="${escapeHtml(block.caption)}"></label>
           ${block.kind === "airframe" ? `
           <div class="field-pair">
             <label>Заводской номер<output>${escapeHtml(aircraft.serialNumber || "Не указан")}</output></label>
             <label>RF<output>${escapeHtml(aircraft.rfNumber || "Не указан")}</output></label>
           </div>` : `
-          ${block.kind === "engine" ? "" : `<label><span>Тип/модель</span><input name="model" type="text" value="${escapeHtml(block.model || "")}"></label>`}
+          ${block.kind === "engine" ? "" : `<label class="form-span"><span>Модель</span><input name="model" type="text" value="${escapeHtml(block.model || "")}"></label>`}
           <label><span>Заводской/обычный номер</span><input name="serialNumber" type="text" value="${escapeHtml(block.serialNumber || "")}"></label>
           <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(block.drawingNumber || "")}"></label>
           <label><span>Состояние установки</span><select name="installed"><option value="true" ${blockInstalledOn(block, todayIso()) ? "selected" : ""}>Установлен</option><option value="false" ${!blockInstalledOn(block, todayIso()) ? "selected" : ""}>Демонтирован</option></select></label>`}
@@ -2448,10 +2450,10 @@
         </fieldset>
         ${airframeFields}
         ${blockFields}
-        ${block.kind === "engine" && !logFields.length ? `<fieldset><legend>Земная наработка этого двигателя</legend>
+        ${block.kind === "engine" && !logFields.length ? `<fieldset class="form-grid"><legend>Земная наработка этого двигателя</legend>
           <label>Доля в общей наработке, %<input name="groundPercent" type="number" min="0" max="100" step="any" value="${groundRule.groundPercent}" required></label>
           <label>Шаг округления, минут<input name="groundStep" type="number" min="1" step="1" value="${groundRule.groundRoundingMinutes}" required></label>
-          <label>Направление<select name="groundDirection">${[["nearest","До ближайшего"],["up","Вверх"],["down","Вниз"]].map(([value, name]) =>
+          <label class="form-span">Направление<select name="groundDirection">${[["nearest","До ближайшего"],["up","Вверх"],["down","Вниз"]].map(([value, name]) =>
             `<option value="${value}" ${groundRule.groundRoundingDirection === value ? "selected" : ""}>${name}</option>`).join("")}</select></label>
         </fieldset>` : ""}
         <button type="submit" class="primary-button wide">Сохранить формуляр</button>
@@ -3175,26 +3177,28 @@
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>${isNew ? (draft.objectId ? "Добавить ресурс" : "Новый ресурсный агрегат") : escapeHtml(draft.name)}</h1></div></section>
       <form id="resource-form" class="shift-form">
-        <fieldset><legend>Агрегат и идентификация</legend>
+        <fieldset><legend>Ресурс и формуляр</legend>
           <label><span>Агрегат или объект</span><input name="object" type="text" list="resource-objects" value="${escapeHtml(draft.object)}" required><datalist id="resource-objects">${objectOptions}</datalist></label>
           <label id="resource-owner-choice" hidden>Экземпляр агрегата<select name="ownerId"></select></label>
           <label><span>Наименование ограничения или работы</span><input name="name" type="text" value="${escapeHtml(draft.name)}" required></label>
-          <div class="field-pair">
-            <label><span>Заводской/обычный номер</span><input name="serialNumber" type="text" value="${escapeHtml(draft.serialNumber || "")}"></label>
-            <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(draft.drawingNumber || "")}"></label>
-          </div>
-          <label><span>Количество ремонтов</span><input name="repairs" type="number" min="0" step="1" value="${Number(draft.repairs) || 0}"></label>
         </fieldset>
-        <fieldset><legend>Ограничение ресурса</legend>
+        <fieldset class="form-grid"><legend>Ограничение ресурса</legend>
           <label><span>Вид ограничения</span><select name="resourceType"><option value="assigned" ${draft.resourceType === "assigned" ? "selected" : ""}>Назначенный ресурс</option><option value="overhaul" ${draft.resourceType === "overhaul" ? "selected" : ""}>Межремонтный ресурс</option><option value="extension" ${draft.resourceType === "extension" ? "selected" : ""}>Ресурс до продления</option></select></label>
-          <div class="field-pair">
             <label><span>Единица</span><select name="unit"><option value="ч" ${draft.unit === "ч" ? "selected" : ""}>Часы</option><option value="пос." ${draft.unit === "пос." ? "selected" : ""}>Посадки</option><option value="зап." ${draft.unit === "зап." ? "selected" : ""}>Запуски</option><option value="сраб." ${draft.unit === "сраб." ? "selected" : ""}>Срабатывания</option><option value="дн." ${draft.unit === "дн." ? "selected" : ""}>Календарные дни</option></select></label>
             <label><span>Полный ресурс</span><input name="limit" type="number" min="0" step="any" value="${draft.limit}" required></label>
-          </div>
           <label><span>Остаток</span><input name="remaining" type="number" min="0" step="any" value="${draft.remaining}" required></label>
-          <label class="checkbox-row"><input type="checkbox" name="priority" ${draft.priority ? "checked" : ""}><span>Показывать первым в начислениях</span></label>
+          <label class="checkbox-row form-span"><input type="checkbox" name="priority" ${draft.priority ? "checked" : ""}><span>Показывать первым в начислениях</span></label>
         </fieldset>
-        <fieldset id="resource-consumption"><legend>Расход ресурса из записи работы</legend>
+        <details class="form-details" ${draft.serialNumber || draft.drawingNumber || draft.repairs ? "open" : ""}>
+          <summary>Номера и ремонты</summary>
+          <fieldset class="form-grid" aria-label="Номера и ремонты">
+            <label><span>Заводской номер</span><input name="serialNumber" type="text" value="${escapeHtml(draft.serialNumber || "")}"></label>
+            <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(draft.drawingNumber || "")}"></label>
+            <label><span>Количество ремонтов</span><input name="repairs" type="number" min="0" step="1" value="${Number(draft.repairs) || 0}"></label>
+          </fieldset>
+        </details>
+        <details id="resource-consumption-details" class="form-details"><summary>Расход ресурса из записи работы</summary>
+        <fieldset id="resource-consumption" aria-label="Расход ресурса из записи работы">
           <p>Пустое поле отключает начисление. Множитель переводит показатель в единицы этого ресурса.</p>
           <div id="resource-inputs" class="field-pair"></div>
           <details id="resource-add-source-panel"><summary>Добавить показатель смены</summary>
@@ -3214,24 +3218,29 @@
             </div>
           </details>` : ""}
         </fieldset>
-        <fieldset><legend>Даты</legend>
-          <div class="field-pair"><label><span>Дата изготовления</span><input name="produced" type="date" value="${draft.produced || ""}"></label><label><span>Дата установки</span><input name="installed" type="date" value="${draft.installed || ""}"></label></div>
+        </details>
+        <fieldset class="form-grid"><legend>Даты</legend>
+          <label><span>Дата изготовления</span><input name="produced" type="date" value="${draft.produced || ""}"></label><label><span>Дата установки</span><input name="installed" type="date" value="${draft.installed || ""}"></label>
           <label><span>Дата окончания календарного ресурса</span><input name="expiryDate" type="date" value="${draft.expiryDate || ""}"></label>
         </fieldset>
-        <fieldset><legend>Уведомления этой работы</legend>
+        <details class="form-details"><summary>Уведомления</summary>
+        <fieldset aria-label="Уведомления этой работы">
           <label><span>Категория</span><select name="notificationCategory"><option value="workUsage" ${draft.notificationCategory === "workUsage" ? "selected" : ""}>Работы по наработке</option><option value="workDate" ${draft.notificationCategory === "workDate" ? "selected" : ""}>Работы по дате</option><option value="resourceUsage" ${draft.notificationCategory === "resourceUsage" ? "selected" : ""}>Ресурс по наработке</option><option value="resourceDate" ${draft.notificationCategory === "resourceDate" ? "selected" : ""}>Ресурс по дате</option></select></label>
           <div class="field-pair"><label class="checkbox-row"><input name="notifyApp" type="checkbox" ${draft.notifyApp !== false ? "checked" : ""}><span>Уведомление приложения</span></label><label class="checkbox-row"><input name="notifyCalendar" type="checkbox" ${draft.notifyCalendar ? "checked" : ""}><span>Штатный календарь</span></label></div>
           <div class="field-pair"><label><span>Предварительно за</span><input name="advanceValue" type="number" min="0" step="0.01" value="${draft.advanceValue ?? 3}"></label><label class="checkbox-row"><input name="notifyOnDue" type="checkbox" ${draft.notifyOnDue !== false ? "checked" : ""}><span>Повторить в день/момент выполнения</span></label></div>
         </fieldset>
-        <button type="submit" class="primary-button wide">${isNew ? (draft.objectId ? "Добавить ресурс" : "Добавить агрегат с ограниченным ресурсом") : "Сохранить карточку"}</button>
-        ${isNew ? "" : `<button type="button" class="secondary-button wide danger-button" data-action="delete-resource">Удалить ресурсную карточку</button>`}
+        </details>
+        <div class="operation-tags">
+          <button type="submit" class="primary-button">${isNew ? (draft.objectId ? "Добавить ресурс" : "Добавить агрегат с ограниченным ресурсом") : "Сохранить карточку"}</button>
+          ${isNew ? "" : `<button type="button" class="secondary-button danger-button" data-action="delete-resource">Удалить карточку</button>`}
+        </div>
       </form>
       ${resource && resource.unit !== "дн." ? `
         <form id="extension-form" class="shift-form event-form">
-          <fieldset><legend>Продлить ресурс</legend>
+          <fieldset class="form-grid"><legend>Продлить ресурс</legend>
             <label>Дата продления<input name="date" type="date" value="${todayIso()}" required></label>
             <label>Новый полный ресурс, ${escapeHtml(resource.unit)}<input name="limit" type="number" min="0" step="any" required></label>
-            <label>Основание<input name="basis" type="text" required></label>
+            <label class="form-span">Основание<input name="basis" type="text" required></label>
             <label>Номер документа<input name="documentNumber" type="text" required></label>
             <label>Дата документа<input name="documentDate" type="date" required></label>
             <button type="submit" class="primary-button">Записать продление</button>
@@ -3270,6 +3279,7 @@
         ...usageSources(aircraft).filter(({ key }) => !sourceEnabled(aircraft, key)).map(({ key, label }) => new Option(label, key)));
       const fieldset = inputsRoot.closest("fieldset");
       fieldset.disabled = fieldset.hidden = resourceForm.elements.unit.value === "дн.";
+      fieldset.parentElement.hidden = fieldset.hidden;
     };
     let implicitInputs = resource?.consumption ? null : resourceInputs(draft, currentOwner(), aircraft);
     drawInputs(implicitInputs || resource.consumption);
@@ -4145,22 +4155,22 @@
     const title = aircraftForm ? "Добавить самолёт" : "Добавить агрегат";
     app.innerHTML = shell(`
       <h1>${title}</h1>
-      <form id="creation-form" class="shift-form settings-form">
+      <form id="creation-form" class="shift-form settings-form form-grid">
         ${aircraftForm ? `
           <label>Тип самолёта${aircraftTypeSelect()}</label>
-          <p class="field-help">Новый тип можно добавить в общих настройках.</p>
+          <p class="field-help">Типы добавляются в общих настройках.</p>
           <label>Бортовой номер<input name="boardNumber" type="text" required></label>
           <label>Заводской номер<input name="serialNumber" type="text"></label>
           <label>RF<input name="rfNumber" type="text" placeholder="Например, 33738"></label>
-          <div id="creation-usage"></div>` : `
+          <div id="creation-usage" class="form-span"></div>` : `
           <label>Название<input name="name" type="text" required></label>
           <label>Тип карточки<select name="kind"><option value="unit">Агрегат</option><option value="engine">Двигатель</option><option value="airframe">Планер</option></select></label>
-          ${selectedAircraft().workTemplate ? `<label id="template-new-slot" hidden>Позиция двигателя<select name="templateSlotId" disabled><option value="">Выбрать</option>
+          ${selectedAircraft().workTemplate ? `<label class="form-span" id="template-new-slot" hidden>Позиция двигателя<select name="templateSlotId" disabled><option value="">Выбрать</option>
             ${selectedAircraft().workTemplate.positions.filter((item) => item.kind === "engine").map((item) => `<option value="${item.id}">${escapeHtml(item.label)} · ${escapeHtml(item.model)}</option>`).join("")}
           </select></label>` : ""}
           <label>Номер агрегата<input name="serialNumber" type="text"></label>
-          <label>Описание<input name="caption" type="text"></label>`}
-        <p id="creation-error" role="alert"></p>
+          <label class="form-span">Описание<input name="caption" type="text"></label>`}
+        <p class="form-span" id="creation-error" role="alert"></p>
         <button class="primary-button" type="submit">${title}</button>
       </form>`, { title, back: true, settings: false });
     const form = document.getElementById("creation-form");
