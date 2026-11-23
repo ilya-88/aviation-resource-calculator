@@ -93,6 +93,8 @@ async function main() {
       });
       file(JSON.stringify(template));
       await waitFor(() => document.querySelector('#template-import-status').textContent.includes('уже есть'));
+      click('dialog[open] [value="cancel"]');
+      await waitFor(() => !document.querySelector('dialog[open]'));
       const imported = read().templateCatalog.length === 1;
       back();
       back();
@@ -643,8 +645,6 @@ async function main() {
       back();
       back();
       catalog();
-      exported.id = 'portable-four';
-      exported.name = 'Перенесённый шаблон';
       const wrapper = new DataTransfer();
       wrapper.items.add(new File([JSON.stringify(exported)], 'portable-four.json', { type:'application/json' }));
       const picker = document.querySelector('#aircraft-template-file');
@@ -653,13 +653,22 @@ async function main() {
       for (let attempt = 0; attempt < 30 && !document.querySelector('dialog[open]'); attempt++) await new Promise(resolve => setTimeout(resolve, 25));
       dialog = document.querySelector('dialog[open]');
       if (!dialog) throw new Error(document.querySelector('#template-import-status').textContent);
-      await new Promise(resolve => {
-        dialog.addEventListener('close', resolve, { once: true });
-        dialog.querySelector('[value="import"]').click();
-      });
+      const copyName = dialog.querySelector('[name="name"]');
+      const suggestedName = copyName.value;
+      copyName.value = exported.name;
+      click('dialog[open] [value="import-copy"]');
+      const refusedExisting = dialog.querySelector('[role=alert]').textContent.includes('уже есть') &&
+        read().templateCatalog.filter(item => item.name === exported.name).length === 1;
+      const copiedName = 'Перенесённый шаблон';
+      copyName.value = copiedName;
+      click('dialog[open] [value="import-copy"]');
+      const copiedTemplate = read().templateCatalog.find(item => item.name === copiedName);
+      const copiedImport = suggestedName === exported.name + ' (копия)' && refusedExisting &&
+        copiedTemplate?.id !== exported.id && read().templateCatalog.find(item => item.id === exported.id).name === exported.name &&
+        board().type === exported.name && Boolean(board().shifts.length);
       back();
       back();
-      create(exported.name, '402');
+      create(copiedName, '402');
       const instance = read().aircraft.find(row => row.boardNumber === '402');
       const newId = instance.blocks.find(block => block.templateSlotId === 'motor-4').id;
       const content = document.querySelector('[data-block-id="' + newId + '"]');
@@ -686,10 +695,11 @@ async function main() {
       const importedAccrual = preview.includes('Клапан') && preview.includes('3 × 2 = 6 шт.') && preview.includes('Итого 6,5 шт.') &&
         preview.includes('Запуски мотора') && preview.includes('1 × 1 = 1 зап.');
       back();
-      return { blankSaved, fourTotals, report, exportOk, remapped, exportedUsage, exportedFormLayout, importedUsage, importedFormLayout, importedAccrual };
+      return { blankSaved, fourTotals, report, exportOk, remapped, exportedUsage, exportedFormLayout, copiedImport, importedUsage, importedFormLayout, importedAccrual };
     })()`);
     assert.deepEqual(portable, { blankSaved: true, fourTotals: true, report: "Двигатель 1|Двигатель 2|Двигатель 3|Двигатель 4",
-      exportOk: true, remapped: true, exportedUsage: true, exportedFormLayout: true, importedUsage: true, importedFormLayout: true, importedAccrual: true });
+      exportOk: true, remapped: true, exportedUsage: true, exportedFormLayout: true, copiedImport: true,
+      importedUsage: true, importedFormLayout: true, importedAccrual: true });
     results.portableFourEngineTemplate = "ok";
     const formResources = await evaluate(`(() => {
       const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft.find(row => row.boardNumber === '402');

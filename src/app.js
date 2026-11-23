@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.19";
+  const APP_VERSION = "0.2.38-exp.20";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -4390,11 +4390,28 @@
     }));
   }
 
+  function templateNameTaken(name) {
+    const key = name.toLowerCase();
+    return state.aircraftTypes.some((item) => item.toLowerCase() === key) || state.removedAircraftTypes.includes(key);
+  }
+
+  function templateIdTaken(id) {
+    return state.templateCatalog.some((item) => item.id === id);
+  }
+
   function assertTemplateAvailable(template) {
-    const key = template.name.toLowerCase();
-    if (state.aircraftTypes.some((item) => item.toLowerCase() === key) || state.removedAircraftTypes.includes(key) ||
-        state.templateCatalog.some((item) => item.id === template.id)) {
+    if (templateNameTaken(template.name) || templateIdTaken(template.id)) {
       throw new Error("Тип или идентификатор шаблона уже есть в приложении");
+    }
+  }
+
+  function templateCopyIdentity(template) {
+    for (let index = 1; ; index += 1) {
+      const nameSuffix = index === 1 ? " (копия)" : ` (копия ${index})`;
+      const idSuffix = `-copy-${index}`;
+      const name = template.name.slice(0, 120 - nameSuffix.length).trimEnd() + nameSuffix;
+      const id = template.id.slice(0, 48 - idSuffix.length).replace(/-+$/, "") + idSuffix;
+      if (!templateNameTaken(name) && !templateIdTaken(id)) return { name, id };
     }
   }
 
@@ -4431,8 +4448,7 @@
       ],
       repeatGroups: [], engineCounters: [], rules: [], checks: [],
     };
-    template.id = `template-${Date.now().toString(36)}`;
-    template.name = source ? `${source.name.slice(0, 110)} (копия)` : "";
+    Object.assign(template, source ? templateCopyIdentity(source) : { name: "", id: `template-${Date.now().toString(36)}` });
     state.templateDraft = template;
     navigateTo("template-editor");
   }
@@ -4637,17 +4653,58 @@
   function bindTemplateImport() {
     const file = document.getElementById("aircraft-template-file");
     const status = document.getElementById("template-import-status");
+    function importCopy(template) {
+      const identity = templateCopyIdentity(template);
+      const dialog = document.createElement("dialog");
+      dialog.className = "confirm-dialog";
+      dialog.setAttribute("aria-labelledby", "template-copy-title");
+      dialog.innerHTML = `<form>
+        <h2 id="template-copy-title">Импортировать как новый тип</h2>
+        <p>Название или идентификатор шаблона «${escapeHtml(template.name)}» уже используется. Введи название нового типа.</p>
+        <label>Название нового типа<input name="name" type="text" maxlength="120" value="${escapeHtml(identity.name)}" required></label>
+        <p class="form-error" role="alert"></p>
+        <div class="operation-tags">
+          <button type="submit" class="primary-button" value="import-copy">Импортировать копию</button>
+          <button type="button" class="secondary-button" value="cancel">Отмена</button>
+        </div>
+      </form>`;
+      const form = dialog.querySelector("form");
+      const alert = form.querySelector("[role=alert]");
+      form.querySelector('[value="cancel"]').onclick = () => dialog.close();
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const name = form.elements.name.value.trim();
+        if (!name || templateNameTaken(name)) {
+          alert.textContent = name ? "Тип с таким названием уже есть" : "Укажи название нового типа";
+          return;
+        }
+        const copy = { ...template, ...templateCopyIdentity(template), name };
+        if (!saveNewTemplate(copy)) { alert.textContent = "Не удалось сохранить копию шаблона"; return; }
+        dialog.close();
+        render();
+        showToast("Шаблон импортирован как новый тип");
+      });
+      form.elements.name.addEventListener("input", () => { alert.textContent = ""; });
+      dialog.addEventListener("close", () => dialog.remove(), { once: true });
+      app.append(dialog);
+      dialog.showModal();
+    }
     function showFile(text, error) {
-      if (!status.isConnected || state.view !== "aircraft-types") return;
+      if (!status.isConnected || state.view !== "aircraft-types" || app.querySelector("dialog[open]")) return;
       if (error) { status.textContent = error; return; }
       let template;
       try {
         template = aircraftTemplates.validateTemplate(JSON.parse(text));
-        assertTemplateAvailable(template);
       } catch (problem) {
         status.textContent = problem instanceof SyntaxError ? "Файл не является корректным JSON" : problem.message;
         return;
       }
+      if (templateNameTaken(template.name) || templateIdTaken(template.id)) {
+        status.textContent = "Тип или идентификатор шаблона уже есть. Можно импортировать копию.";
+        importCopy(template);
+        return;
+      }
+      status.textContent = "";
       const positions = template.positions.length;
       chooseLayoutAction(`Импортировать «${escapeHtml(template.name)}»? Формуляров: ${positions}. Полей ввода: ${template.inputs.length}.`,
         [["import", "Импортировать"], ["cancel", "Отмена"]], (action) => {
