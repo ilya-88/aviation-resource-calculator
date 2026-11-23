@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.6";
+  const APP_VERSION = "0.2.38-exp.7";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -26,7 +26,7 @@
   recordDiagnostic("app.start", APP_VERSION);
   for (const kind of ["touchstart", "touchend", "touchcancel"]) {
     document.addEventListener(kind, (event) => {
-      if (state.view !== "aircraft" && state.view !== "aircraft-layout") return;
+      if (!["aircraft", "aircraft-layout", "block", "block-layout"].includes(state.view)) return;
       const target = event.target instanceof Element && event.target.closest("[data-counter-index]") ? "tile" : "other";
       recordDiagnostic(`web.${kind}`, `view=${state.view} target=${target} fingers=${event.touches.length}`);
     }, { capture: true, passive: true });
@@ -561,7 +561,7 @@
   let leaveTemplateEditor;
   function navigateBack() {
     if (state.view === "usage-settings" && leaveUsageSettings?.()) return;
-    if (state.view === "aircraft-layout" && leaveAircraftLayout?.()) return;
+    if (["aircraft-layout", "block-layout"].includes(state.view) && leaveAircraftLayout?.()) return;
     if (state.view === "template-editor" && leaveTemplateEditor?.()) return;
     finishBackNavigation();
   }
@@ -619,6 +619,7 @@
     else if (state.view === "aircraft-types") renderAircraftTypes();
     else if (state.view === "template-editor") renderTemplateEditor();
     else if (state.view === "aircraft-layout") renderAircraftLayout();
+    else if (state.view === "block-layout") renderAircraftLayout(renderBlock(true));
     else if (state.view === "about") renderAbout();
     else renderHome();
     bindCommonActions();
@@ -795,99 +796,110 @@
     for (const entry of navigationLayout) layout.splice(entry.index, 0, entry.tile);
     if (!layoutEditing) {
       preview.innerHTML = counterTiles(aircraft, layout, false, catalog);
-      const tiles = preview.querySelector(".counter-tiles");
-      let holdTimer;
-      let start;
-      function stopHold() {
-        clearTimeout(holdTimer);
-        start?.tile.classList.remove("counter-tile-active");
-        start = null;
-      }
-      function openHeldTile(tile) {
-        if (!tile.isConnected || state.view !== "aircraft") return;
-        recordDiagnostic("layout.open.request");
-        activeCounterIndex = Number(tile.dataset.counterIndex);
+      bindTileHold(preview, "aircraft", (index) => {
+        activeCounterIndex = index;
         viewStack.push(state.view);
         state.view = "aircraft-layout";
-        try {
-          renderAircraftLayout({ layout, catalog, activeTab });
-          recordDiagnostic("layout.open.ok", `toolbar=${Boolean(app.querySelector(".counter-gesture-toolbar"))}`);
-          const toolbar = app.querySelector(".counter-gesture-toolbar");
-          if (toolbar) {
-            const rect = toolbar.getBoundingClientRect();
-            const visible = rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth;
-            recordDiagnostic("layout.toolbar", `visible=${visible} size=${Math.round(rect.width)}x${Math.round(rect.height)} viewport=${innerWidth}x${innerHeight}`);
-            requestAnimationFrame(() => {
-              if (!toolbar.isConnected) return;
-              try { navigator.vibrate?.(18); } catch (_) {}
-            });
-          }
-        } catch (error) {
-          recordDiagnostic("layout.open.error", error.name);
-          console.error("Не удалось открыть редактор раскладки", error);
-          finishBackNavigation();
-          showToast("Не удалось открыть редактор раскладки");
-        }
-      }
-      function cancelHold(reason) {
-        if (start) recordDiagnostic("layout.hold.cancelled", `${reason} ${Math.round(performance.now() - start.at)}ms`);
-        stopHold();
-      }
-      function startHold(target, x, y, input) {
-        stopHold();
-        const tile = target.closest("[data-counter-index]");
-        if (!tile) return;
-        start = { x, y, tile, ready: false, at: performance.now() };
-        recordDiagnostic("layout.hold.start", input);
-        holdTimer = setTimeout(() => {
-          if (!tile.isConnected || state.view !== "aircraft") return;
-          start.ready = true;
-          tile.classList.add("counter-tile-active");
-          recordDiagnostic("layout.hold.ready");
-        }, 650);
-      }
-      function finishHold(event) {
-        const held = start;
-        stopHold();
-        if (!held) return;
-        if (!held.ready) {
-          recordDiagnostic("layout.hold.released-early", `${Math.round(performance.now() - held.at)}ms`);
-          return;
-        }
-        recordDiagnostic("layout.hold.released");
-        if (event.cancelable) event.preventDefault();
-        openHeldTile(held.tile);
-      }
-      function trackHold(x, y) {
-        if (start && Math.hypot(x - start.x, y - start.y) > 8) cancelHold("movement");
-      }
-      tiles.addEventListener("pointerdown", (event) => {
-        if (event.pointerType !== "touch" && event.isPrimary && event.button === 0) {
-          startHold(event.target, event.clientX, event.clientY, "pointer");
-        }
+        renderAircraftLayout({ layout, catalog, activeTab });
       });
-      tiles.addEventListener("pointermove", (event) => {
-        if (event.pointerType !== "touch") trackHold(event.clientX, event.clientY);
-      });
-      tiles.addEventListener("pointerup", (event) => { if (event.pointerType !== "touch") finishHold(event); });
-      for (const name of ["pointercancel", "pointerleave"]) {
-        tiles.addEventListener(name, (event) => { if (event.pointerType !== "touch") cancelHold(name); });
-      }
-      tiles.addEventListener("touchstart", (event) => {
-        if (event.touches.length !== 1) { cancelHold("multiple-touches"); return; }
-        const touch = event.touches[0];
-        startHold(event.target, touch.clientX, touch.clientY, "touch");
-      }, { passive: true });
-      tiles.addEventListener("touchmove", (event) => {
-        if (event.touches.length !== 1) { cancelHold("multiple-touches"); return; }
-        const touch = event.touches[0];
-        trackHold(touch.clientX, touch.clientY);
-      }, { passive: true });
-      tiles.addEventListener("touchend", finishHold, { passive: false });
-      tiles.addEventListener("touchcancel", () => cancelHold("touchcancel"));
-      for (const name of ["contextmenu", "selectstart"]) tiles.addEventListener(name, (event) => event.preventDefault());
     }
     return { layout, catalog, activeTab };
+  }
+
+  function bindTileHold(preview, sourceView, open) {
+    const tiles = preview.querySelector(".counter-tiles");
+    let holdTimer;
+    let start;
+    function stopHold() {
+      clearTimeout(holdTimer);
+      start?.tile.classList.remove("counter-tile-active");
+      start = null;
+    }
+    function openHeldTile(tile) {
+      if (!tile.isConnected || state.view !== sourceView) return;
+      recordDiagnostic("layout.open.request");
+      try {
+        open(Number(tile.dataset.counterIndex));
+        recordDiagnostic("layout.open.ok", `toolbar=${Boolean(app.querySelector(".counter-gesture-toolbar"))}`);
+        const toolbar = app.querySelector(".counter-gesture-toolbar");
+        if (toolbar) {
+          const rect = toolbar.getBoundingClientRect();
+          const visible = rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth;
+          recordDiagnostic("layout.toolbar", `visible=${visible} size=${Math.round(rect.width)}x${Math.round(rect.height)} viewport=${innerWidth}x${innerHeight}`);
+          requestAnimationFrame(() => {
+            if (!toolbar.isConnected) return;
+            try { navigator.vibrate?.(18); } catch (_) {}
+          });
+        }
+      } catch (error) {
+        recordDiagnostic("layout.open.error", error.name);
+        console.error("Не удалось открыть редактор раскладки", error);
+        finishBackNavigation();
+        showToast("Не удалось открыть редактор раскладки");
+      }
+    }
+    function cancelHold(reason) {
+      if (start) recordDiagnostic("layout.hold.cancelled", `${reason} ${Math.round(performance.now() - start.at)}ms`);
+      stopHold();
+    }
+    function startHold(target, x, y, input) {
+      stopHold();
+      if (sourceView === 'block' && target.closest('input, select, textarea')) return;
+      const tile = target.closest("[data-counter-index]");
+      if (!tile) return;
+      start = { x, y, tile, ready: false, at: performance.now() };
+      recordDiagnostic("layout.hold.start", input);
+      holdTimer = setTimeout(() => {
+        if (!tile.isConnected || state.view !== sourceView) return;
+        start.ready = true;
+        tile.classList.add("counter-tile-active");
+        recordDiagnostic("layout.hold.ready");
+      }, 650);
+    }
+    function finishHold(event) {
+      const held = start;
+      stopHold();
+      if (!held) return;
+      if (!held.ready) {
+        recordDiagnostic("layout.hold.released-early", `${Math.round(performance.now() - held.at)}ms`);
+        return;
+      }
+      recordDiagnostic("layout.hold.released");
+      if (event.cancelable) event.preventDefault();
+      openHeldTile(held.tile);
+    }
+    function trackHold(x, y) {
+      if (start && Math.hypot(x - start.x, y - start.y) > 8) cancelHold("movement");
+    }
+    tiles.addEventListener("pointerdown", (event) => {
+      if (event.pointerType !== "touch" && event.isPrimary && event.button === 0) {
+        startHold(event.target, event.clientX, event.clientY, "pointer");
+      }
+    });
+    tiles.addEventListener("pointermove", (event) => {
+      if (event.pointerType !== "touch") trackHold(event.clientX, event.clientY);
+    });
+    tiles.addEventListener("pointerup", (event) => { if (event.pointerType !== "touch") finishHold(event); });
+    for (const name of ["pointercancel", "pointerleave"]) {
+      tiles.addEventListener(name, (event) => { if (event.pointerType !== "touch") cancelHold(name); });
+    }
+    tiles.addEventListener("touchstart", (event) => {
+      if (event.touches.length !== 1) { cancelHold("multiple-touches"); return; }
+      const touch = event.touches[0];
+      startHold(event.target, touch.clientX, touch.clientY, "touch");
+    }, { passive: true });
+    tiles.addEventListener("touchmove", (event) => {
+      if (event.touches.length !== 1) { cancelHold("multiple-touches"); return; }
+      const touch = event.touches[0];
+      trackHold(touch.clientX, touch.clientY);
+    }, { passive: true });
+    tiles.addEventListener("touchend", finishHold, { passive: false });
+    tiles.addEventListener("touchcancel", () => cancelHold("touchcancel"));
+    for (const name of ["contextmenu", "selectstart"]) {
+      tiles.addEventListener(name, (event) => {
+        if (sourceView === "aircraft" || !event.target.closest("input, textarea")) event.preventDefault();
+      });
+    }
   }
 
   const boardNavigationKeys = ["widget:board-tabs", "widget:board-aggregates", "widget:board-resources"];
@@ -995,7 +1007,7 @@
     return span >= 60 ? 1 + (span - 60) / 1000 : 0.75 + (span - 20) / 160;
   }
 
-  function counterTiles(aircraft, layout, editing = false, catalog = new Map()) {
+  function counterTiles(aircraft, layout, editing = false, catalog = new Map(), removable) {
     const name = escapeHtml(usageRule("flight").label);
     const values = {
       flightSne: [name + " СНЭ", calc.formatDuration(aircraft.totalFlightMinutes)],
@@ -1011,6 +1023,7 @@
           <button type="button" data-gesture="resize" aria-label="Изменить размер" aria-pressed="${counterGesture === "resize"}">↔</button>
           <button type="button" data-gesture="font" aria-label="Размер текста" aria-pressed="${counterGesture === "font"}">Aa</button>
           <button type="button" data-layout-action="edit" data-index="${index}" aria-label="Изменить подпись">✎</button>
+          ${removable && tile.keys.some(removable) ? `<button type="button" data-layout-action="hide" data-index="${index}" aria-label="Убрать карточку">×</button>` : ""}
         </div><svg class="counter-edit-outline" aria-hidden="true"><rect pathLength="100" rx="22"/></svg>` : ""}
         <div class="${isNavigationTile(tile) && tile.keys.length > 1 ? "board-navigation-group" : "counter-group"}">
         ${tile.keys.map((key) => `<div class="counter-value">${catalog.has(key)
@@ -1030,7 +1043,8 @@
     const template = document.createElement("template");
     template.innerHTML = markup;
     const widget = template.content.firstElementChild;
-    const caption = widget.querySelector(".equipment-block__body strong, .resource-row__top strong, .history-row strong");
+    const caption = widget.matches("[data-tile-caption]") ? widget :
+      widget.querySelector("[data-tile-caption], .equipment-block__body strong, .resource-row__top strong, .history-row strong");
     if (caption) {
       caption.textContent = label;
     } else if (widget.matches("button")) {
@@ -1048,18 +1062,23 @@
     const scrollY = window.scrollY;
     activeCounterIndex ??= 0;
     counterGesture = "";
-    const { layout, catalog, activeTab } = existingBoard ?? renderAircraft(true);
+    const { layout, catalog, activeTab, formBlock, hidden = [], protectedKeys = new Set() } = existingBoard ?? renderAircraft(true);
+    const removable = formBlock ? (key) => !protectedKeys.has(key) : undefined;
     let draft = structuredClone(layout);
-    const initial = JSON.stringify(draft);
+    const removed = new Set(hidden);
+    const snapshot = () => JSON.stringify([draft, [...removed]]);
+    const initial = snapshot();
     const preview = document.getElementById("counter-preview");
     const surface = preview.closest("main");
     const controls = document.createElement("div");
     controls.className = "counter-save-bar";
     controls.innerHTML = `<button class="secondary-button" id="layout-default">Сброс размера</button>
       <button class="secondary-button" id="layout-group">Группа</button>
+      ${formBlock ? '<button class="secondary-button" id="layout-restore" hidden>Вернуть карточку</button>' : ""}
       <button class="secondary-button counter-font-reset" id="counter-font-reset" aria-label="Стандартный текст 100%" hidden>● <span id="counter-font-percent">100%</span></button>
       <button class="primary-button" id="layout-save">Готово</button>`;
     surface.after(controls);
+    if (formBlock) preview.parentElement.querySelectorAll(":scope > label[hidden]").forEach((label) => label.remove());
     surface.querySelectorAll("button").forEach((button) => { button.disabled = true; });
     const boardSettings = app.querySelector('[data-action="settings"]');
     if (boardSettings) boardSettings.disabled = true;
@@ -1085,9 +1104,13 @@
       fontPercent.textContent = Math.round((draft[activeCounterIndex]?.font ?? 1) * 100) + "%";
       controls.querySelector("#layout-group").hidden = counterGesture === "font";
       controls.querySelector("#layout-group").textContent = draft[activeCounterIndex]?.keys.length > 1 ? "Разделить" : "Группа";
+      controls.querySelector("#layout-group").disabled = controls.querySelector("#layout-default").disabled = !draft.length;
+      const restore = controls.querySelector("#layout-restore");
+      if (restore) restore.hidden = removed.size === 0;
     }
-    const paint = () => { preview.innerHTML = counterTiles(aircraft, draft, true, catalog);
-      preview.querySelectorAll(".counter-value button").forEach((button) => { button.disabled = true; });
+    const paint = () => { preview.innerHTML = counterTiles(aircraft, draft, true, catalog, removable);
+      if (formBlock) restoreFormInputDraft(formBlock);
+      preview.querySelectorAll(".counter-value :is(button,input,select,textarea)").forEach((button) => { button.disabled = true; });
       placeToolbar();
       updateFontControl();
     };
@@ -1330,8 +1353,12 @@
     function save() {
       const previous = aircraft.boardLayouts;
       const previousTabs = aircraft.boardNavigationLayout;
-      aircraft.boardNavigationLayout = draft.flatMap((tile, index) => isNavigationTile(tile) ? [{ index, tile: structuredClone(tile) }] : []);
-      aircraft.boardLayouts = { ...previous, [activeTab]: structuredClone(draft.filter((tile) => !isNavigationTile(tile))) };
+      const previousForm = formBlock?.formLayout;
+      if (formBlock) formBlock.formLayout = { tiles: structuredClone(draft), hidden: [...removed] };
+      else {
+        aircraft.boardNavigationLayout = draft.flatMap((tile, index) => isNavigationTile(tile) ? [{ index, tile: structuredClone(tile) }] : []);
+        aircraft.boardLayouts = { ...previous, [activeTab]: structuredClone(draft.filter((tile) => !isNavigationTile(tile))) };
+      }
       if (saveState()) {
         recordDiagnostic("layout.save.ok");
         const currentScroll = window.scrollY;
@@ -1340,13 +1367,16 @@
       }
       else {
         recordDiagnostic("layout.save.error");
-        aircraft.boardLayouts = previous;
-        aircraft.boardNavigationLayout = previousTabs;
+        if (formBlock) formBlock.formLayout = previousForm;
+        else {
+          aircraft.boardLayouts = previous;
+          aircraft.boardNavigationLayout = previousTabs;
+        }
         showToast("Не удалось сохранить раскладку");
       }
     }
     leaveAircraftLayout = () => {
-      if (JSON.stringify(draft) === initial) return false;
+      if (snapshot() === initial) return false;
       chooseLayoutAction("Сохранить изменения раскладки?", [["save","Сохранить"],["discard","Выйти без сохранения"],["cancel","Остаться"]], (action) => {
         if (action === "save") save();
         if (action === "discard") finishBackNavigation();
@@ -1375,6 +1405,21 @@
       const action = button.dataset.layoutAction;
       const tile = draft[index];
       activeCounterIndex = index;
+      if (action === "hide" && removable) {
+        if (tile.keys.includes("form-field:name") && !formInputDraft?.values["block-form"]?.name?.trim()) {
+          showToast("Сначала введи название формуляра");
+          return;
+        }
+        for (const key of tile.keys.filter(removable)) removed.add(key);
+        tile.keys = tile.keys.filter((key) => !removable(key));
+        if (!tile.keys.length) draft.splice(index, 1);
+        activeCounterIndex = Math.max(0, Math.min(index, draft.length - 1));
+        counterGesture = "";
+        surface.classList.remove("counter-resize-surface");
+        preview.classList.remove("counter-move-surface");
+        paint();
+        return;
+      }
       if (action === "edit") {
         const dialog = document.createElement("dialog");
         dialog.className = "confirm-dialog";
@@ -1385,7 +1430,7 @@
             const heading = caption.querySelector("[data-tile-caption], strong, button");
             const title = tile.labels?.[key] ?? (key === "widget:board-tabs" ? "Панель вкладок" : (heading ?? caption).textContent.trim());
             return `<label>${escapeHtml(title)}
-            <input name="${key}" type="text" value="${escapeHtml(tile.labels?.[key] ?? "")}" placeholder="Стандартное название"></label>`;
+            <input name="${escapeHtml(key)}" type="text" value="${escapeHtml(tile.labels?.[key] ?? "")}" placeholder="Стандартное название"></label>`;
           }).join("")}
           <button class="primary-button" value="save">Применить</button><button class="secondary-button" value="cancel">Отмена</button></form>`;
         dialog.addEventListener("close", () => {
@@ -1431,6 +1476,20 @@
       paint();
     });
     document.getElementById("layout-save").onclick = save;
+    controls.querySelector("#layout-restore")?.addEventListener("click", () => {
+      const choices = [...removed].filter((key) => catalog.has(key)).map((key) => {
+        const node = document.createElement("template");
+        node.innerHTML = catalog.get(key);
+        const caption = node.content.querySelector("[data-tile-caption], strong, button");
+        return [escapeHtml(key), escapeHtml((caption?.textContent || node.content.textContent).trim().slice(0, 100))];
+      });
+      chooseLayoutAction("Вернуть карточку", [...choices, ["cancel", "Отмена"]], (key) => {
+        if (!removed.delete(key)) return;
+        draft.push({ keys: [key], wide: key === "form:journal" });
+        activeCounterIndex = draft.length - 1;
+        paint();
+      });
+    });
     document.getElementById("layout-group").onclick = () => {
       const index = activeCounterIndex;
       const tile = draft[index];
@@ -2333,7 +2392,7 @@
     showPreview();
   }
 
-  function renderBlock() {
+  function renderBlock(layoutEditing = false) {
     const aircraft = selectedAircraft();
     const block = aircraft.blocks.find((item) => item.id === state.selectedBlockId);
     if (!block) {
@@ -2379,6 +2438,7 @@
         .map((entry) => ({ ...entry, name: item.name })))
       .sort((a, b) => String(b.date).localeCompare(String(a.date)));
     const airframeFields = block.kind === "airframe" ? `
+      <h2 data-form-widget="airframe-usage-title" aria-label="Наработка планера">Наработка планера</h2>
       <section class="metric-grid" aria-label="Наработка планера">
         <div class="metric"><span>${escapeHtml(usageRule("flight").label)}</span><strong>${calc.formatDuration(aircraft.totalFlightMinutes)}</strong></div>
         <div class="metric"><span>Фактические посадки</span><strong>${aircraft.actualLandings}</strong></div>
@@ -2389,47 +2449,52 @@
         <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}" ${repaired ? "" : "disabled"}></label>
       </fieldset>` : "";
     const installations = block.kind === "airframe" ? `
-      <section class="section-stack settings-section-heading">
-        <h2>Установленные агрегаты</h2>
+      <section id="form-installations" class="section-stack settings-section-heading">
+        <h2 data-form-widget="assemblies-title">Установленные агрегаты</h2>
         ${installedAssemblies.map((item) => {
           const entry = item.events.filter((event) => event.type === "install" && event.date <= todayIso())
             .sort((a, b) => a.date.localeCompare(b.date)).at(-1);
-          return `<button class="setting-row" data-block-id="${escapeHtml(item.id)}"><span>
-            <strong>${escapeHtml(item.name)}</strong>
-            <small>${entry ? `Установлен ${formatOptionalDate(entry.date)}${entry.note ? ` · ${escapeHtml(entry.note)}` : ""}` : "Дата установки не указана"}</small>
-          </span>${icon("chevron")}</button>`;
-        }).join("") || "<p>Установленных агрегатов пока нет.</p>"}
-        <h2>История установок и демонтажа</h2>
-        ${assemblyHistory.map((entry) => `<article class="history-row"><div>
-          <strong>${formatOptionalDate(entry.date)} · ${escapeHtml(entry.name)}</strong>
+          return `<div class="form-assembly" data-form-widget="assembly:${escapeHtml(item.id)}">
+            <button type="button" class="form-assembly-open" data-block-id="${escapeHtml(item.id)}">
+              <strong data-tile-caption>${escapeHtml(item.name)}</strong>
+              <small>${entry ? `Установлен ${formatOptionalDate(entry.date)}${entry.note ? ` · ${escapeHtml(entry.note)}` : ""}` : "Установлен"}</small>
+            </button>
+            <button type="button" class="small-button danger-button" data-dismantle-block="${escapeHtml(item.id)}">Демонтировать</button>
+          </div>`;
+        }).join("") || '<p data-form-widget="assemblies-empty">Установленных агрегатов пока нет.</p>'}
+        <h2 data-form-widget="installation-history-title">История установок и демонтажа</h2>
+        ${assemblyHistory.map((entry, index) => `<article class="history-row" data-form-widget="installation:${escapeHtml(entry.id || String(index))}"><div>
+          <strong data-tile-caption>${formatOptionalDate(entry.date)} · ${escapeHtml(entry.name)}</strong>
           <span>${entry.type === "install" ? "Установка" : "Демонтаж"}${entry.note ? ` · ${escapeHtml(entry.note)}` : ""}</span>
-        </div></article>`).join("") || "<p>Записей пока нет.</p>"}
+        </div></article>`).join("") || '<p data-form-widget="installation-history-empty">Записей пока нет.</p>'}
       </section>` : "";
     const eventLabels = { repair: "Ремонт", dismantle: "Демонтаж", install: "Установка", extension: "Продление ресурса", correction: "Корректировка" };
-    const eventRows = block.events.slice().reverse().map((item) => {
+    const eventRows = block.events.slice().reverse().map((item, index) => {
       const before = item.beforeRepair;
       const counters = before ? [
         before.sneMinutes != null ? `СНЭ ${calc.formatDuration(before.sneMinutes)}` : "",
         before.pprMinutes != null ? `ППР ${calc.formatDuration(before.pprMinutes)}` : "",
         before.starts != null ? `Запуски: ${formatNumber(before.starts)}` : "",
       ].filter(Boolean).join(" · ") : "";
-      return `<article class="history-row"><div><strong>${formatOptionalDate(item.date)}</strong>
+      return `<article class="history-row" data-form-widget="event:${escapeHtml(item.id || String(index))}"><div><strong>${formatOptionalDate(item.date)}</strong>
         <span>${eventLabels[item.type] || "Событие"}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</span>
         ${counters ? `<span>До ремонта: ${counters}</span>` : ""}</div></article>`;
     }).join("");
     const historicalRows = Object.entries(block.historicalRepairs || {}).map(([number, entry]) => {
       const { sneMinutes, pprMinutes, sneLandings, pprLandings } = entry.beforeRepair;
-      return `<article class="history-row"><div><strong>Ремонт № ${escapeHtml(number)}${entry.date ? ` · ${formatDate(entry.date)}` : ""}</strong>
+      return `<article class="history-row" data-form-widget="repair:${escapeHtml(number)}"><div><strong>Ремонт № ${escapeHtml(number)}${entry.date ? ` · ${formatDate(entry.date)}` : ""}</strong>
         <span>До ремонта · СНЭ: ${sneMinutes == null ? "—" : calc.formatDuration(sneMinutes)}, посадки ${sneLandings ?? "—"}</span>
         <span>ППР: ${pprMinutes == null ? "—" : calc.formatDuration(pprMinutes)}, посадки ${pprLandings ?? "—"}</span>
         ${entry.note ? `<span>${escapeHtml(entry.note)}</span>` : ""}</div></article>`;
     }).join("");
     app.innerHTML = shell(`
-      <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>${escapeHtml(block.name)}</h1><p>${escapeHtml(block.caption)}</p></div></section>
+      <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>${escapeHtml(block.name)}</h1><p>${escapeHtml(block.caption)}</p></div>
+        <button type="button" class="secondary-button" id="edit-form-layout">Карточки формуляра</button>
+      </section>
       ${logFields.length ? templateFormLog(aircraft, block, position, logFields) : ""}
       <section class="section-stack" aria-labelledby="block-resources-title">
-        <h2 id="block-resources-title">Ресурсы и работы</h2>
-        ${relatedResources.length ? `<div class="resource-list">${resourceRows(relatedResources, { editable: true })}</div>` : "<p>Ресурсы пока не добавлены.</p>"}
+        <h2 id="block-resources-title" data-form-widget="resources-title">Ресурсы и работы</h2>
+        ${relatedResources.length ? `<div class="resource-list">${resourceRows(relatedResources, { editable: true })}</div>` : '<p data-form-widget="resources-empty">Ресурсы пока не добавлены.</p>'}
         <div class="operation-tags">
           <button type="button" class="secondary-button" data-action="add-resource" data-resource-object="${escapeHtml(block.name)}" data-resource-owner="${escapeHtml(block.id)}">${icon("plus")} Добавить ресурс</button>
           ${availableResources.length ? '<button type="button" class="secondary-button" id="attach-existing-resource">Привязать существующий</button>' : ""}
@@ -2440,12 +2505,12 @@
           <label><span>Название</span><input name="name" type="text" value="${escapeHtml(block.name)}" required></label>
           <label><span>Описание</span><input name="caption" type="text" value="${escapeHtml(block.caption)}"></label>
           ${block.kind === "airframe" ? `
-            <label>Заводской номер<output>${escapeHtml(aircraft.serialNumber || "Не указан")}</output></label>
-            <label>RF<output>${escapeHtml(aircraft.rfNumber || "Не указан")}</output></label>` : `
+            <label data-form-field="serialNumber">Заводской номер<output>${escapeHtml(aircraft.serialNumber || "Не указан")}</output></label>
+            <label data-form-field="rfNumber">RF<output>${escapeHtml(aircraft.rfNumber || "Не указан")}</output></label>` : `
           <label><span>Заводской номер</span><input name="serialNumber" type="text" value="${escapeHtml(block.serialNumber || "")}"></label>
           <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(block.drawingNumber || "")}"></label>
           <label><span>Установка</span><select name="installed"><option value="true" ${blockInstalledOn(block, todayIso()) ? "selected" : ""}>Установлен</option><option value="false" ${!blockInstalledOn(block, todayIso()) ? "selected" : ""}>Демонтирован</option></select></label>`}
-          <label>Количество ремонтов<output>${block.repairs}</output></label>
+          <label data-form-field="repairs">Количество ремонтов<output>${block.repairs}</output></label>
           ${block.kind === "unit" ? `<label><span>Модель</span><input name="model" type="text" value="${escapeHtml(block.model || "")}"></label>` : ""}
         </fieldset>
         ${airframeFields}
@@ -2460,8 +2525,8 @@
       </form>
       <button type="button" class="add-block-button" data-view="correct-usage">Уточнить показания</button>
       ${installations}
-      <div class="section-heading settings-section-heading"><div><h2>История событий</h2><p>Смены, ремонты, установки и продления.</p></div></div>
-      <section class="history-list">${(eventRows + historicalRows) || `<div class="empty-state compact-empty"><p>Исторических операций для этого объекта пока нет.</p></div>`}</section>
+      <h2 data-form-widget="events-title">История событий</h2>
+      <section class="history-list">${(eventRows + historicalRows) || `<p data-form-widget="events-empty">Исторических операций пока нет.</p>`}</section>
       <form id="block-event-form" class="shift-form event-form">
         <fieldset><legend>Добавить событие</legend>
           <div class="field-pair"><label><span>Тип события</span><select name="type"><option value="repair">Ремонт</option><option value="dismantle">Демонтаж</option><option value="install">Установка</option><option value="extension">Продление ресурса</option><option value="correction">Корректировка</option></select></label><label><span>Дата</span><input name="date" type="date" value="${todayIso()}" required></label></div>
@@ -2471,6 +2536,11 @@
       </form>
     `, { title: block.name, subtitle: "Формуляр объекта", back: true, settingsScope: "aircraft" });
 
+    const layout = prepareFormLayout(aircraft, block, layoutEditing);
+    if (layoutEditing) return layout;
+    for (const button of app.querySelectorAll("[data-dismantle-block]")) {
+      button.onclick = () => dismantleFormAssembly(aircraft, button.dataset.dismantleBlock);
+    }
     document.getElementById("attach-existing-resource")?.addEventListener("click", () => {
       attachExistingResource(aircraft, block, availableResources);
     });
@@ -2570,6 +2640,123 @@
     });
   }
 
+  let formInputDraft;
+
+  function prepareFormLayout(aircraft, block, editing) {
+    const blockForm = document.getElementById("block-form");
+    const eventForm = document.getElementById("block-event-form");
+    const main = blockForm.closest("main");
+    const heading = main.querySelector(".page-heading");
+    const edit = heading.querySelector("#edit-form-layout");
+    const preview = document.createElement("div");
+    preview.id = "counter-preview";
+    preview.className = "form-counter-preview";
+    const forms = [blockForm, eventForm];
+    const catalog = new Map();
+    const hiddenFields = new Map();
+    const protectedKeys = new Set(["form-field:serialNumber", "form-field:rfNumber"]);
+    const selectors = [
+      "[data-form-widget]", "#block-form label", "#block-form .metric", "#block-form button",
+      "#block-form fieldset > p", "#block-event-form label", "#block-event-form button",
+      ".resource-list .resource-row", '[data-action="add-resource"]', "#attach-existing-resource", '[data-view="correct-usage"]',
+    ];
+    let metricIndex = 0;
+    for (const node of main.querySelectorAll(selectors.join(","))) {
+      const eventControl = eventForm.contains(node);
+      const resource = node.querySelector("[data-resource-id]");
+      const input = node.matches("label") ? node.querySelector("[name]") : null;
+      const field = node.dataset.formField || input?.name;
+      const action = node.dataset.action || node.dataset.view || node.id || (eventControl ? "save-event" : "save");
+      const key = node.dataset.formWidget ? `form:${node.dataset.formWidget}` :
+        field ? `${eventControl ? "event-field" : "form-field"}:${field}` :
+        resource ? `form-resource:${resource.dataset.resourceId}` :
+        node.matches(".metric, p") ? `form-metric:${metricIndex++}` : `form-action:${action}`;
+      if (eventControl) (input || node).setAttribute("form", eventForm.id);
+      if (node.matches("label")) {
+        node.classList.add("form-tile-field");
+        let caption = node.querySelector(":scope > span");
+        if (!caption) {
+          const text = [...node.childNodes].find((item) => item.nodeType === Node.TEXT_NODE && item.textContent.trim());
+          if (text) {
+            caption = document.createElement("span");
+            caption.textContent = text.textContent.trim();
+            text.replaceWith(caption);
+          }
+        }
+        if (caption) caption.dataset.tileCaption = "";
+      } else if (node.matches("h2, p")) node.dataset.tileCaption = "";
+      if (node.matches("button:not([type])")) node.type = "button";
+      for (const button of node.querySelectorAll("button:not([type])")) button.type = "button";
+      catalog.set(key, node.outerHTML);
+      if (input) hiddenFields.set(key, node);
+    }
+
+    const saved = block.formLayout;
+    const hidden = (saved?.hidden || []).filter((key) => catalog.has(key) && !protectedKeys.has(key));
+    const defaultOrder = ["form:journal", "form-field:name", "form-field:caption", ...catalog.keys()];
+    const visible = new Set(defaultOrder.filter((key) => catalog.has(key) && !hidden.includes(key)));
+    const layout = (saved?.tiles || []).flatMap((tile) => {
+      const keys = tile.keys.filter((key) => visible.delete(key));
+      return keys.length ? [{ ...tile, keys }] : [];
+    });
+    for (const key of visible) layout.push({ keys: [key], wide: key === "form:journal" });
+    blockForm.replaceChildren(preview);
+    eventForm.replaceChildren();
+    main.replaceChildren(heading, blockForm, eventForm);
+    for (const key of hidden) {
+      const field = hiddenFields.get(key);
+      if (!field) continue;
+      field.hidden = true;
+      blockForm.append(field);
+    }
+    const options = { layout, catalog, formBlock: block, hidden, protectedKeys };
+    if (editing) return options;
+    preview.innerHTML = counterTiles(aircraft, layout, false, catalog);
+    restoreFormInputDraft(block);
+    const open = (index = 0) => {
+      formInputDraft = { blockId: block.id, values: Object.fromEntries(forms.map((form) => [form.id,
+        Object.fromEntries([...form.elements].filter((control) => control.name && control.matches("input, select, textarea"))
+          .map((control) => [control.name, control.value]))])) };
+      activeCounterIndex = index;
+      viewStack.push(state.view);
+      state.view = "block-layout";
+      renderAircraftLayout(options);
+    };
+    bindTileHold(preview, "block", open);
+    edit.onclick = () => open();
+    return options;
+  }
+
+  function restoreFormInputDraft(block) {
+    if (formInputDraft?.blockId !== block.id) return;
+    for (const [formId, values] of Object.entries(formInputDraft.values)) {
+      const form = document.getElementById(formId);
+      for (const [name, value] of Object.entries(values)) {
+        const control = form?.elements.namedItem(name);
+        if (control) control.value = value;
+      }
+    }
+    if (state.view === "block") formInputDraft = null;
+  }
+
+  function dismantleFormAssembly(aircraft, blockId) {
+    const block = aircraft.blocks.find((item) => item.id === blockId);
+    const date = todayIso();
+    if (!block || !blockInstalledOn(block, date)) return;
+    chooseLayoutAction(`Демонтировать «${escapeHtml(block.name)}»?`, [["cancel", "Отмена"], ["dismantle", "Демонтировать", "danger-button"]], (action) => {
+      if (action !== "dismantle" || !blockInstalledOn(block, date)) return;
+      const previous = { installed: block.installed, events: block.events.slice() };
+      recordInstallation(block, { id: id(), type: "dismantle", date, note: "" });
+      if (!saveState()) {
+        Object.assign(block, previous);
+        showToast("Не удалось записать демонтаж");
+        return;
+      }
+      render();
+      showToast("Демонтаж записан");
+    }, `Дата записи — ${formatOptionalDate(date)}. Формуляр и его история сохранятся.`);
+  }
+
   function attachExistingResource(aircraft, block, candidates) {
     const dialog = document.createElement("dialog");
     dialog.className = "confirm-dialog";
@@ -2666,7 +2853,7 @@
       <td>${block.starts ?? 0}</td><td>${block.repairs ? block.pprStarts ?? 0 : "—"}</td></tr>` :
       `${foot("СНЭ по журналу", totals)}${block.repairs ? foot("ППР по журналу", repairs.get(block.repairs) || {}) : ""}`;
     const engineSource = position.engineLink && aircraft.workTemplate.positions.find((item) => item.id === position.engineLink.source);
-    return `<section class="section-stack"><h2>${position.kind === "engine" ? "Записи формуляра двигателя" : "Записи формуляра агрегата"}</h2>
+    return `<section class="section-stack" data-form-widget="journal"><h2 data-tile-caption>${position.kind === "engine" ? "Записи формуляра двигателя" : "Записи формуляра агрегата"}</h2>
       <p>${engineSource ? `Источник наработки — ${escapeHtml(engineSource.label.toLowerCase())}` :
         `${escapeHtml(position.label)} · ${escapeHtml(position.model)}`}</p>
       <div class="template-table-wrap" tabindex="0"><table class="aircraft-counters template-table">

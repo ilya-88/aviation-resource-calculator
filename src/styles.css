@@ -51,6 +51,19 @@ button { color: inherit; }
 .counter-value { min-width: 0; font-size: calc(var(--tile-font, 1rem) * var(--tile-density, 1)); }
 #counter-preview .counter-tile { position: relative; }
 #counter-preview .counter-tile, #counter-preview .counter-tile * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+#counter-preview.form-counter-preview .counter-value :is(input,textarea):not(:disabled) { -webkit-user-select: text; user-select: text; }
+#counter-preview.form-counter-preview .counter-value :is(input,select,textarea):disabled { pointer-events: none; }
+.form-counter-preview .counter-value :is(h2,.metric strong) { font-size: 1em; }
+.form-counter-preview .counter-value .metric { padding: 3px; border: 0; }
+.form-tile-field { font-size: .85em; }
+.form-tile-field[hidden] { display: none; }
+#block-form .form-tile-field :is(input,select,output) { width: 100%; font-size: 1.12em; }
+.form-tile-field :is(input,select) { background: transparent; padding-inline: 0; border: 0; }
+.form-tile-field output { min-height: 44px; display: flex; align-items: center; color: var(--ink); }
+.form-assembly { display: grid; gap: 4px; justify-items: start; }
+.form-assembly-open { min-height: 44px; max-width: 100%; padding: 2px; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.form-assembly-open small { display: block; color: var(--ink-soft); }
+.counter-save-bar { max-width: calc(100vw - 24px); flex-wrap: wrap; }
 .counter-resize-surface, .counter-move-surface .counter-tile-active { touch-action: none; user-select: none; }
 .counter-resize-surface { overflow-anchor: none; }
 .counter-tile { border-radius: 24px; }

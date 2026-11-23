@@ -176,7 +176,7 @@ async function main() {
       const logValues = () => [...document.querySelectorAll('.template-table tbody tr:first-child td')].map(cell => cell.textContent).join('|');
       const leftLog = logColumns().join('|') === orderedHeadings &&
         logValues() === '1 / 1|00:13|00:23|00:40|00:50|00:00:03|00:00:08|00:00:12|00:43|00:55|—';
-      const logBeforeSettings = document.querySelector('.template-table').compareDocumentPosition(document.querySelector('#block-form')) === Node.DOCUMENT_POSITION_FOLLOWING;
+      const logBeforeSettings = document.querySelector('.template-table').compareDocumentPosition(document.querySelector('#block-form [name=name]')) === Node.DOCUMENT_POSITION_FOLLOWING;
       const repair = document.querySelector('#block-event-form');
       repair.elements.type.value = 'repair';
       repair.requestSubmit();
@@ -400,7 +400,7 @@ async function main() {
         back();
         const resource = bySlot(slot);
         const result = targeted && resource.objectId === block(slot).id && resource.remaining === 60.5 + index &&
-          Boolean(document.querySelector('[aria-labelledby="block-resources-title"] [data-resource-id="' + resource.id + '"]'));
+          Boolean(document.querySelector('#block-form [data-resource-id="' + resource.id + '"]'));
         back();
         return result;
       });
@@ -487,7 +487,7 @@ async function main() {
       }
       function separateTiles(left, right) {
         sideBySide(left, right);
-        const tiles = [get(left).closest('label'), get(right).closest('label')];
+        const tiles = [get(left), get(right)].map(control => control.closest('.counter-tile') || control.closest('label'));
         const group = tiles[0].parentElement;
         const width = group.getBoundingClientRect().width;
         if (tiles[1].parentElement !== group || tiles.some(tile => {
@@ -607,6 +607,137 @@ async function main() {
     })()`);
     assert.ok(compactAudit >= 60);
     results.compactAudit = compactAudit;
+    const formLayout = await evaluate(`(async () => {
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft.find(row => row.boardNumber === '402');
+      const bySlot = (slot) => read().blocks.find(block => block.templateSlotId === slot);
+      const get = selector => {
+        const element = document.querySelector(selector);
+        if (!element) throw new Error('Не найдено: ' + selector);
+        return element;
+      };
+      const click = selector => get(selector).click();
+      const back = () => window.handleAndroidBack();
+      const keySelector = key => '[data-tile-key="' + key + '"]';
+      const visit = slot => click('[data-block-id="' + bySlot(slot).id + '"]');
+      const active = '.counter-tile-active';
+      const selector = (key, action) => keySelector(key) + ' [data-layout-action="' + action + '"]';
+      const touch = (element, type, x, y) => {
+        const point = new Touch({ identifier: 7, target: element, clientX: x, clientY: y });
+        element.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true,
+          ...(type === 'touchend' ? { changedTouches: [point] } : { touches: [point] }) }));
+      };
+      async function hold(key) {
+        const element = get(keySelector(key) + ' .counter-value');
+        element.scrollIntoView({ block: 'center' });
+        const bounds = element.getBoundingClientRect();
+        touch(element, 'touchstart', bounds.left + 5, bounds.top + 5);
+        await new Promise(resolve => setTimeout(resolve, 750));
+        touch(element, 'touchend', bounds.left + 5, bounds.top + 5);
+        if (get(active).dataset.tileKey !== key) throw new Error('Долгое нажатие не выбрало ' + key);
+      }
+      async function choose(value) {
+        const dialog = get('dialog[open]');
+        await new Promise(resolve => {
+          dialog.addEventListener('close', resolve, { once: true });
+          dialog.querySelector('[value="' + value + '"]').click();
+        });
+      }
+      visit('airframe');
+      const name = 'form-field:name';
+      const caption = 'form-field:caption';
+      const assembly = 'form:assembly:' + bySlot('vka-1').id;
+      const protectedKeys = ['form-field:serialNumber', 'form-field:rfNumber'];
+      let protectedCards = true;
+      for (const key of protectedKeys) {
+        await hold(key);
+        protectedCards &&= !document.querySelector(selector(key, 'hide'));
+        back();
+      }
+      const indexBefore = Number(get(keySelector(assembly)).dataset.counterIndex);
+      const pendingText = 'Описание, введённое до перестановки';
+      get('#block-form [name=caption]').value = pendingText;
+      await hold(assembly);
+      click('[data-gesture=move]');
+      const card = get(active);
+      const neighbor = document.querySelectorAll('#counter-preview .counter-tile')[indexBefore - 1];
+      card.scrollIntoView({ block: 'center' });
+      const first = card.getBoundingClientRect();
+      const second = neighbor.getBoundingClientRect();
+      const item = card.querySelector('.counter-value');
+      touch(item, 'touchstart', first.left + 12, first.top + 12);
+      touch(item, 'touchmove', second.left + 12, second.top + 12);
+      const live = Boolean(neighbor.style.order);
+      touch(item, 'touchend', second.left + 12, second.top + 12);
+      const moved = Number(get(active).dataset.counterIndex) < indexBefore;
+      click('[data-gesture=resize]');
+      const value = get(active + ' .counter-value');
+      const widthBefore = get(active).getBoundingClientRect().width;
+      touch(value, 'touchstart', 160, 370);
+      touch(value, 'touchmove', 150, 370);
+      const resized = get(active).getBoundingClientRect().width < widthBefore;
+      touch(value, 'touchend', 150, 370);
+      click('[data-gesture=font]');
+      const text = get(active + ' .counter-value');
+      touch(text, 'touchstart', 160, 370);
+      touch(text, 'touchmove', 160, 356);
+      touch(text, 'touchend', 160, 356);
+      const restyled = get(active).style.getPropertyValue('--tile-font') !== '1rem';
+      click(selector(assembly, 'edit'));
+      get('dialog[open] input').value = 'ВКА слева';
+      await choose('save');
+      click('#layout-save');
+      const preservedInput = get('#block-form [name=caption]').value === pendingText;
+      const savedTile = bySlot('airframe').formLayout.tiles.find(tile => tile.keys.includes(assembly));
+      const saved = moved && resized && live && restyled && savedTile.span < 6 && savedTile.font > 1 &&
+        savedTile.labels[assembly] === 'ВКА слева' && get(keySelector(assembly)).textContent.includes('ВКА слева');
+      await hold(caption);
+      click(selector(caption, 'hide'));
+      click('#layout-save');
+      const hidden = !document.querySelector(keySelector(caption)) && bySlot('airframe').formLayout.hidden.includes(caption)
+        && get('#block-form [name=caption]').value === pendingText && get('#block-form [name=caption]').closest('label').hidden;
+      click('#edit-form-layout');
+      click('#layout-restore');
+      await choose(caption);
+      click('#layout-save');
+      const restored = Boolean(document.querySelector(keySelector(caption))) &&
+        bySlot('airframe').formLayout.hidden.length === 0;
+      click('[data-dismantle-block="' + bySlot('vka-1').id + '"]');
+      await choose('cancel');
+      const cancelled = Boolean(document.querySelector(keySelector(assembly)));
+      click('[data-dismantle-block="' + bySlot('vka-1').id + '"]');
+      await choose('dismantle');
+      const dismantled = !document.querySelector(keySelector(assembly)) &&
+        bySlot('vka-1').events.at(-1).type === 'dismantle' &&
+        Boolean(document.querySelector('[data-tile-key^="form:installation:"]'));
+      if (!document.querySelector(keySelector(name))) throw new Error('Карточка названия потерялась');
+      back();
+      const childForms = ['motor-1', 'vka-2', 'gtde-1'];
+      const independent = childForms.every(slot => {
+        visit(slot);
+        click('#edit-form-layout');
+        const editor = Boolean(document.querySelector('[data-gesture=move]')) && !bySlot(slot).formLayout;
+        back();
+        back();
+        return editor;
+      });
+      click('[data-action="add-block"]');
+      const newForm = get('#creation-form');
+      newForm.elements.name.value = 'Дополнительный формуляр';
+      newForm.elements.kind.value = 'airframe';
+      newForm.requestSubmit();
+      const added = read().blocks.find(block => block.name === 'Дополнительный формуляр');
+      click('[data-block-id="' + added.id + '"]');
+      await hold(caption);
+      click(selector(caption, 'hide'));
+      click('#layout-save');
+      const manualForm = read().blocks.find(block => block.id === added.id).formLayout.hidden.includes(caption) &&
+        !document.querySelector(keySelector(caption)) && bySlot('airframe').formLayout.hidden.length === 0;
+      back();
+      return { protectedCards, saved, preservedInput, hidden, restored, cancelled, dismantled, independent, manualForm };
+    })()`);
+    assert.deepEqual(formLayout, { protectedCards: true, saved: true, preservedInput: true, hidden: true, restored: true,
+      cancelled: true, dismantled: true, independent: true, manualForm: true });
+    results.formLayout = "ok";
     const boardDeletion = await evaluate(`(async () => {
       window.handleAndroidBack();
       const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
@@ -847,13 +978,17 @@ async function main() {
       blockForm.elements.sneMinutes.value = '600';
       blockForm.requestSubmit();
       document.querySelector('#block-event-form').requestSubmit();
-      const history = document.querySelector('.history-list').textContent;
+      const history = document.querySelector('[data-form-widget^="event:"]').textContent;
       const sne = document.querySelector('[name="sneMinutes"]').value;
       const ppr = document.querySelector('[name="pprMinutes"]').value;
+      document.querySelector('#edit-form-layout').click();
+      const newEngineHasEditor = Boolean(document.querySelector('[data-gesture=move]'));
+      window.handleAndroidBack();
       document.querySelector('[data-action="back"]').click();
-      return { engineFields, history, sne, ppr };
+      return { engineFields, history, sne, ppr, newEngineHasEditor };
     })()`);
     assert.equal(addedBlock.engineFields, true);
+    assert.equal(addedBlock.newEngineHasEditor, true);
     assert.equal(addedBlock.sne, "600");
     assert.equal(addedBlock.ppr, "0");
     assert.match(addedBlock.history, /До ремонта: СНЭ 10:00/);
@@ -950,10 +1085,15 @@ async function main() {
       eventForm.requestSubmit();
       const saved = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
       const block = saved.aircraft.find((item) => item.boardNumber === '42').blocks.find((item) => item.name === 'Гидронасос');
-      return { events: block.events.length, repairs: block.repairs, historyText: document.querySelector('.history-list')?.textContent };
+      const historyText = document.querySelector('[data-form-widget^="event:"]')?.textContent;
+      document.querySelector('#edit-form-layout').click();
+      const newUnitHasEditor = Boolean(document.querySelector('[data-gesture=move]'));
+      window.handleAndroidBack();
+      return { events: block.events.length, repairs: block.repairs, historyText, newUnitHasEditor };
     })()`);
     assert.equal(lifecycleEvent.events, 1);
     assert.equal(lifecycleEvent.repairs, 1);
+    assert.equal(lifecycleEvent.newUnitHasEditor, true);
     assert.match(lifecycleEvent.historyText, /Ремонт/);
     results.aggregateLifecycle = "ok";
 
