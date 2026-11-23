@@ -372,6 +372,67 @@ async function main() {
     })()`);
     assert.deepEqual(portable, { blankSaved: true, fourTotals: true, report: "Двигатель 1|Двигатель 2|Двигатель 3|Двигатель 4", exportOk: true, remapped: true });
     results.portableFourEngineTemplate = "ok";
+    const boardDeletion = await evaluate(`(async () => {
+      window.handleAndroidBack();
+      const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
+      const original = read();
+      const target = original.aircraft.find(board => board.boardNumber === '401');
+      const selected = original.aircraft.find(board => board.id === original.selectedAircraftId);
+      const card = id => document.querySelector('[data-aircraft-id="' + id + '"]');
+      function prompt(id) {
+        const menu = card(id).closest('article').querySelector('.aircraft-card-menu');
+        if (!menu.open) menu.querySelector('summary').click();
+        menu.querySelector('[data-board-menu="delete-board"]').click();
+        return document.querySelector('dialog[open]');
+      }
+      async function choose(dialog, value) {
+        await new Promise(resolve => {
+          dialog.addEventListener('close', resolve, { once: true });
+          dialog.querySelector('[value="' + value + '"]').click();
+        });
+      }
+      let dialog = prompt(target.id);
+      const promptSpecific = dialog.querySelector('h2').textContent.includes('Четыре двигателя · борт 401') &&
+        dialog.textContent.includes('без возможности восстановления') && target.shifts.length > 0;
+      await choose(dialog, 'cancel');
+      const cancel = Boolean(card(target.id)) && JSON.stringify(read()) === JSON.stringify(original);
+      dialog = prompt(target.id);
+      const setItem = Storage.prototype.setItem;
+      try {
+        Storage.prototype.setItem = function(key, value) {
+          if (key === 'aviation-resource-prototype-v1') throw new Error('test write failure');
+          return setItem.call(this, key, value);
+        };
+        await choose(dialog, 'delete');
+      } finally {
+        Storage.prototype.setItem = setItem;
+      }
+      const rollback = Boolean(card(target.id)) && JSON.stringify(read()) === JSON.stringify(original) &&
+        document.querySelector('.toast')?.textContent === 'Не удалось удалить борт';
+      await choose(prompt(target.id), 'delete');
+      const after = read();
+      const onlyTarget = !card(target.id) && JSON.stringify(after.aircraft) === JSON.stringify(original.aircraft.filter(board => board.id !== target.id)) &&
+        after.selectedAircraftId === selected.id;
+      await choose(prompt(selected.id), 'delete');
+      const fallback = read().aircraft[0];
+      const selectedFallback = read().selectedAircraftId === fallback.id;
+      await choose(prompt(fallback.id), 'delete');
+      const final = read();
+      const last = final.aircraft.length === 0 && final.selectedAircraftId === null &&
+        document.querySelector('main').textContent.includes('Самолётов пока нет') &&
+        JSON.stringify(final.templateCatalog) === JSON.stringify(original.templateCatalog) &&
+        JSON.stringify(final.aircraftTypes) === JSON.stringify(original.aircraftTypes);
+      return { promptSpecific, cancel, rollback, onlyTarget, selectedFallback, last };
+    })()`);
+    assert.deepEqual(boardDeletion, { promptSpecific: true, cancel: true, rollback: true, onlyTarget: true, selectedFallback: true, last: true });
+    await command("Page.reload");
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (await evaluate("Boolean(document.querySelector('[data-action=add-aircraft]'))").catch(() => false)) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.equal(await evaluate(`!document.querySelector('[data-aircraft-id]') &&
+      document.querySelector('main').textContent.includes('Самолётов пока нет')`), true);
+    results.boardDeletion = "ok";
     if (process.argv.includes("--templates-only")) {
       process.stdout.write(`${JSON.stringify(results)}\n`);
       return;

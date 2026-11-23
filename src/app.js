@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.2";
+  const APP_VERSION = "0.2.38-exp.3";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -662,6 +662,7 @@
           <div class="aircraft-card-menu-panel">
             <button type="button" class="secondary-button" data-board-menu="board-details" data-board-id="${escapeHtml(aircraft.id)}">Реквизиты борта</button>
             <button type="button" class="secondary-button" data-board-menu="board-image" data-board-id="${escapeHtml(aircraft.id)}">Обновить картинку</button>
+            <button type="button" class="secondary-button danger-button" data-board-menu="delete-board" data-board-id="${escapeHtml(aircraft.id)}">Удалить борт</button>
           </div>
         </details></article>`;
     }).join("");
@@ -965,11 +966,12 @@
   let activeCounterIndex = null;
   let counterGesture = "";
 
-  function chooseLayoutAction(title, choices, onChoose) {
+  function chooseLayoutAction(title, choices, onChoose, description) {
     const dialog = document.createElement("dialog");
     dialog.className = "confirm-dialog";
     dialog.innerHTML = `<form method="dialog"><h2>${title}</h2>
-      ${choices.map(([value, label]) => `<button class="secondary-button" value="${value}">${label}</button>`).join("")}</form>`;
+      ${description ? `<p>${escapeHtml(description)}</p>` : ""}
+      ${choices.map(([value, label, style = ""]) => `<button class="secondary-button ${style}" value="${value}">${label}</button>`).join("")}</form>`;
     app.append(dialog);
     dialog.addEventListener("close", () => {
       const value = dialog.returnValue;
@@ -3996,6 +3998,10 @@
 
   function bindCommonActions() {
     document.querySelectorAll("[data-board-menu]").forEach((button) => button.addEventListener("click", () => {
+      if (button.dataset.boardMenu === "delete-board") {
+        removeAircraft(button.dataset.boardId);
+        return;
+      }
       state.selectedAircraftId = button.dataset.boardId;
       navigateTo(button.dataset.boardMenu);
     }));
@@ -4243,6 +4249,26 @@
       resource.objectId = block.id;
       resource.object = name;
     }
+  }
+
+  function removeAircraft(aircraftId) {
+    const aircraft = state.aircraft.find((item) => item.id === aircraftId);
+    if (!aircraft) return;
+    const name = `${aircraft.type} · борт ${aircraft.boardNumber}`;
+    chooseLayoutAction(`Удалить «${escapeHtml(name)}»?`,
+      [["cancel", "Отмена"], ["delete", "Удалить борт", "danger-button"]], (action) => {
+        if (action !== "delete") return;
+        const previous = { aircraft: state.aircraft, selectedAircraftId: state.selectedAircraftId };
+        state.aircraft = state.aircraft.filter((item) => item.id !== aircraftId);
+        if (state.selectedAircraftId === aircraftId) state.selectedAircraftId = state.aircraft[0]?.id ?? null;
+        if (!saveState()) {
+          Object.assign(state, previous);
+          showToast("Не удалось удалить борт");
+          return;
+        }
+        render();
+        showToast(`Удалён ${name}`);
+      }, "Формуляры, ресурсы и история работ этого борта будут удалены без возможности восстановления.");
   }
 
   function removeBlock(blockId) {
