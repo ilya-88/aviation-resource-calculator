@@ -377,11 +377,44 @@ async function main() {
         copyResource.remaining === 30 && copyResource.consumption[localKey] === 0.5 &&
         !(consumptionKey in copyResource.consumption) && originalResource.remaining === 26;
       back();
+      click('[data-view="correct-usage"]');
+      const currentReadings = document.querySelector('#correct-usage-form');
+      const reading = (form, period) => form.elements['aggregate-usage:' + duplicate().usageCounters[0].id + ':' + period];
+      const pprBeforeRepairCount = reading(currentReadings, 'ppr').disabled;
+      currentReadings.elements.repairs.value = '2';
+      currentReadings.elements.repairs.dispatchEvent(new Event('input'));
+      reading(currentReadings, 'sne').value = '12';
+      reading(currentReadings, 'ppr').value = '2';
+      currentReadings.requestSubmit();
+      const readings = duplicate().usageTotals[duplicate().usageCounters[0].id];
+      const currentCustomReadings = pprBeforeRepairCount && duplicate().repairs === 2 && readings.sne === 12 && readings.ppr === 2 &&
+        duplicate().events.at(-1).current.aggregate[0].ppr === 2;
+      const repairForm = document.querySelector('#historical-repair-form');
+      function chooseRepair(number) {
+        repairForm.elements.number.value = number;
+        repairForm.elements.number.dispatchEvent(new Event('input'));
+      }
+      repairForm.elements.date.value = '2024-01-01';
+      reading(repairForm, 'sne').value = '4';
+      repairForm.requestSubmit();
+      chooseRepair(2);
+      repairForm.elements.date.value = '2025-01-01';
+      reading(repairForm, 'sne').value = '10';
+      reading(repairForm, 'ppr').value = '6';
+      repairForm.requestSubmit();
+      const secondRepair = duplicate().historicalRepairs[2].beforeRepair.aggregate[0];
+      chooseRepair(1);
+      const firstRestored = reading(repairForm, 'sne').value === '4' && reading(repairForm, 'ppr').value === '';
+      back();
+      const repairTiles = [...document.querySelectorAll('[data-tile-key^="form:repair:"]')].map(tile => tile.textContent);
+      const pastCustomReadings = firstRestored && secondRepair.sne === 10 && secondRepair.ppr === 6 &&
+        repairTiles.some(text => text.includes('Циклы от посадок до ремонта · СНЭ 4 пос. · ППР —')) &&
+        repairTiles.some(text => text.includes('Циклы от посадок до ремонта · СНЭ 10 пос. · ППР 6 пос.'));
       back();
       return { empty, imported, types, routed, pairedCounters, vkaLogs, gtdeLogs, gtdePpr, excludesUnpairedUnits,
         maximas, orderedInputs: first.orderedInputs, leftLog, rightLog, noDuplicates, rulesPersisted, unitPreserved, rulesCancel, rulesDiscard, rulesSavedOnBack,
         aggregatePreview, aggregateJournal, repairBalances, aggregateTotals, aggregateHistory, aggregateReport, aggregateReportPeriod, aggregateResourceCharge,
-        copiedRules, copiedConsumption,
+        copiedRules, copiedConsumption, currentCustomReadings, pastCustomReadings,
         logBeforeSettings, repairs, replaces, preview: first.preview.includes('00:43'),
         rowsRemoved: first.rowsRemoved, pending: pending.pending && !pending.blockId && pendingRecord.preview.includes('ожидает привязки'), showsRaw };
     })()`);
@@ -391,7 +424,7 @@ async function main() {
       noDuplicates: true, rulesPersisted: true, unitPreserved: true, rulesCancel: true, rulesDiscard: true, rulesSavedOnBack: true,
       aggregatePreview: true, aggregateJournal: true, repairBalances: true,
       aggregateTotals: true, aggregateHistory: true, aggregateReport: true, aggregateReportPeriod: true, aggregateResourceCharge: true,
-      copiedRules: true, copiedConsumption: true,
+      copiedRules: true, copiedConsumption: true, currentCustomReadings: true, pastCustomReadings: true,
       repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
     results.templateExperiment = "ok";
     await evaluate(`(() => {

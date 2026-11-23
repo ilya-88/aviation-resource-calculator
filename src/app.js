@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.16";
+  const APP_VERSION = "0.2.38-exp.17";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -250,7 +250,7 @@
     const list = root.querySelector("[data-aggregate-rules]");
     const recorded = new Set(block ? aircraft.shifts.flatMap((shift) => (shift.aggregateAccruals || [])
       .filter((entry) => entry.blockId === block.id && entry.amount !== 0).map((entry) => entry.counterId)) : []);
-    for (const event of block?.events || []) {
+    for (const event of [...(block?.events || []), ...Object.values(block?.historicalRepairs || {})]) {
       for (const rule of event.beforeRepair?.aggregate || []) {
         if (rule.sne || rule.ppr) recorded.add(rule.id);
       }
@@ -2826,6 +2826,13 @@
       ${entries.length ? `<details data-form-widget="aggregate-log"><summary>Журнал наработки</summary><ul class="accrual-items">${entries.join("")}</ul></details>` : ""}`;
   }
 
+  function repairAggregateBalances(rows = []) {
+    return rows.map(({ name, unit, sne, ppr }) => {
+      const value = (amount) => amount == null ? "—" : `${formatNumber(amount, 6)} ${escapeHtml(unit)}`;
+      return `<span>${escapeHtml(name)} до ремонта · СНЭ ${value(sne)} · ППР ${value(ppr)}</span>`;
+    }).join("");
+  }
+
   function renderBlock(layoutEditing = false) {
     const aircraft = selectedAircraft();
     const block = aircraft.blocks.find((item) => item.id === state.selectedBlockId);
@@ -2914,14 +2921,14 @@
       return `<article class="history-row" data-form-widget="event:${escapeHtml(item.id || String(index))}"><div><strong>${formatOptionalDate(item.date)}</strong>
         <span>${eventLabels[item.type] || "Событие"}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</span>
         ${counters ? `<span>До ремонта: ${counters}</span>` : ""}
-        ${(before?.aggregate || []).map((rule) => `<span>${escapeHtml(rule.name)} до ремонта · СНЭ ${formatNumber(rule.sne ?? 0, 6)} ${escapeHtml(rule.unit)}
-          ${rule.ppr == null ? "" : `· ППР ${formatNumber(rule.ppr, 6)} ${escapeHtml(rule.unit)}`}</span>`).join("")}</div></article>`;
+        ${repairAggregateBalances(before?.aggregate)}</div></article>`;
     }).join("");
     const historicalRows = Object.entries(block.historicalRepairs || {}).map(([number, entry]) => {
       const { sneMinutes, pprMinutes, sneLandings, pprLandings } = entry.beforeRepair;
       return `<article class="history-row" data-form-widget="repair:${escapeHtml(number)}"><div><strong>Ремонт № ${escapeHtml(number)}${entry.date ? ` · ${formatDate(entry.date)}` : ""}</strong>
         <span>До ремонта · СНЭ: ${sneMinutes == null ? "—" : calc.formatDuration(sneMinutes)}, посадки ${sneLandings ?? "—"}</span>
         <span>ППР: ${pprMinutes == null ? "—" : calc.formatDuration(pprMinutes)}, посадки ${pprLandings ?? "—"}</span>
+        ${repairAggregateBalances(entry.beforeRepair.aggregate)}
         ${entry.note ? `<span>${escapeHtml(entry.note)}</span>` : ""}</div></article>`;
     }).join("");
     app.innerHTML = shell(`
@@ -3355,15 +3362,23 @@
       }
     }
     const repairs = block.events.filter((entry) => entry.type === "repair");
-    const imported = block.historicalRepairs || {};
+    let imported = block.historicalRepairs || {};
     const historyNames = { totalFlightMinutes: "sneMinutes", actualLandings: "sneLandings",
       pprFlightMinutes: "pprMinutes", pprLandings: "pprLandings" };
     const counterStep = (key) => key === "starts" || key === "pprStarts" ? "1" : "any";
+    const aggregateCounters = block.usageCounters || [];
+    const counterName = (rule, period) => `aggregate-usage:${rule.id}:${period}`;
+    const counterFields = (historical) => aggregateCounters.map((rule) => `
+      <div class="field-pair" data-aggregate-readings="${escapeHtml(rule.id)}">${["sne", "ppr"].map((period) =>
+        `<label>${escapeHtml(rule.name)} · ${period === "sne" ? "СНЭ" : "ППР"}, ${escapeHtml(rule.unit)}
+          <input name="${escapeHtml(counterName(rule, period))}" ${!historical && period === "ppr" ? "data-ppr" : ""}
+            type="number" min="0" step="any" value="${historical ? "" : block.usageTotals?.[rule.id]?.[period] ?? ""}"></label>`).join("")}</div>`).join("");
     app.innerHTML = shell(`
       <form id="correct-usage-form" class="shift-form">
         <fieldset><legend>Текущие показания · ${escapeHtml(block.name)}</legend>
           <label>Количество ремонтов<input name="repairs" type="number" min="${repairs.length}" step="1" value="${block.repairs}" required></label>
           <div class="field-pair">${counters.map(([key, label, value, isPpr]) => `<label>${escapeHtml(label)}<input name="${key}" ${isPpr ? "data-ppr" : ""} type="number" min="0" step="${counterStep(key)}" value="${value ?? (isPpr ? "" : 0)}"></label>`).join("")}</div>
+          ${counterFields(false)}
           <label>Основание или номер документа<input name="note"></label>
           <button class="primary-button" type="submit">Сохранить показания</button>
         </fieldset>
@@ -3374,6 +3389,7 @@
           <label>Ремонт №<input name="number" type="number" min="1" max="${block.repairs}" value="1" required></label>
           <label>Дата ремонта<input name="date" type="date"></label>
           <div class="field-pair">${counters.map(([key, label]) => `<label>${escapeHtml(label)}<input name="${key}" type="number" min="0" step="${counterStep(key)}"></label>`).join("")}</div>
+          ${counterFields(true)}
           <label>Основание<input name="note"></label>
           <button class="secondary-button" type="submit">Сохранить запись о ремонте</button>
         </fieldset>
@@ -3383,15 +3399,26 @@
     form.elements.repairs.addEventListener("input", update);
     update();
     const numberOrNull = (value) => value === "" || value == null ? null : Number(value);
+    const readAggregate = (data) => aggregateCounters.map((rule) => ({
+      id: rule.id, name: rule.name, unit: rule.unit,
+      sne: numberOrNull(data.get(counterName(rule, "sne"))), ppr: numberOrNull(data.get(counterName(rule, "ppr"))),
+    }));
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = new FormData(form);
       const previous = { repairs: block.repairs };
       const current = { repairs: Number(data.get("repairs")) };
+      const previousTotals = block.usageTotals;
       for (const [key, , , isPpr] of counters) {
         previous[key] = readCounter(key) ?? null;
         current[key] = isPpr ? numberOrNull(data.get(key)) : Number(data.get(key));
         writeCounter(key, current[key]);
+      }
+      if (aggregateCounters.length) {
+        previous.aggregate = aggregateCounters.map(({ id, name, unit }) => ({ id, name, unit, ...previousTotals?.[id] }));
+        current.aggregate = readAggregate(data);
+        block.usageTotals = { ...previousTotals, ...Object.fromEntries(current.aggregate.map(({ id, sne, ppr }) =>
+          [id, { sne: sne ?? 0, ppr }])) };
       }
       block.repairs = current.repairs;
       block.events.push({ id: id(), type: "correction", date: todayIso(), note: data.get("note"), previous, current });
@@ -3401,14 +3428,16 @@
       } else {
         block.events.pop();
         block.repairs = previous.repairs;
+        if (aggregateCounters.length) block.usageTotals = previousTotals;
         for (const [key] of counters) writeCounter(key, previous[key]);
         showToast("Не удалось сохранить показания");
       }
     });
     const history = document.getElementById("historical-repair-form");
+    const findRepair = (number) => imported[number] || repairs.find((item, index) => (item.repairNumber ?? index + 1) === number);
     const loadRepair = () => {
       const number = Number(history.elements.number.value);
-      const entry = imported[number] || repairs.find((item, index) => (item.repairNumber ?? index + 1) === number);
+      const entry = findRepair(number);
       history.elements.date.value = entry?.date || "";
       history.elements.note.value = entry?.note || "";
       const usage = entry?.beforeRepair || {};
@@ -3417,6 +3446,10 @@
         history.elements[key].value = usage[key] ?? (entry ? usage[group]?.[entry] : null) ??
           usage[historyNames[key]] ?? "";
       });
+      for (const rule of aggregateCounters) {
+        const saved = usage.aggregate?.find(({ id }) => id === rule.id);
+        for (const period of ["sne", "ppr"]) history.elements[counterName(rule, period)].value = saved?.[period] ?? "";
+      }
     };
     history.elements.number.addEventListener("input", loadRepair);
     loadRepair();
@@ -3427,8 +3460,12 @@
       const beforeRepair = Object.fromEntries(counters.map(([key]) => [
         historyNames[key] || key, numberOrNull(data.get(key)),
       ]));
+      const activeIds = new Set(aggregateCounters.map(({ id }) => id));
+      const kept = (findRepair(number)?.beforeRepair?.aggregate || []).filter(({ id }) => !activeIds.has(id));
+      const measurements = readAggregate(data).filter(({ sne, ppr }) => sne != null || ppr != null);
+      if (measurements.length || kept.length) beforeRepair.aggregate = [...kept, ...measurements];
       block.historicalRepairs = { ...imported, [number]: { date: data.get("date"), note: data.get("note"), beforeRepair } };
-      if (saveState()) { render(); showToast("Показания до ремонта сохранены"); }
+      if (saveState()) { imported = block.historicalRepairs; showToast("Показания до ремонта сохранены"); }
       else { block.historicalRepairs = imported; showToast("Не удалось сохранить запись"); }
     });
   }
