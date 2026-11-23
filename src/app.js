@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.12";
+  const APP_VERSION = "0.2.38-exp.13";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -243,6 +243,18 @@
   function bindAggregateRules(root, aircraft, block) {
     const sources = aggregateUsageSources(aircraft);
     const list = root.querySelector("[data-aggregate-rules]");
+    const recorded = new Set(block ? aircraft.shifts.flatMap((shift) => (shift.aggregateAccruals || [])
+      .filter((entry) => entry.blockId === block.id && entry.amount !== 0).map((entry) => entry.counterId)) : []);
+    for (const event of block?.events || []) {
+      for (const rule of event.beforeRepair?.aggregate || []) {
+        if (rule.sne || rule.ppr) recorded.add(rule.id);
+      }
+    }
+    const savedRules = new Map((block?.usageCounters || []).map((rule) => [rule.id, rule]));
+    function unitLocked(ruleId) {
+      const totals = block?.usageTotals?.[ruleId];
+      return recorded.has(ruleId) || Boolean(totals?.sne || totals?.ppr);
+    }
     function add(rule = { id: id(), name: "", source: "manual", unit: "шт.", factor: 1 }) {
       const row = document.createElement("fieldset");
       row.className = "form-grid";
@@ -252,11 +264,12 @@
       row.innerHTML = `
         <label class="form-span">Показатель<input data-rule="name" type="text" maxlength="80" required value="${escapeHtml(rule.name)}" placeholder="Например, циклы"></label>
         <label class="form-span">Источник<select data-rule="source">${choices.map(({ key, label }) => `<option value="${escapeHtml(key)}"${key === rule.source ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
-        <label>Единица итога<select data-rule="unit">${AGGREGATE_UNITS.map((unit) => `<option${unit === rule.unit ? " selected" : ""}>${unit}</option>`).join("")}</select></label>
+        <label>Единица итога<select data-rule="unit"${unitLocked(rule.id) ? " disabled" : ""}>${AGGREGATE_UNITS.map((unit) => `<option${unit === rule.unit ? " selected" : ""}>${unit}</option>`).join("")}</select></label>
         <label>Коэффициент<input data-rule="factor" type="number" min="0" max="1000000" step="any" value="${rule.factor}" required></label>
         <label>Текущее СНЭ<input data-rule="sne" type="number" min="0" max="1000000000" step="any" value="${block?.usageTotals?.[rule.id]?.sne ?? 0}" required></label>
         ${block?.repairs ? `<label>Текущее ППР<input data-rule="ppr" type="number" min="0" max="1000000000" step="any" value="${block.usageTotals?.[rule.id]?.ppr ?? 0}" required></label>` : ""}
         <p class="form-span field-help" data-rule-example></p>
+        ${unitLocked(rule.id) ? '<p class="form-span field-help">По показателю уже есть наработка. Для другой единицы добавь новый показатель.</p>' : ""}
         <button type="button" class="small-button danger-button" data-rule-remove>Убрать показатель</button>`;
       const factor = row.querySelector('[data-rule="factor"]');
       const unit = row.querySelector('[data-rule="unit"]');
@@ -266,7 +279,7 @@
       }
       row.querySelector('[data-rule="source"]').addEventListener("change", (event) => {
         const source = sources.find(({ key }) => key === event.target.value);
-        if (source?.unit) unit.value = source.unit;
+        if (source?.unit && !savedRules.has(rule.id)) unit.value = source.unit;
         updateExample();
       });
       factor.addEventListener("input", updateExample);
@@ -285,7 +298,8 @@
       if (!values.name) throw new Error("Укажи название показателя");
       if (row.querySelector("input[type=number]:invalid")) throw new Error("Проверь коэффициент и начальные показания");
       const source = sources.find(({ key }) => key === values.source);
-      const previous = block?.usageCounters?.find((rule) => rule.id === row.dataset.ruleId);
+      const previous = savedRules.get(row.dataset.ruleId);
+      if (unitLocked(row.dataset.ruleId) && previous?.unit !== values.unit) throw new Error("Единица накопленной наработки закреплена за показателем");
       return { id: row.dataset.ruleId, ...values, sourceLabel: source?.label || previous?.sourceLabel || "Исходный показатель" };
     }) };
   }

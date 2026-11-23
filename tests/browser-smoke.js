@@ -267,6 +267,14 @@ async function main() {
       click('[data-view="block-usage-rules"]');
       const rulesPersisted = document.querySelectorAll('[data-rule-id]').length === 3 &&
         document.querySelector('[data-rule-id] [data-rule="sne"]').value === '3';
+      const firstSource = document.querySelector('[data-rule-id] [data-rule="source"]');
+      const firstUnit = document.querySelector('[data-rule-id] [data-rule="unit"]');
+      firstSource.value = 'board:flight';
+      firstSource.dispatchEvent(new Event('change'));
+      const unitPreserved = firstUnit.disabled && firstUnit.value === 'пос.' &&
+        !document.querySelector('[data-rule-id]:nth-child(2) [data-rule="unit"]').disabled;
+      firstSource.value = 'board:runway';
+      firstSource.dispatchEvent(new Event('change'));
       const ruleName = () => document.querySelector('#aggregate-rules-form [data-rule-id] [data-rule="name"]');
       async function leaveRules(action) {
         back();
@@ -325,7 +333,7 @@ async function main() {
       back();
       click('[data-aircraft-tab="aggregates"]');
       return { empty, imported, types, routed, pairedCounters, vkaLogs, gtdeLogs, gtdePpr, excludesUnpairedUnits,
-        maximas, orderedInputs: first.orderedInputs, leftLog, rightLog, noDuplicates, rulesPersisted, rulesCancel, rulesDiscard, rulesSavedOnBack,
+        maximas, orderedInputs: first.orderedInputs, leftLog, rightLog, noDuplicates, rulesPersisted, unitPreserved, rulesCancel, rulesDiscard, rulesSavedOnBack,
         aggregatePreview, aggregateJournal, repairBalances, aggregateTotals, aggregateHistory, aggregateReport, aggregateReportPeriod,
         logBeforeSettings, repairs, replaces, preview: first.preview.includes('00:43'),
         rowsRemoved: first.rowsRemoved, pending: pending.pending && !pending.blockId && pendingRecord.preview.includes('ожидает привязки'), showsRaw };
@@ -333,7 +341,7 @@ async function main() {
     assert.deepEqual(experimental, { empty: true, imported: true, types: {airframe:1, engine:2, unit:4}, routed: true,
       pairedCounters: true, vkaLogs: true, gtdeLogs: true, gtdePpr: true, excludesUnpairedUnits: true,
       maximas: [3,8,12], orderedInputs: true, leftLog: true, rightLog: true, logBeforeSettings: true,
-      noDuplicates: true, rulesPersisted: true, rulesCancel: true, rulesDiscard: true, rulesSavedOnBack: true,
+      noDuplicates: true, rulesPersisted: true, unitPreserved: true, rulesCancel: true, rulesDiscard: true, rulesSavedOnBack: true,
       aggregatePreview: true, aggregateJournal: true, repairBalances: true,
       aggregateTotals: true, aggregateHistory: true, aggregateReport: true, aggregateReportPeriod: true,
       repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
