@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.5";
+  const APP_VERSION = "0.2.38-exp.6";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -2218,13 +2218,15 @@
   function renderBoardDetails() {
     const aircraft = selectedAircraft();
     app.innerHTML = shell(`<h1>Реквизиты борта</h1>
-      <form id="board-details-form" class="shift-form settings-form form-grid">
-        ${aircraft.workTemplate ? `<label>Тип самолёта<output>${escapeHtml(aircraft.type)}</output></label>` :
-          `<label>Тип самолёта${aircraftTypeSelect(aircraft.type)}</label>`}
-        <label>Бортовой номер<input name="boardNumber" type="text" value="${escapeHtml(aircraft.boardNumber)}" required></label>
-        <label>Заводской номер<input name="serialNumber" type="text" value="${escapeHtml(aircraft.serialNumber || "")}"></label>
-        <label>RF<input name="rfNumber" type="text" value="${escapeHtml(aircraft.rfNumber || "")}" placeholder="Например, 33738"></label>
-        <p id="board-details-status" class="field-help form-span" role="status"></p>
+      <form id="board-details-form" class="shift-form settings-form">
+        <div class="field-tiles">
+          ${aircraft.workTemplate ? `<label>Тип самолёта<output>${escapeHtml(aircraft.type)}</output></label>` :
+            `<label>Тип самолёта${aircraftTypeSelect(aircraft.type)}</label>`}
+          <label>Бортовой номер<input name="boardNumber" type="text" value="${escapeHtml(aircraft.boardNumber)}" required></label>
+          <label>Заводской номер<input name="serialNumber" type="text" value="${escapeHtml(aircraft.serialNumber || "")}"></label>
+          <label>RF<input name="rfNumber" type="text" value="${escapeHtml(aircraft.rfNumber || "")}" placeholder="33738"></label>
+        </div>
+        <p id="board-details-status" class="field-help" role="status"></p>
         <button class="primary-button" type="submit">Сохранить реквизиты</button>
       </form>`, { title: "Реквизиты борта", subtitle: "", back: true, settings: false });
     const form = document.getElementById("board-details-form");
@@ -2434,19 +2436,17 @@
         </div>
       </section>
       <form id="block-form" class="shift-form">
-        <fieldset class="form-grid"><legend>Формуляр</legend>
-          <label class="form-span"><span>Название</span><input name="name" type="text" value="${escapeHtml(block.name)}" required></label>
-          <label class="form-span"><span>Описание</span><input name="caption" type="text" value="${escapeHtml(block.caption)}"></label>
+        <fieldset class="field-tiles"><legend>Реквизиты</legend>
+          <label><span>Название</span><input name="name" type="text" value="${escapeHtml(block.name)}" required></label>
+          <label><span>Описание</span><input name="caption" type="text" value="${escapeHtml(block.caption)}"></label>
           ${block.kind === "airframe" ? `
-          <div class="field-pair">
             <label>Заводской номер<output>${escapeHtml(aircraft.serialNumber || "Не указан")}</output></label>
-            <label>RF<output>${escapeHtml(aircraft.rfNumber || "Не указан")}</output></label>
-          </div>` : `
-          ${block.kind === "engine" ? "" : `<label class="form-span"><span>Модель</span><input name="model" type="text" value="${escapeHtml(block.model || "")}"></label>`}
-          <label><span>Заводской/обычный номер</span><input name="serialNumber" type="text" value="${escapeHtml(block.serialNumber || "")}"></label>
+            <label>RF<output>${escapeHtml(aircraft.rfNumber || "Не указан")}</output></label>` : `
+          <label><span>Заводской номер</span><input name="serialNumber" type="text" value="${escapeHtml(block.serialNumber || "")}"></label>
           <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(block.drawingNumber || "")}"></label>
-          <label><span>Состояние установки</span><select name="installed"><option value="true" ${blockInstalledOn(block, todayIso()) ? "selected" : ""}>Установлен</option><option value="false" ${!blockInstalledOn(block, todayIso()) ? "selected" : ""}>Демонтирован</option></select></label>`}
+          <label><span>Установка</span><select name="installed"><option value="true" ${blockInstalledOn(block, todayIso()) ? "selected" : ""}>Установлен</option><option value="false" ${!blockInstalledOn(block, todayIso()) ? "selected" : ""}>Демонтирован</option></select></label>`}
           <label>Количество ремонтов<output>${block.repairs}</output></label>
+          ${block.kind === "unit" ? `<label><span>Модель</span><input name="model" type="text" value="${escapeHtml(block.model || "")}"></label>` : ""}
         </fieldset>
         ${airframeFields}
         ${blockFields}
@@ -3177,12 +3177,12 @@
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>${isNew ? (draft.objectId ? "Добавить ресурс" : "Новый ресурсный агрегат") : escapeHtml(draft.name)}</h1></div></section>
       <form id="resource-form" class="shift-form">
-        <fieldset><legend>Ресурс и формуляр</legend>
+        <fieldset class="field-tiles"><legend>Ресурс и формуляр</legend>
           <label><span>Агрегат или объект</span><input name="object" type="text" list="resource-objects" value="${escapeHtml(draft.object)}" required><datalist id="resource-objects">${objectOptions}</datalist></label>
+          <label><span>Название ресурса или работы</span><input name="name" type="text" value="${escapeHtml(draft.name)}" required></label>
           <label id="resource-owner-choice" hidden>Экземпляр агрегата<select name="ownerId"></select></label>
-          <label><span>Наименование ограничения или работы</span><input name="name" type="text" value="${escapeHtml(draft.name)}" required></label>
         </fieldset>
-        <fieldset class="form-grid"><legend>Ограничение ресурса</legend>
+        <fieldset class="field-tiles"><legend>Ограничение ресурса</legend>
           <label><span>Вид ограничения</span><select name="resourceType"><option value="assigned" ${draft.resourceType === "assigned" ? "selected" : ""}>Назначенный ресурс</option><option value="overhaul" ${draft.resourceType === "overhaul" ? "selected" : ""}>Межремонтный ресурс</option><option value="extension" ${draft.resourceType === "extension" ? "selected" : ""}>Ресурс до продления</option></select></label>
             <label><span>Единица</span><select name="unit"><option value="ч" ${draft.unit === "ч" ? "selected" : ""}>Часы</option><option value="пос." ${draft.unit === "пос." ? "selected" : ""}>Посадки</option><option value="зап." ${draft.unit === "зап." ? "selected" : ""}>Запуски</option><option value="сраб." ${draft.unit === "сраб." ? "selected" : ""}>Срабатывания</option><option value="дн." ${draft.unit === "дн." ? "selected" : ""}>Календарные дни</option></select></label>
             <label><span>Полный ресурс</span><input name="limit" type="number" min="0" step="any" value="${draft.limit}" required></label>
@@ -3191,7 +3191,7 @@
         </fieldset>
         <details class="form-details" ${draft.serialNumber || draft.drawingNumber || draft.repairs ? "open" : ""}>
           <summary>Номера и ремонты</summary>
-          <fieldset class="form-grid" aria-label="Номера и ремонты">
+          <fieldset class="field-tiles" aria-label="Номера и ремонты">
             <label><span>Заводской номер</span><input name="serialNumber" type="text" value="${escapeHtml(draft.serialNumber || "")}"></label>
             <label><span>Чертёжный номер</span><input name="drawingNumber" type="text" value="${escapeHtml(draft.drawingNumber || "")}"></label>
             <label><span>Количество ремонтов</span><input name="repairs" type="number" min="0" step="1" value="${Number(draft.repairs) || 0}"></label>
@@ -3219,7 +3219,7 @@
           </details>` : ""}
         </fieldset>
         </details>
-        <fieldset class="form-grid"><legend>Даты</legend>
+        <fieldset class="field-tiles"><legend>Даты</legend>
           <label><span>Дата изготовления</span><input name="produced" type="date" value="${draft.produced || ""}"></label><label><span>Дата установки</span><input name="installed" type="date" value="${draft.installed || ""}"></label>
           <label><span>Дата окончания календарного ресурса</span><input name="expiryDate" type="date" value="${draft.expiryDate || ""}"></label>
         </fieldset>

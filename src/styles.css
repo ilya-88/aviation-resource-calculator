@@ -206,6 +206,18 @@ input[type="text"], input[type="number"], input[type="date"], input[type="time"]
 .mode-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .form-grid > :is(.field-pair, .mode-grid, .form-span, button) { grid-column: 1 / -1; }
 .form-span { grid-column: 1 / -1; }
+.field-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+fieldset.field-tiles { padding: 0; border: 0; background: transparent; }
+fieldset.field-tiles > legend { margin-bottom: 6px; padding: 0; }
+.field-tiles > label:not(.checkbox-row) {
+  min-width: 0; min-height: 72px; padding: 6px 9px; gap: 3px; border: 1px solid var(--line); border-radius: 15px;
+  grid-template-rows: 1fr auto; background: var(--surface);
+}
+.field-tiles > label:focus-within { border-color: var(--blue); }
+.field-tiles > label > :is(input, select, output) { min-width: 0; width: 100%; color: var(--ink); font-size: 15px; }
+.field-tiles > label > :is(input, select) { padding-inline: 0; border: 0; background: transparent; }
+.field-tiles > label > output { min-height: 44px; display: flex; align-items: center; }
+.field-tiles > #resource-owner-choice[hidden] { display: none; }
 .form-details { min-width: 0; }
 .form-details > summary { min-height: 44px; padding-block: 10px; cursor: pointer; color: var(--ink); font-weight: 650; }
 .field-help { color: var(--ink-soft); font-size: 13px; }

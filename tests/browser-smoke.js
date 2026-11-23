@@ -485,12 +485,23 @@ async function main() {
           throw new Error('Поля должны стоять рядом и оставаться доступными для нажатия: ' + left + ' и ' + right);
         }
       }
+      function separateTiles(left, right) {
+        sideBySide(left, right);
+        const tiles = [get(left).closest('label'), get(right).closest('label')];
+        const group = tiles[0].parentElement;
+        const width = group.getBoundingClientRect().width;
+        if (tiles[1].parentElement !== group || tiles.some(tile => {
+          const style = getComputedStyle(tile);
+          return Number.parseFloat(style.borderRadius) < 10 || tile.getBoundingClientRect().width > width * 0.55;
+        })) throw new Error('Вместо соседних карточек отрисована широкая строка: ' + left + ' и ' + right);
+      }
       const storage = JSON.parse(localStorage.getItem('aviation-resource-prototype-v1'));
       const board = storage.aircraft.find(row => row.boardNumber === '402');
       const card = '[data-aircraft-id="' + board.id + '"]';
       for (const block of board.blocks) {
         click('[data-block-id="' + block.id + '"]');
         check('Формуляр · ' + block.name);
+        separateTiles('#block-form [name=name]', '#block-form [name=caption]');
         const table = document.querySelector('.template-table-wrap');
         if (table) {
           const date = table.querySelector('thead th');
@@ -506,8 +517,9 @@ async function main() {
         back();
         click('[data-action="add-resource"]');
         check('Добавление ресурса · ' + block.name);
-        sideBySide('#resource-form [name=limit]', '#resource-form [name=remaining]');
-        sideBySide('#resource-form [name=produced]', '#resource-form [name=installed]');
+        separateTiles('#resource-form [name=object]', '#resource-form [name=name]');
+        separateTiles('#resource-form [name=limit]', '#resource-form [name=remaining]');
+        separateTiles('#resource-form [name=produced]', '#resource-form [name=installed]');
         if (get('#resource-form [type=submit]').getBoundingClientRect().width >= get('#resource-form').getBoundingClientRect().width - 1) {
           throw new Error('Кнопка ресурса растянута на всю форму');
         }
@@ -563,7 +575,7 @@ async function main() {
       check('Меню самолёта');
       click('[data-board-menu="board-details"][data-board-id="' + board.id + '"]');
       check('Реквизиты борта');
-      sideBySide('[name=serialNumber]', '[name=rfNumber]');
+      separateTiles('[name=serialNumber]', '[name=rfNumber]');
       back();
       click('[data-board-menu="board-image"][data-board-id="' + board.id + '"]');
       check('Картинка борта');
