@@ -347,9 +347,41 @@ async function main() {
       const aggregateReportPeriod = !document.querySelector('[data-report-aggregates]');
       back();
       click('[data-aircraft-tab="aggregates"]');
+      click('[data-action="add-block"]');
+      const copyForm = document.querySelector('#creation-form');
+      copyForm.elements.name.value = 'Второй ГАК (копия настроек)';
+      const copySource = copyForm.querySelector('[data-aggregate-copy-source]');
+      copySource.value = aggregate().id;
+      copySource.dispatchEvent(new Event('change'));
+      click('[data-aggregate-copy-apply]');
+      click('[data-aggregate-copy-apply]');
+      const noDuplicateRules = copyForm.querySelectorAll('[data-rule-id]').length === 3;
+      copyForm.requestSubmit();
+      const duplicate = () => board().blocks.find(block => block.name === 'Второй ГАК (копия настроек)');
+      const ruleConfig = (block) => block.usageCounters.map(({ id, ...rule }) => rule);
+      const copiedRules = noDuplicateRules && JSON.stringify(ruleConfig(duplicate())) === JSON.stringify(ruleConfig(aggregate())) &&
+        duplicate().usageCounters.every((rule, index) => rule.id !== aggregate().usageCounters[index].id &&
+          duplicate().usageTotals[rule.id].sne === 0);
+      click('[data-block-id="' + duplicate().id + '"]');
+      click('[data-action="add-resource"]');
+      const copyResourceForm = document.querySelector('#resource-form');
+      copyResourceForm.elements.name.value = 'Лимит циклов второго агрегата';
+      const originalResource = board().resources.find(resource => resource.name === 'Лимит циклов');
+      document.querySelector('#resource-copy-from').value = originalResource.id;
+      click('#resource-copy-limit');
+      click('#resource-copy-inputs');
+      copyResourceForm.requestSubmit();
+      const copyResource = board().resources.find(resource => resource.name === 'Лимит циклов второго агрегата');
+      const localKey = 'aggregate:' + duplicate().usageCounters[0].id;
+      const copiedConsumption = copyResource?.objectId === duplicate().id && copyResource.limit === 30 &&
+        copyResource.remaining === 30 && copyResource.consumption[localKey] === 0.5 &&
+        !(consumptionKey in copyResource.consumption) && originalResource.remaining === 26;
+      back();
+      back();
       return { empty, imported, types, routed, pairedCounters, vkaLogs, gtdeLogs, gtdePpr, excludesUnpairedUnits,
         maximas, orderedInputs: first.orderedInputs, leftLog, rightLog, noDuplicates, rulesPersisted, unitPreserved, rulesCancel, rulesDiscard, rulesSavedOnBack,
         aggregatePreview, aggregateJournal, repairBalances, aggregateTotals, aggregateHistory, aggregateReport, aggregateReportPeriod, aggregateResourceCharge,
+        copiedRules, copiedConsumption,
         logBeforeSettings, repairs, replaces, preview: first.preview.includes('00:43'),
         rowsRemoved: first.rowsRemoved, pending: pending.pending && !pending.blockId && pendingRecord.preview.includes('ожидает привязки'), showsRaw };
     })()`);
@@ -359,6 +391,7 @@ async function main() {
       noDuplicates: true, rulesPersisted: true, unitPreserved: true, rulesCancel: true, rulesDiscard: true, rulesSavedOnBack: true,
       aggregatePreview: true, aggregateJournal: true, repairBalances: true,
       aggregateTotals: true, aggregateHistory: true, aggregateReport: true, aggregateReportPeriod: true, aggregateResourceCharge: true,
+      copiedRules: true, copiedConsumption: true,
       repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
     results.templateExperiment = "ok";
     await evaluate(`(() => {

@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.15";
+  const APP_VERSION = "0.2.38-exp.16";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -237,7 +237,12 @@
   function aggregateRuleFields() {
     return `<p class="field-help">Добавление в формуляр = значение источника × коэффициент.</p>
       <div class="section-stack" data-aggregate-rules></div>
-      <button type="button" class="secondary-button" data-aggregate-rule-add>Добавить показатель</button>`;
+      <button type="button" class="secondary-button" data-aggregate-rule-add>Добавить показатель</button>
+      <div data-aggregate-rule-copy hidden></div>`;
+  }
+
+  function aggregateRuleIdentity({ name, source, unit, factor }) {
+    return JSON.stringify([name.trim().toLocaleLowerCase("ru-RU"), source, unit, factor]);
   }
 
   function bindAggregateRules(root, aircraft, block) {
@@ -251,6 +256,9 @@
       }
     }
     const savedRules = new Map((block?.usageCounters || []).map((rule) => [rule.id, rule]));
+    const sourceLabels = new Map();
+    const readFields = (row) => Object.fromEntries([...row.querySelectorAll("[data-rule]")].map((input) =>
+      [input.dataset.rule, input.type === "number" ? input.valueAsNumber : input.value.trim()]));
     function unitLocked(ruleId) {
       const totals = block?.usageTotals?.[ruleId];
       return recorded.has(ruleId) || Boolean(totals?.sne || totals?.ppr);
@@ -259,6 +267,7 @@
       const row = document.createElement("fieldset");
       row.className = "form-grid";
       row.dataset.ruleId = rule.id;
+      if (rule.sourceLabel) sourceLabels.set(rule.id, rule.sourceLabel);
       const choices = sources.some(({ key }) => key === rule.source) ? sources :
         [...sources, { key: rule.source, label: `${rule.sourceLabel || "Исходный показатель"} · недоступен` }];
       row.innerHTML = `
@@ -279,7 +288,7 @@
       }
       row.querySelector('[data-rule="source"]').addEventListener("change", (event) => {
         const source = sources.find(({ key }) => key === event.target.value);
-        if (source?.unit && !savedRules.has(rule.id)) unit.value = source.unit;
+        if (source?.unit && !rule.name) unit.value = source.unit;
         updateExample();
       });
       factor.addEventListener("input", updateExample);
@@ -290,17 +299,45 @@
     }
     for (const rule of block?.usageCounters || []) add(rule);
     root.querySelector("[data-aggregate-rule-add]").onclick = () => add();
+    const candidates = aircraft.blocks.filter((item) => item !== block && item.usageCounters?.length);
+    if (candidates.length) {
+      const copy = root.querySelector("[data-aggregate-rule-copy]");
+      copy.hidden = false;
+      copy.innerHTML = `<details class="form-details"><summary>Скопировать показатели</summary>
+        <label>Из другого формуляра<select data-aggregate-copy-source><option value="">Выбрать</option>${candidates.map((item) =>
+          `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}${item.serialNumber ? ` · № ${escapeHtml(item.serialNumber)}` : ""}</option>`).join("")}</select></label>
+        <button type="button" class="small-button" data-aggregate-copy-apply disabled>Скопировать настройки</button>
+        <small class="field-help" data-aggregate-copy-result role="status"></small>
+      </details>`;
+      const select = copy.querySelector("[data-aggregate-copy-source]");
+      const button = copy.querySelector("[data-aggregate-copy-apply]");
+      const result = copy.querySelector("[data-aggregate-copy-result]");
+      select.onchange = () => { button.disabled = !select.value; result.textContent = ""; };
+      button.onclick = () => {
+        const source = candidates.find(({ id }) => id === select.value);
+        if (!source) return;
+        const present = new Set([...list.children].map((row) => aggregateRuleIdentity(readFields(row))));
+        let copied = 0;
+        for (const rule of source.usageCounters) {
+          const key = aggregateRuleIdentity(rule);
+          if (present.has(key)) continue;
+          add({ ...rule, id: id() });
+          present.add(key);
+          copied += 1;
+        }
+        result.textContent = copied ? `Скопировано показателей: ${copied}. Начальные показания: 0.` : "Эти показатели уже есть в форме.";
+      };
+    }
     const draft = () => [...list.children].map((row) => [row.dataset.ruleId,
       ...[...row.querySelectorAll("[data-rule]")].map((input) => [input.value, input.validity.badInput])]);
     return { draft, read: () => [...list.children].map((row) => {
-      const values = Object.fromEntries([...row.querySelectorAll("[data-rule]")].map((input) =>
-        [input.dataset.rule, input.type === "number" ? input.valueAsNumber : input.value.trim()]));
+      const values = readFields(row);
       if (!values.name) throw new Error("Укажи название показателя");
       if (row.querySelector("input[type=number]:invalid")) throw new Error("Проверь коэффициент и начальные показания");
       const source = sources.find(({ key }) => key === values.source);
       const previous = savedRules.get(row.dataset.ruleId);
       if (unitLocked(row.dataset.ruleId) && previous?.unit !== values.unit) throw new Error("Единица накопленной наработки закреплена за показателем");
-      return { id: row.dataset.ruleId, ...values, sourceLabel: source?.label || previous?.sourceLabel || "Исходный показатель" };
+      return { id: row.dataset.ruleId, ...values, sourceLabel: source?.label || sourceLabels.get(row.dataset.ruleId) || "Исходный показатель" };
     }) };
   }
 
@@ -3977,11 +4014,28 @@
       const source = selectedCopy();
       if (!source) return;
       if (source.unit !== resourceForm.elements.unit.value) { showToast("Для копирования расхода выбери ту же единицу ресурса"); return; }
-      const values = resourceInputs(source, resourceOwner(aircraft, source), aircraft);
-      const allowed = resourceSources(aircraft, currentOwner());
-      if (Object.keys(values).some((key) => !allowed.some((entry) => entry.key === key))) {
-        showToast("У этого агрегата нет одного из источников исходного правила");
-        return;
+      const origin = resourceOwner(aircraft, source);
+      const target = currentOwner();
+      const allowed = new Set(resourceSources(aircraft, target).map(({ key }) => key));
+      const values = {};
+      for (const [key, factor] of Object.entries(resourceInputs(source, origin, aircraft))) {
+        let destination = key;
+        if (!allowed.has(destination)) {
+          if (!factor) continue;
+          const counter = origin?.usageCounters?.find(({ id }) => aggregateResourceKey(id) === key);
+          const matches = counter ? (target?.usageCounters || []).filter((rule) =>
+            aggregateRuleIdentity(rule) === aggregateRuleIdentity(counter)) : [];
+          if (matches.length !== 1) {
+            showToast("В формуляре назначения нужен один такой же показатель с теми же источником, единицей и коэффициентом");
+            return;
+          }
+          destination = aggregateResourceKey(matches[0].id);
+        }
+        if (Object.hasOwn(values, destination)) {
+          showToast("Несколько правил расхода ссылаются на один показатель назначения");
+          return;
+        }
+        values[destination] = factor;
       }
       implicitInputs = null;
       drawInputs(values);
