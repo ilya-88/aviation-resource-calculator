@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.10";
+  const APP_VERSION = "0.2.38-exp.11";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -277,7 +277,9 @@
     }
     for (const rule of block?.usageCounters || []) add(rule);
     root.querySelector("[data-aggregate-rule-add]").onclick = () => add();
-    return { read: () => [...list.children].map((row) => {
+    const draft = () => [...list.children].map((row) => [row.dataset.ruleId,
+      ...[...row.querySelectorAll("[data-rule]")].map((input) => [input.value, input.validity.badInput])]);
+    return { draft, read: () => [...list.children].map((row) => {
       const values = Object.fromEntries([...row.querySelectorAll("[data-rule]")].map((input) =>
         [input.dataset.rule, input.type === "number" ? input.valueAsNumber : input.value.trim()]));
       if (!values.name) throw new Error("Укажи название показателя");
@@ -739,10 +741,12 @@
 
   let leaveUsageSettings;
   let leaveTemplateEditor;
+  let leaveAggregateRules;
   function navigateBack() {
     if (state.view === "usage-settings" && leaveUsageSettings?.()) return;
     if (["aircraft-layout", "block-layout"].includes(state.view) && leaveAircraftLayout?.()) return;
     if (state.view === "template-editor" && leaveTemplateEditor?.()) return;
+    if (state.view === "block-usage-rules" && leaveAggregateRules?.()) return;
     finishBackNavigation();
   }
 
@@ -2680,6 +2684,24 @@
     </form>`, { title: "Учёт наработки", singleLine: true, back: true, settings: false });
     const form = document.getElementById("aggregate-rules-form");
     const editor = bindAggregateRules(form, aircraft, block);
+    const initial = JSON.stringify(editor.draft());
+    leaveAggregateRules = () => {
+      if (JSON.stringify(editor.draft()) === initial) {
+        leaveAggregateRules = null;
+        return false;
+      }
+      if (!app.querySelector("dialog[open]")) {
+        chooseLayoutAction("Сохранить изменения учёта наработки?",
+          [["save", "Сохранить"], ["discard", "Выйти без сохранения"], ["cancel", "Остаться"]], (action) => {
+            if (action === "save") form.requestSubmit();
+            if (action === "discard") {
+              leaveAggregateRules = null;
+              finishBackNavigation();
+            }
+          });
+      }
+      return true;
+    };
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const previousRules = block.usageCounters;
@@ -2695,7 +2717,8 @@
         form.querySelector(".form-error").textContent = error.message;
         return;
       }
-      navigateBack();
+      leaveAggregateRules = null;
+      finishBackNavigation();
       showToast("Учёт наработки сохранён");
     });
   }

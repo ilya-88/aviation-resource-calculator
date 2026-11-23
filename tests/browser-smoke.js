@@ -267,9 +267,25 @@ async function main() {
       click('[data-view="block-usage-rules"]');
       const rulesPersisted = document.querySelectorAll('[data-rule-id]').length === 3 &&
         document.querySelector('[data-rule-id] [data-rule="sne"]').value === '3';
-      const rulesForm = document.querySelector('#aggregate-rules-form');
-      rulesForm.querySelector('[data-rule-id] [data-rule="name"]').value = 'Циклы от посадок';
-      rulesForm.requestSubmit();
+      const ruleName = () => document.querySelector('#aggregate-rules-form [data-rule-id] [data-rule="name"]');
+      async function leaveRules(action) {
+        back();
+        const dialog = document.querySelector('dialog[open]');
+        if (!dialog?.textContent.includes('Сохранить изменения учёта наработки?')) throw new Error('Нет предупреждения о несохранённом учёте');
+        await new Promise(resolve => {
+          dialog.addEventListener('close', resolve, { once: true });
+          dialog.querySelector('[value="' + action + '"]').click();
+        });
+      }
+      ruleName().value = 'Черновик';
+      await leaveRules('cancel');
+      const rulesCancel = ruleName()?.value === 'Черновик';
+      await leaveRules('discard');
+      const rulesDiscard = !ruleName() && aggregate().usageCounters[0].name === 'Посадки';
+      click('[data-view="block-usage-rules"]');
+      ruleName().value = 'Циклы от посадок';
+      await leaveRules('save');
+      const rulesSavedOnBack = !ruleName() && aggregate().usageCounters[0].name === 'Циклы от посадок';
       back();
       function recordAggregate() {
         click('[data-view="shift"]');
@@ -296,7 +312,7 @@ async function main() {
         JSON.stringify(aggregateBalances()) === JSON.stringify([{sne:11,ppr:4},{sne:10,ppr:5},{sne:6,ppr:3}]);
       const aggregateHistory = board().shifts.at(-1).aggregateAccruals.map(entry => entry.amount).join(',') === '4,5,3';
       return { empty, imported, types, routed, pairedCounters, vkaLogs, gtdeLogs, gtdePpr, excludesUnpairedUnits,
-        maximas, orderedInputs: first.orderedInputs, leftLog, rightLog, noDuplicates, rulesPersisted,
+        maximas, orderedInputs: first.orderedInputs, leftLog, rightLog, noDuplicates, rulesPersisted, rulesCancel, rulesDiscard, rulesSavedOnBack,
         aggregatePreview, aggregateJournal, repairBalances, aggregateTotals, aggregateHistory,
         logBeforeSettings, repairs, replaces, preview: first.preview.includes('00:43'),
         rowsRemoved: first.rowsRemoved, pending: pending.pending && !pending.blockId && pendingRecord.preview.includes('ожидает привязки'), showsRaw };
@@ -304,7 +320,8 @@ async function main() {
     assert.deepEqual(experimental, { empty: true, imported: true, types: {airframe:1, engine:2, unit:4}, routed: true,
       pairedCounters: true, vkaLogs: true, gtdeLogs: true, gtdePpr: true, excludesUnpairedUnits: true,
       maximas: [3,8,12], orderedInputs: true, leftLog: true, rightLog: true, logBeforeSettings: true,
-      noDuplicates: true, rulesPersisted: true, aggregatePreview: true, aggregateJournal: true, repairBalances: true,
+      noDuplicates: true, rulesPersisted: true, rulesCancel: true, rulesDiscard: true, rulesSavedOnBack: true,
+      aggregatePreview: true, aggregateJournal: true, repairBalances: true,
       aggregateTotals: true, aggregateHistory: true,
       repairs: true, replaces: true, preview: true, rowsRemoved: true, pending: true, showsRaw: true });
     results.templateExperiment = "ok";
