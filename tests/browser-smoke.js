@@ -474,16 +474,54 @@ async function main() {
       });
       click('#layout-save');
       click('[data-action="settings"]');
+      click('[data-view="board-usage"]');
+      const boardUsageForm = document.querySelector('#board-usage-form');
+      boardUsageForm.elements.newSource.value = 'Срабатывания клапана';
+      const factorInput = boardUsageForm.querySelector('[data-source-factor]');
+      factorInput.value = '0.8';
+      factorInput.dispatchEvent(new Event('input'));
+      boardUsageForm.requestSubmit();
+      const custom = board().customUsageSources.at(-1);
+      back();
+      back();
+      const sourceUnit = board().blocks.find(block => block.templateSlotId === 'unit-four');
+      click('[data-block-id="' + sourceUnit.id + '"]');
+      const formOfUnit = document.querySelector('#block-form');
+      formOfUnit.elements.serialNumber.value = 'PRIVATE-SERIAL-401';
+      formOfUnit.requestSubmit();
+      click('[data-view="block-usage-rules"]');
+      function rule(name, source, factor, initial) {
+        click('[data-aggregate-rule-add]');
+        const row = document.querySelector('[data-rule-id]:last-child');
+        row.querySelector('[data-rule="name"]').value = name;
+        const selector = row.querySelector('[data-rule="source"]');
+        selector.value = source;
+        selector.dispatchEvent(new Event('change'));
+        row.querySelector('[data-rule="factor"]').value = factor;
+        row.querySelector('[data-rule="sne"]').value = initial;
+      }
+      rule('Клапан', 'board:' + custom.key, 2, 15);
+      rule('Запуски мотора', 'position:motor-4:starts', 1, 0);
+      document.querySelector('#aggregate-rules-form').requestSubmit();
+      const originalRule = board().blocks.find(block => block.id === sourceUnit.id).usageCounters[0];
+      back();
+      click('[data-action="settings"]');
       let payload;
       window.AndroidBridge = { saveAircraftTemplate(filename, json) { payload = { filename, json }; } };
       click('#export-board-template');
       delete window.AndroidBridge;
+      if (!payload) throw new Error('Экспорт не сформирован: ' + document.querySelector('.toast')?.textContent);
       const exported = JSON.parse(payload.json);
       const layout = exported.layout.tabs.aggregates;
       const tile = layout.find(item => item.keys.includes('slot:motor-4'));
       const exportOk = payload.filename === 'example-four.json' && movedIndex < Number(priorIndex) &&
         tile.labels['slot:motor-4'] === 'Мой двигатель 4' && Boolean(tile.span) &&
         !payload.json.includes(oldId) && !exported.shifts && !exported.boardNumber;
+      const exportedRules = exported.positions.find(position => position.id === 'unit-four').usageCounters;
+      const exportedUsage = exported.boardUsage.find(source => source.key === custom.key).factor === 0.8 &&
+        exportedRules[0].factor === 2 && exportedRules[1].source === 'position:motor-4:starts' &&
+        !payload.json.includes('PRIVATE-SERIAL-401') && !payload.json.includes(originalRule.id) &&
+        !Object.hasOwn(exportedRules[0], 'sne');
       back();
       back();
       catalog();
@@ -510,9 +548,22 @@ async function main() {
       const remapped = instance.boardLayouts.aggregates[layout.indexOf(tile)].keys.includes('widget:' + newId) &&
         content.textContent.includes('Мой двигатель 4') &&
         instance.boardLayouts.aggregates[layout.indexOf(tile)].span === tile.span && !instance.shifts.length;
-      return { blankSaved, fourTotals, report, exportOk, remapped };
+      const importedUnit = instance.blocks.find(block => block.templateSlotId === 'unit-four');
+      const importedUsage = importedUnit.id !== sourceUnit.id && importedUnit.usageCounters[0].id !== originalRule.id &&
+        importedUnit.usageCounters.every(rule => !importedUnit.usageTotals[rule.id]) && !importedUnit.serialNumber;
+      click('[data-view="shift"]');
+      const importedWork = document.querySelector('#template-work-form');
+      importedWork.elements[custom.key].value = '3';
+      importedWork.querySelector('[data-template-scope="motor-4"] [data-template-field="starts"]').value = '1';
+      importedWork.dispatchEvent(new Event('input'));
+      const preview = document.querySelector('#template-preview').textContent;
+      const importedAccrual = preview.includes('Клапан') && preview.includes('3 × 2 = 6 шт.') &&
+        preview.includes('Запуски мотора') && preview.includes('1 × 1 = 1 зап.');
+      back();
+      return { blankSaved, fourTotals, report, exportOk, remapped, exportedUsage, importedUsage, importedAccrual };
     })()`);
-    assert.deepEqual(portable, { blankSaved: true, fourTotals: true, report: "Двигатель 1|Двигатель 2|Двигатель 3|Двигатель 4", exportOk: true, remapped: true });
+    assert.deepEqual(portable, { blankSaved: true, fourTotals: true, report: "Двигатель 1|Двигатель 2|Двигатель 3|Двигатель 4",
+      exportOk: true, remapped: true, exportedUsage: true, importedUsage: true, importedAccrual: true });
     results.portableFourEngineTemplate = "ok";
     const formResources = await evaluate(`(() => {
       const read = () => JSON.parse(localStorage.getItem('aviation-resource-prototype-v1')).aircraft.find(row => row.boardNumber === '402');

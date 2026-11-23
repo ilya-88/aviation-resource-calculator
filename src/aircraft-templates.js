@@ -6,6 +6,8 @@
   "use strict";
 
   const landingRoles = ["runway", "carrier", "touch", "circuit", "arresterHooks"];
+  const boardRoles = ["flight", ...landingRoles];
+  const aggregateUnits = ["шт.", "ч", "мин", "с", "пос.", "зап.", "сраб."];
   const counterRoles = ["starts", "total", "flight", "ground", "or", "combat", "combined"];
   const scopes = ["board", "engine"];
   const layoutTabs = ["works", "aggregates", "least-reliable"];
@@ -126,7 +128,8 @@
       requireValue(position !== "board", "Идентификатор board занят данными самолёта");
       requireValue(["airframe", "engine", "unit"].includes(row.kind), `Неизвестный вид формуляра: ${position}`);
       return { id: position, label: label(row.label, position), kind: row.kind, model: row.model ? label(row.model, position) : "",
-        ...(row.engineLink != null && { engineLink: row.engineLink }) };
+        ...(row.engineLink != null && { engineLink: row.engineLink }),
+        ...(row.usageCounters != null && { usageCounters: row.usageCounters }) };
     });
     unique(positions, "id", "позиции");
     requireValue(positions.filter((row) => row.kind === "airframe").length === 1, "Шаблону нужен один формуляр самолёта");
@@ -198,6 +201,35 @@
         stepMinutes: row.stepMinutes, percent: row.percent, direction: row.direction };
     });
     unique(rules, "target", "правила начисления");
+    const boardUsage = document.boardUsage == null ? null : list(document.boardUsage, "показатели борта", (row) => {
+      const key = boardRoles.includes(row.key) ? row.key : identifier(row.key, "показатель борта");
+      const custom = key.startsWith("custom-");
+      requireValue(custom || boardRoles.includes(key), `Неизвестный показатель борта: ${key}`);
+      requireValue(typeof row.enabled === "boolean" && Number.isFinite(row.factor) && row.factor >= 0,
+        `Проверь доступность и коэффициент показателя: ${key}`);
+      if (custom) {
+        requireValue(row.kind === "count" || (row.kind === "time" && ["hours", "seconds"].includes(row.format)),
+          `Проверь тип и формат показателя: ${key}`);
+      }
+      return { key, label: label(row.label, key), enabled: row.enabled, factor: row.factor,
+        ...(custom && { kind: row.kind, ...(row.kind === "time" && { format: row.format }) }) };
+    });
+    if (boardUsage) unique(boardUsage, "key", "показатели борта");
+    const boardKeys = new Set([...boardRoles, ...(boardUsage || []).map(({ key }) => key)]);
+    const engineKeys = new Set(positions.filter((position) => position.kind === "engine").flatMap((position) =>
+      rules.map((rule) => `position:${position.id}:${rule.target}`)));
+    for (const position of positions.filter((row) => row.usageCounters != null)) {
+      requireValue(position.kind !== "airframe", "Для планера используй показатели борта");
+      position.usageCounters = list(position.usageCounters, position.id, (row) => {
+        const name = label(row.name, position.id);
+        const source = row.source;
+        requireValue(source === "manual" || (typeof source === "string" && source.startsWith("board:") && boardKeys.has(source.slice(6))) ||
+          engineKeys.has(source), `Не найден источник показателя «${name}» в формуляре «${position.label}»`);
+        requireValue(aggregateUnits.includes(row.unit) && Number.isFinite(row.factor) && row.factor >= 0 && row.factor <= 1000000,
+          `Проверь единицу и коэффициент показателя «${name}»`);
+        return { name, source, unit: row.unit, factor: row.factor };
+      });
+    }
     const checks = list(document.checks || [], "проверки вложенности", (row) => {
       requireValue(Array.isArray(row.ascending) && row.ascending.length >= 2 && row.ascending.length <= 12 &&
         new Set(row.ascending).size === row.ascending.length && row.ascending.every((key) => engineInput(key)?.type === "duration"),
@@ -208,7 +240,8 @@
       "Поля двигателя требуют хотя бы одну позицию двигателя");
     const layout = document.layout == null ? null : validateLayout(document.layout, positions);
     return { schemaVersion: 1, id, name, workTitle: label(document.workTitle || "Исходные данные работы", "форма ввода"),
-      positions, repeatGroups: groups, inputs, engineCounters: counters, rules, checks, ...(layout && { layout }) };
+      positions, repeatGroups: groups, inputs, engineCounters: counters, rules, checks,
+      ...(boardUsage && { boardUsage }), ...(layout && { layout }) };
   }
 
   function parseValue(field, raw) {
@@ -276,5 +309,5 @@
     return { values, counters, steps };
   }
 
-  return { validateTemplate, calculate, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, normalizeFlightLabel, normalizeTemplateFlightLabel };
+  return { validateTemplate, calculate, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits, normalizeFlightLabel, normalizeTemplateFlightLabel };
 });

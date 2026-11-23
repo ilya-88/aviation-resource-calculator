@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.13";
+  const APP_VERSION = "0.2.38-exp.14";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -203,16 +203,16 @@
     });
   }
 
-  const AGGREGATE_UNITS = ["шт.", "ч", "мин", "с", "пос.", "зап.", "сраб."];
+  const AGGREGATE_UNITS = aircraftTemplates.aggregateUnits;
   const classicEngineUnits = { engineMinutes: "ч", starts: "зап.", maximum: "с", afterburner: "с", or: "с", combat: "с", combined: "с" };
   const classicEngineValues = (usage) => ({
     engineMinutes: usage.minutes / 60, starts: usage.starts, maximum: usage.maximumSeconds, afterburner: usage.afterburnerSeconds, ...usage.modes,
   });
   const manualCounterName = (counter) => `aggregate-input:${counter.id}`;
 
-  function aggregateUsageSources(aircraft) {
+  function aggregateUsageSources(aircraft, includeDisabled = false) {
     const sources = [{ key: "manual", label: "Вручную при записи работы" }];
-    for (const source of usageSources(aircraft).filter(({ key }) => sourceEnabled(aircraft, key))) {
+    for (const source of usageSources(aircraft).filter(({ key }) => includeDisabled || sourceEnabled(aircraft, key))) {
       const unit = sourceKind(source) === "time" ? "ч" : source.key.startsWith("custom-") ? "шт." : "пос.";
       sources.push({ key: `board:${source.key}`, label: `Борт · ${usageRule(source.key, aircraft).label} (${unit})`, unit });
     }
@@ -1136,8 +1136,15 @@
       if (block) {
         position.label = block.name;
         position.model = block.model;
+        if (block.usageCounters) {
+          position.usageCounters = block.usageCounters.map(({ name, source, unit, factor }) => ({ name, source, unit, factor }));
+        }
       }
     }
+    template.boardUsage = usageSources(aircraft).map(({ key, kind, format }) => {
+      const { label, factor } = usageRule(key, aircraft);
+      return { key, label, factor, enabled: sourceEnabled(aircraft, key), kind, format };
+    });
     const tabLayouts = aircraft.boardLayouts ?? (aircraft.counterLayout && Object.fromEntries(
       ["works", "aggregates", "least-reliable"].map((tab) => [tab, aircraft.counterLayout])));
     const tabs = Object.fromEntries(Object.entries(tabLayouts || {}).map(([tab, tiles]) =>
@@ -2488,7 +2495,7 @@
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>Настройки самолёта</h1></div></section>
       <button class="setting-row" data-view="board-usage"><strong>Показатели работы этого борта</strong>${icon("chevron")}</button>
-      ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-board-template"><span><strong>Экспортировать шаблон борта</strong><small>Позиции, правила расчёта и раскладка карточек</small></span></button>' : ""}
+      ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-board-template"><span><strong>Экспортировать шаблон борта</strong><small>Позиции, показатели, правила расчёта и раскладка карточек</small></span></button>' : ""}
       <section class="settings-list">
         <label class="setting-row"><span><strong>Уведомления этого самолёта</strong><small>${state.globalNotifications ? "Работы и ресурсы выбранного борта" : "Общие уведомления приложения выключены"}</small></span><input id="aircraft-notifications" type="checkbox" ${aircraft.notifications ? "checked" : ""} ${!state.globalNotifications ? "disabled" : ""}></label>
       </section>
@@ -4153,9 +4160,19 @@
     const fields = template.inputs.filter((input) => input.role);
     const enabled = Object.fromEntries(BOARD_USAGE_TYPES.map((key) => [key, fields.some((input) => input.role === key)]));
     const labels = Object.fromEntries(fields.map((input) => [input.role, input.label]));
+    const factors = {};
+    const customSources = [];
+    for (const { key, enabled: active, ...source } of template.boardUsage || []) {
+      enabled[key] = active;
+      labels[key] = source.label;
+      factors[key] = source.factor;
+      if (key.startsWith("custom-")) customSources.push({ key, ...source });
+    }
     state.aircraftTypes = [...previous.aircraftTypes, template.name];
     state.templateCatalog = [...previous.templateCatalog, template];
-    state.usageTypeOverrides = [...previous.usageTypeOverrides, { type: template.name.toLowerCase(), enabled, labels }];
+    state.usageTypeOverrides = [...previous.usageTypeOverrides, {
+      type: template.name.toLowerCase(), enabled, labels, ...(template.boardUsage && { factors, customSources }),
+    }];
     if (saveState()) return true;
     Object.assign(state, previous);
     return false;
@@ -4281,13 +4298,15 @@
     function readDraft() {
       for (const key of ["name", "id", "workTitle"]) draft[key] = form.elements[key].value.trim();
       for (const key of Object.keys(config)) {
-        draft[key] = [...form.querySelectorAll(`[data-template-entry="${key}"]`)].map((entry) => {
+        draft[key] = [...form.querySelectorAll(`[data-template-entry="${key}"]`)].map((entry, index) => {
           const row = Object.fromEntries([...entry.querySelectorAll("[data-property]")]
             .filter((input) => !input.closest("[hidden]") && input.value.trim()).map((input) =>
             [input.dataset.property, input.type === "number" ? Number(input.value) : input.value.trim()]));
           if (key === "positions") {
             const { linkSource, linkCounters, ...position } = row;
             if (linkSource) position.engineLink = { source: linkSource, counters: linkCounters === "all" ? "all" : commaList(linkCounters || "") };
+            const counters = draft.positions[index].usageCounters;
+            if (counters) position.usageCounters = counters;
             return position;
           }
           if (key === "checks") return { ascending: commaList(row.ascending || "") };
@@ -4880,7 +4899,7 @@
     const template = state.typeSettings.find((entry) => entry.type.toLowerCase() === type.toLowerCase());
     const sameType = state.aircraft.find((item) => item.type.toLowerCase() === type.toLowerCase());
     const boardId = `aircraft-${id()}`;
-    state.aircraft.push({
+    const aircraft = {
       id: boardId,
       type: type.trim(),
       boardNumber: boardNumber.trim(),
@@ -4909,8 +4928,20 @@
         { id: "gtde", kind: "unit", name: "ГТДЭ / ВСУ", caption: "Вспомогательная энергоустановка" },
       ]).map((block) => normalizeBlock({ status: "ok", ...block })),
       resources: [],
-    });
-    if (workTemplate) applyTemplateLayout(state.aircraft.at(-1), workTemplate);
+    };
+    if (workTemplate) {
+      applyTemplateLayout(aircraft, workTemplate);
+      if (workTemplate.positions.some((position) => position.usageCounters)) {
+        const labels = new Map(aggregateUsageSources(aircraft, true).map(({ key, label }) => [key, label]));
+        for (const block of aircraft.blocks) {
+          const rules = templatePositionFor(aircraft, block)?.usageCounters;
+          if (!rules) continue;
+          block.usageCounters = rules.map((rule) => ({ ...rule, id: id(), sourceLabel: labels.get(rule.source) }));
+          block.usageTotals = {};
+        }
+      }
+    }
+    state.aircraft.push(aircraft);
     state.selectedAircraftId = boardId;
     state.aircraftTab = "aggregates";
     state.view = "aircraft";

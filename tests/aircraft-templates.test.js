@@ -72,6 +72,25 @@ test("раскладка принимает позицию шаблона, чи�
   assert.throws(() => templates.validateTemplate(document), /неизвестную карточку/);
 });
 
+test("шаблон переносит определения счётчиков и проверяет источники", () => {
+  const raw = structuredClone(su33);
+  raw.boardUsage = [{ key: "custom-clock", label: "Работа насоса", kind: "time", format: "seconds", factor: 2, enabled: true }];
+  const rule = { name: "Циклы", source: "board:custom-clock", unit: "шт.", factor: 3 };
+  raw.positions[3].usageCounters = [
+    { ...rule, id: "local", sne: 400, ppr: 23 },
+    { name: "Запуски", source: "position:engine-right:starts", unit: "зап.", factor: 1 },
+  ];
+  const parsed = templates.validateTemplate(raw);
+  assert.deepEqual(parsed.boardUsage, raw.boardUsage);
+  assert.deepEqual(parsed.positions[3].usageCounters, [rule, raw.positions[3].usageCounters[1]]);
+  assert.deepEqual(templates.validateTemplate(parsed), parsed);
+  raw.positions[3].usageCounters[1].source = "position:missing:starts";
+  assert.throws(() => templates.validateTemplate(raw), /Не найден источник показателя/);
+  raw.positions[3].usageCounters.pop();
+  raw.boardUsage = [];
+  assert.throws(() => templates.validateTemplate(raw), /Не найден источник показателя/);
+});
+
 test("неподдерживаемая операция и несовместимый тип отклоняются при импорте", () => {
   const copy = structuredClone(su33);
   copy.rules[0].operation = "unknown";
