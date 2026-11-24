@@ -316,6 +316,17 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String readSavedState() {
+            return getSharedPreferences("aircraft_state", MODE_PRIVATE).getString("state", null);
+        }
+
+        @JavascriptInterface
+        public boolean storeState(String value) {
+            return value != null && getSharedPreferences("aircraft_state", MODE_PRIVATE)
+                    .edit().putString("state", value).commit();
+        }
+
+        @JavascriptInterface
         public void copyDiagnostics(String text) {
             runOnUiThread(() -> {
                 android.content.ClipboardManager clipboard = getSystemService(android.content.ClipboardManager.class);

@@ -1,0 +1,112 @@
+{
+  "kind": "aircraft-start",
+  "version": 1,
+  "template": {
+    "schemaVersion": 1,
+    "id": "civil-form-check-29",
+    "name": "Учебный стенд граф",
+    "workTitle": "Запись работы",
+    "positions": [
+      {
+        "id": "frame",
+        "kind": "airframe",
+        "label": "Формуляр самолёта",
+        "usageCounters": [
+          {
+            "name": "Дата работы",
+            "source": "work:date",
+            "unit": "дата",
+            "workMode": "entry",
+            "factor": 1
+          }
+        ]
+      },
+      {
+        "id": "motor",
+        "kind": "engine",
+        "label": "Учебный двигатель",
+        "usageCounters": [
+          {
+            "name": "Время на земле за работу",
+            "source": "raw:motor:ground",
+            "unit": "мин",
+            "workMode": "entry",
+            "factor": 1
+          },
+          {
+            "name": "Период проверки",
+            "source": "manual",
+            "unit": "дн.",
+            "workMode": "entry",
+            "factor": 1
+          }
+        ]
+      },
+      {
+        "id": "meter",
+        "kind": "unit",
+        "label": "Контрольный счётчик",
+        "usageCounters": [
+          {
+            "name": "Посадки всего",
+            "source": "board:runway",
+            "unit": "шт.",
+            "workMode": "total",
+            "factor": 1
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "id": "flight",
+        "label": "Налёт",
+        "scope": "board",
+        "role": "flight",
+        "type": "duration",
+        "format": "HH:MM"
+      },
+      {
+        "id": "runway",
+        "label": "Посадки",
+        "role": "runway",
+        "scope": "board",
+        "type": "count"
+      },
+      {
+        "id": "ground",
+        "label": "Время на земле",
+        "type": "duration",
+        "scope": "engine",
+        "format": "HH:MM"
+      }
+    ],
+    "engineCounters": [],
+    "rules": []
+  },
+  "aircraft": {
+    "boardNumber": "Т-29",
+    "serialNumber": "DEMO-FORM-29",
+    "readings": {
+      "actualLandings": 100
+    },
+    "blocks": [
+      {
+        "position": "frame"
+      },
+      {
+        "position": "motor"
+      },
+      {
+        "position": "meter",
+        "totals": [
+          {
+            "counter": 0,
+            "sne": 100
+          }
+        ]
+      }
+    ],
+    "resources": []
+  }
+}

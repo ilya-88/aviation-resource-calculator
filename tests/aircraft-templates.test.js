@@ -188,3 +188,25 @@ test("тот же расчёт принимает один двигатель с
   const result = templates.calculate(parsed, { fields: { ground: "00:11", air: "00:20" }, groups: {} }, "engine");
   assert.equal(result.counters.operation, 1800);
 });
+
+
+test("Новые графы: отдельный импорт, совместимые единицы и защита от ошибочной связи", () => {
+  const api = require("../src/aircraft-templates.js");
+  const sample = require("../examples/civil-form-check-29.json");
+  const pack = api.validateStartingAircraft(sample);
+  assert.equal(pack.aircraft.boardNumber, "Т-29");
+  assert.equal(pack.template.positions[0].usageCounters[0].workMode, "entry");
+  assert.equal(1020 * api.unitScale("с", "мин"), 17);
+  assert.equal(2 * api.unitScale("ч", "мин"), 120);
+  assert.throws(() => api.unitScale("ч", "шт."), /Несовместимые/);
+  const source = structuredClone(sample);
+  const rules = source.template.positions[1].usageCounters;
+  rules[0].unit = "шт.";
+  assert.throws(() => api.validateStartingAircraft(source), /Несовместимые/);
+  rules[0].unit = "мин";
+  rules[1].fieldKey = "inspection";
+  rules.push({ name: "Прошло дней", workMode: "entry", unit: "дн.", source: "local:inspection", factor: 1 });
+  assert.equal(api.validateStartingAircraft(source).template.positions[1].usageCounters.at(-1).source, "local:inspection");
+  rules.at(-1).source = "local:missing";
+  assert.throws(() => api.validateStartingAircraft(source), /Не найден источник/);
+});
