@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.27";
+  const APP_VERSION = "0.2.38-exp.28";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -2339,6 +2339,7 @@
     }
     const template = { ...stored, inputs, repeatGroups: stored.repeatGroups.filter((group) => inputs.some((field) => field.group === group.id)) };
     const positions = template.positions.filter((position) => position.kind === "engine");
+    const flightField = aircraftTemplates.engineFlightInput(template);
     app.innerHTML = shell(`
       <h1>${escapeHtml(template.workTitle)}</h1>
       <form id="template-work-form" class="shift-form">
@@ -2384,9 +2385,15 @@
         .map(({ role, id }) => [role, boardValues[id]]));
       const engines = positions.map((position) => {
         const raw = readScope(scopes.get(position.id));
-        const result = aircraftTemplates.calculate(template, raw, "engine");
+        const installed = resolveTemplateBlock(aircraft, position, date);
+        const boardSeconds = installed ? boardUsage.flight : null;
+        const result = aircraftTemplates.calculate(template, raw, "engine", { field: flightField, boardSeconds });
+        if (flightField) {
+          const input = scopes.get(position.id).querySelector(`[data-template-field="${flightField.id}"]`);
+          input.placeholder = boardSeconds == null ? flightField.format : `${aircraftTemplates.formatValue(flightField, boardSeconds)} · с борта`;
+        }
         const hasInput = Object.values(result.values).some((value) => value != null);
-        const block = hasInput ? resolveTemplateBlock(aircraft, position, date) : null;
+        const block = hasInput ? installed : null;
         return { slotId: position.id, slotLabel: position.label, blockId: block?.id,
           blockName: block?.name, serialNumber: block?.serialNumber, repairNumber: block && countsTowardPpr(block, date) ? block.repairs : null,
           raw, ...result, pending: hasInput && !block };
@@ -2406,6 +2413,7 @@
         const { work, aggregateUsage, accruals } = calculate();
         preview.innerHTML = `<strong>Предпросмотр</strong>${work.engines.map((engine) =>
           `<details${engine.pending ? " open" : ""}><summary>${escapeHtml(engine.slotLabel)}${engine.pending ? " · ожидает привязки" : ""}</summary>
+            ${engine.inheritedFlight ? "<p>Время в воздухе взято из налёта борта.</p>" : ""}
             ${templateCounterValues(template, engine.counters)}
             ${templateCalculationSteps(template, engine.steps)}
           </details>`).join("")}${aggregateAccrualSummary(aggregateUsage)}
@@ -3768,6 +3776,7 @@
       ${work.engines.map((engine) => `<details open><summary>${escapeHtml(engine.blockName || engine.slotLabel)}${engine.serialNumber ? ` · № ${escapeHtml(engine.serialNumber)}` : ""}</summary>
         ${engine.pending ? "<p>Ожидает привязки двигателя на дату работы.</p>" : ""}
         <dl class="template-values">${rawValues(engine.raw, "engine")}</dl>
+        ${engine.inheritedFlight ? "<p>Время в воздухе взято из налёта борта.</p>" : ""}
         ${templateCounterValues(template, engine.counters)}
         ${templateCalculationSteps(template, engine.steps)}
       </details>`).join("")}

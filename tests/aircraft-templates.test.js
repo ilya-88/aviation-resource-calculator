@@ -3,6 +3,27 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const templates = require("../src/aircraft-templates");
+
+test("налёт борта, индивидуальное время двигателя и пустая наземная смена", () => {
+  const time = (id) => ({ id, type: "duration", format: "HH:MM", scope: "engine" });
+  const template = { inputs: [time("air"), time("ground")], repeatGroups: [], checks: [],
+    engineCounters: [{ ...time("air-total"), role: "flight" }],
+    rules: [{ operation: "copy", target: "air-total", source: "air" },
+      { operation: "flight_plus_ground", target: "total", flight: "air", ground: "ground", stepMinutes: 1, direction: "nearest", percent: 100 }] };
+  const field = templates.engineFlightInput(template);
+  assert.equal(field.id, "air");
+  const calculate = (fields, boardSeconds) => templates.calculate(template, { fields, groups: {} }, "engine", { field, boardSeconds });
+  assert.equal(calculate({}, 1800).counters.total, 1800);
+  assert.equal(calculate({ ground: "00:06" }, 1800).counters.total, 2160);
+  assert.equal(calculate({ air: "00:10" }, 1800).counters.total, 600);
+  assert.equal(calculate({ air: "00:00" }, 1800).counters.total, 0);
+  assert.equal(calculate({ ground: "00:06" }).counters.total, 360);
+  assert.equal(calculate({}).counters.total, null);
+  assert.equal(calculate({}, 1800).inheritedFlight, true);
+  assert.equal(calculate({ air: "00:00" }, 1800).inheritedFlight, undefined);
+  template.rules.push({ ...template.rules[1], flight: "other" });
+  assert.equal(templates.engineFlightInput(template), null);
+});
 const su33 = require("../templates/su-33.json");
 
 test("перенос стартового борта сохраняет типы чисел и связи после повторной сериализации", () => {

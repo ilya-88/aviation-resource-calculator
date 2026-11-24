@@ -304,7 +304,14 @@
     return field.format === "HH:MM:SS" ? `${hours}:${minutes}:${String(seconds % 60).padStart(2, "0")}` : `${hours}:${minutes}`;
   }
 
-  function calculate(template, inputs, scope) {
+  function engineFlightInput(template) {
+    const flightCounter = template.engineCounters.find((field) => field.role === "flight");
+    const copy = template.rules.find((rule) => rule.operation === "copy" && rule.target === flightCounter?.id);
+    if (!copy || template.rules.some((rule) => rule.operation === "flight_plus_ground" && rule.flight !== copy.source)) return null;
+    return template.inputs.find((field) => field.id === copy.source && field.scope === "engine" && !field.group && field.type === "duration") || null;
+  }
+
+  function calculate(template, inputs, scope, flightLink) {
     const values = {};
     for (const field of template.inputs.filter((item) => item.scope === scope)) {
       const rows = field.group ? (inputs.groups[field.group] || []) : [inputs.fields];
@@ -318,6 +325,9 @@
       if (count) requireValue(values[group.countField] === count, `«${group.label}»: число заполненных строк должно совпадать с количеством запусков`);
     }
     if (scope === "board") return { values };
+    const flightKey = flightLink?.field?.id;
+    const inheritedFlight = flightKey && values[flightKey] == null && flightLink.boardSeconds != null;
+    if (inheritedFlight) values[flightKey] = flightLink.boardSeconds;
     for (const check of template.checks) {
       let previous;
       for (const key of check.ascending) {
@@ -333,8 +343,12 @@
     const steps = {};
     for (const rule of template.rules) {
       if (rule.operation === "copy") { counters[rule.target] = values[rule.source]; continue; }
-      const flight = values[rule.flight];
-      const ground = values[rule.ground];
+      let flight = values[rule.flight];
+      let ground = values[rule.ground];
+      if (rule.flight === flightKey && (flight != null || ground != null)) {
+        flight ??= 0;
+        ground ??= 0;
+      }
       if (flight == null || ground == null) { counters[rule.target] = null; continue; }
       const step = rule.stepMinutes * 60;
       const round = { nearest: Math.round, up: Math.ceil, down: Math.floor }[rule.direction];
@@ -343,7 +357,7 @@
       counters[rule.target] = flight + credit;
       steps[rule.target] = { ground, rounded, credit, flight, percent: rule.percent, stepMinutes: rule.stepMinutes };
     }
-    return { values, counters, steps };
+    return { values, counters, steps, ...(inheritedFlight && { inheritedFlight: true }) };
   }
 
   function validateStartingAircraft(doc) {
@@ -420,6 +434,6 @@
       serialNumber: text(data.serialNumber), rfNumber: text(data.rfNumber), readings: board, landingCounts, blocks, resources } };
   }
 
-  return { validateTemplate, validateStartingAircraft, calculate, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits,
+  return { validateTemplate, validateStartingAircraft, calculate, engineFlightInput, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits,
     isFormKey, normalizeFlightLabel, normalizeTemplateFlightLabel };
 });
