@@ -210,3 +210,39 @@ test("Новые графы: отдельный импорт, совместим
   rules.at(-1).source = "local:missing";
   assert.throws(() => api.validateStartingAircraft(source), /Не найден источник/);
 });
+
+
+test("Вид работы привязан по ID и сохраняется при повторном импорте", () => {
+  const sample = structuredClone(require("../examples/civil-partial-31.json"));
+  sample.template.operationTypes[1].label = "Проверка";
+  sample.template.defaultOperationType = "taxi";
+  const first = templates.validateStartingAircraft(sample);
+  const again = templates.validateTemplate(JSON.parse(JSON.stringify(first.template)));
+  assert.equal(again.defaultOperationType, "taxi");
+  assert.equal(again.positions[1].usageCounters[1].workTypeId, "check");
+  assert.equal(again.operationTypes.find(row => row.id === "check").label, "Проверка");
+  sample.template.operationTypes.splice(1, 1);
+  assert.throws(() => templates.validateStartingAircraft(sample), /Вид работы графы/);
+});
+
+test("Неполный повторяющийся ввод сохраняет известные показатели и явный ноль", () => {
+  const template = {
+    inputs: [
+      { id: "runs", label: "Запуски", type: "count", scope: "engine" },
+      { id: "time", label: "Время", type: "duration", format: "HH:MM", scope: "engine", group: "measure" },
+      { id: "events", label: "События", type: "count", scope: "engine", group: "measure" },
+    ],
+    repeatGroups: [{ id: "measure", label: "Измерения", scope: "engine", countField: "runs" }],
+    rules: [{ target: "result", source: "time", operation: "copy" }], checks: [],
+  };
+  const raw = { fields: { runs: "2" }, groups: { measure: [{ time: "00:10", events: "0" }, { events: "0" }] } };
+  const result = templates.calculate(template, raw, "engine", { partial: true });
+  assert.deepEqual(result.incomplete, ["time"]);
+  assert.deepEqual(result.values, { runs: 2, time: null, events: 0 });
+  assert.equal(result.counters.result, null);
+  assert.equal(raw.groups.measure[0].time, "00:10");
+  raw.groups.measure.pop();
+  assert.equal(templates.calculate(template, raw, "engine", { partial: true }).values.time, null);
+  raw.fields.runs = "1";
+  assert.equal(templates.calculate(template, raw, "engine", { partial: true }).counters.result, 600);
+});

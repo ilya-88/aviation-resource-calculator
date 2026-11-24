@@ -1,0 +1,209 @@
+{
+  "kind": "aircraft-start",
+  "version": 1,
+  "template": {
+    "id": "civil-partial-31",
+    "name": "Стенд частичного ввода",
+    "schemaVersion": 1,
+    "operationTypes": [
+      {
+        "id": "flight",
+        "label": "Лётная смена"
+      },
+      {
+        "id": "check",
+        "label": "Контрольное опробование"
+      },
+      {
+        "id": "taxi",
+        "label": "Руление"
+      },
+      {
+        "id": "other",
+        "label": "Проверка стенда"
+      }
+    ],
+    "positions": [
+      {
+        "id": "body",
+        "label": "Планер",
+        "kind": "airframe"
+      },
+      {
+        "id": "a",
+        "kind": "engine",
+        "label": "Двигатель A",
+        "usageCounters": [
+          {
+            "name": "Запуски из записи",
+            "source": "raw:a:start",
+            "factor": 1,
+            "unit": "шт.",
+            "workMode": "total",
+            "columnKey": "runs"
+          },
+          {
+            "name": "Только опробование",
+            "source": "raw:a:start",
+            "factor": 1,
+            "unit": "шт.",
+            "workMode": "entry",
+            "workTypeId": "check",
+            "columnKey": "check"
+          },
+          {
+            "name": "Время из записи",
+            "source": "raw:a:air",
+            "factor": 1,
+            "unit": "мин",
+            "workMode": "entry",
+            "columnKey": "raw-time"
+          },
+          {
+            "name": "Данные самолёта",
+            "source": "board:flight",
+            "factor": 1,
+            "unit": "мин",
+            "workMode": "total",
+            "columnKey": "board"
+          }
+        ]
+      },
+      {
+        "id": "b",
+        "kind": "engine",
+        "label": "Двигатель B",
+        "usageCounters": [
+          {
+            "name": "Запуски из записи",
+            "source": "raw:b:start",
+            "factor": 1,
+            "unit": "шт.",
+            "workMode": "total",
+            "columnKey": "runs"
+          },
+          {
+            "name": "Только опробование",
+            "source": "raw:b:start",
+            "factor": 1,
+            "unit": "шт.",
+            "workMode": "entry",
+            "workTypeId": "check",
+            "columnKey": "check"
+          },
+          {
+            "name": "Время из записи",
+            "source": "raw:b:air",
+            "factor": 1,
+            "unit": "мин",
+            "workMode": "entry",
+            "columnKey": "raw-time"
+          },
+          {
+            "name": "Данные самолёта",
+            "source": "board:flight",
+            "factor": 1,
+            "unit": "мин",
+            "workMode": "total",
+            "columnKey": "board"
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "id": "flight",
+        "label": "Налёт",
+        "scope": "board",
+        "type": "duration",
+        "format": "HH:MM",
+        "role": "flight"
+      },
+      {
+        "id": "start",
+        "label": "Запуски",
+        "scope": "engine",
+        "type": "count"
+      },
+      {
+        "id": "air",
+        "label": "Время в воздухе",
+        "scope": "engine",
+        "type": "duration",
+        "format": "HH:MM"
+      }
+    ],
+    "engineCounters": [
+      {
+        "id": "air-total",
+        "label": "Время двигателя",
+        "scope": "engine",
+        "type": "duration",
+        "format": "HH:MM",
+        "role": "flight"
+      },
+      {
+        "id": "starts",
+        "label": "Запуски",
+        "scope": "engine",
+        "type": "count",
+        "role": "starts"
+      }
+    ],
+    "rules": [
+      {
+        "operation": "copy",
+        "source": "air",
+        "target": "air-total"
+      },
+      {
+        "operation": "copy",
+        "source": "start",
+        "target": "starts"
+      }
+    ]
+  },
+  "aircraft": {
+    "boardNumber": "Т-31",
+    "serialNumber": "TEST-INPUT-31",
+    "blocks": [
+      {
+        "position": "body"
+      },
+      {
+        "position": "a"
+      },
+      {
+        "position": "b"
+      }
+    ],
+    "resources": [
+      {
+        "position": "a",
+        "name": "Счётчик A",
+        "unit": "шт.",
+        "limit": 20,
+        "remaining": 12,
+        "inputs": [
+          {
+            "source": "counter:0",
+            "factor": 1
+          }
+        ]
+      },
+      {
+        "position": "b",
+        "name": "Счётчик B",
+        "unit": "шт.",
+        "limit": 20,
+        "remaining": 12,
+        "inputs": [
+          {
+            "source": "counter:0",
+            "factor": 1
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -172,6 +172,15 @@
     requireValue(document && document.schemaVersion === 1, "Поддерживается версия шаблона 1");
     const id = identifier(document.id, "шаблон");
     const name = label(document.name, id);
+    const operationTypes = document.operationTypes == null ? null : list(document.operationTypes, "виды работы", row => {
+      requireValue(typeof row.id === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(row.id), "Проверь идентификатор вида работы");
+      return { id: row.id, label: label(row.label, "вид работы") };
+    });
+    if (operationTypes) {
+      requireValue(operationTypes.length > 0, "Нужен хотя бы один вид работы");
+      unique(operationTypes, "id", "виды работы");
+      if (document.defaultOperationType != null) requireValue(operationTypes.some(row => row.id === document.defaultOperationType), "Неизвестный вид работы по умолчанию");
+    }
     const positions = list(document.positions, "позиции", (row) => {
       const position = identifier(row.id, "позиция");
       requireValue(position !== "board", "Идентификатор board занят данными самолёта");
@@ -281,6 +290,8 @@
       }
       position.usageCounters = list(position.usageCounters, position.id, (row) => {
         const name = label(row.name, position.id);
+        const workFilter = row.workTypeId ? { workTypeId: row.workTypeId } : {};
+        if (row.workTypeId) requireValue((operationTypes || [{id:"0"}, {id:"1"}, {id:"2"}]).some(item => item.id === row.workTypeId), "Вид работы графы отсутствует в шаблоне");
         function parseInput({ source, factor }) {
           requireValue(source === "manual" || (typeof source === "string" && source.startsWith("board:") && boardKeys.has(source.slice(6))) ||
             engineKeys.has(source) || (row.workMode && (rawKeys.has(source) || (typeof source === "string" && source.startsWith("local:") && localFields.has(source.slice(6)) && source !== "local:" + row.fieldKey) || source === "work:date")), `Не найден источник показателя «${name}» в формуляре «${position.label}»`);
@@ -295,7 +306,7 @@
         if (row.columnKey != null) requireValue(typeof row.columnKey === "string" && /^[a-zA-Z0-9-]{1,80}$/.test(row.columnKey), "Некорректная ссылка графы");
         if (row.source === "formula") {
           requireValue(row.workMode && row.formula && row.factor === 1 && !row.additionalInputs?.length, "Проверь формулу графы");
-          return { name, columnKey: row.columnKey, source: "formula", factor: 1, workMode: row.workMode, unit: row.unit, formula: row.formula };
+          return { name, ...workFilter, columnKey: row.columnKey, source: "formula", factor: 1, workMode: row.workMode, unit: row.unit, formula: row.formula };
         }
         const primary = parseInput(row);
         const additionalInputs = row.additionalInputs == null ? [] : list(row.additionalInputs, `источники показателя «${name}»`, parseInput);
@@ -312,7 +323,7 @@
           }
           requireValue(row.unit !== "дата" || (!additionalInputs.length && primary.factor === 1), "Для даты выбери один источник без коэффициента");
         }
-        return { name, ...(row.columnKey && { columnKey: row.columnKey }), ...(row.workMode && { workMode: row.workMode }), ...(row.fieldKey && { fieldKey: row.fieldKey }), source: primary.source, unit: row.unit, factor: primary.factor, ...(additionalInputs.length && { additionalInputs }) };
+        return { name, ...workFilter, ...(row.columnKey && { columnKey: row.columnKey }), ...(row.workMode && { workMode: row.workMode }), ...(row.fieldKey && { fieldKey: row.fieldKey }), source: primary.source, unit: row.unit, factor: primary.factor, ...(additionalInputs.length && { additionalInputs }) };
       });
       if (position.usageCounters.some(row => row.columnKey || row.source === "formula")) {
         const external = [...rawSources, { key: "work:date", unit: "дата" },
@@ -337,7 +348,7 @@
       if (position.formLayout != null) position.formLayout = validateFormLayout(position.formLayout, position, positions);
     }
     return { schemaVersion: 1, id, name, workTitle: label(document.workTitle || "Исходные данные работы", "форма ввода"),
-      positions, repeatGroups: groups, inputs, engineCounters: counters, rules, checks,
+      positions, repeatGroups: groups, inputs, engineCounters: counters, rules, checks, ...(operationTypes && { operationTypes, defaultOperationType: document.defaultOperationType ?? operationTypes[0].id }),
       ...(boardUsage && { boardUsage }), ...(layout && { layout }) };
   }
 
@@ -373,18 +384,33 @@
 
   function calculate(template, inputs, scope, flightLink) {
     const values = {};
+    const incomplete = [];
     for (const field of template.inputs.filter((item) => item.scope === scope)) {
       const rows = field.group ? (inputs.groups[field.group] || []) : [inputs.fields];
       const entries = rows.map((row) => parseValue(field, row[field.id]));
       const present = entries.filter((entry) => entry != null);
+      if (flightLink?.partial && present.length > 0 && present.length < rows.length) {
+        incomplete.push(field.id);
+        values[field.id] = null;
+        continue;
+      }
       requireValue(present.length === 0 || present.length === rows.length, `«${field.label}»: заполни все строки или оставь всю графу пустой`);
       values[field.id] = present.length ? present.reduce((sum, value) => sum + value, 0) : null;
     }
     for (const group of template.repeatGroups.filter((row) => row.scope === scope && row.countField)) {
       const count = (inputs.groups[group.id] || []).length;
+      if (count && flightLink?.partial && (values[group.countField] == null || count < values[group.countField])) {
+        if (values[group.countField] != null) {
+          for (const field of template.inputs.filter(item => item.group === group.id && values[item.id] != null)) {
+            incomplete.push(field.id);
+            values[field.id] = null;
+          }
+        }
+        continue;
+      }
       if (count) requireValue(values[group.countField] === count, `«${group.label}»: число заполненных строк должно совпадать с количеством запусков`);
     }
-    if (scope === "board") return { values };
+    if (scope === "board") return { values, ...(incomplete.length && { incomplete }) };
     const flightKey = flightLink?.field?.id;
     const inheritedFlight = flightKey && values[flightKey] == null && flightLink.boardSeconds != null;
     if (inheritedFlight) values[flightKey] = flightLink.boardSeconds;
@@ -403,6 +429,7 @@
     const steps = {};
     for (const rule of template.rules) {
       if (rule.operation === "copy") { counters[rule.target] = values[rule.source]; continue; }
+      if (incomplete.includes(rule.ground) || incomplete.includes(rule.flight)) { counters[rule.target] = null; continue; }
       let flight = values[rule.flight];
       let ground = values[rule.ground];
       if (rule.flight === flightKey && (flight != null || ground != null)) {
@@ -417,7 +444,7 @@
       counters[rule.target] = flight + credit;
       steps[rule.target] = { ground, rounded, credit, flight, percent: rule.percent, stepMinutes: rule.stepMinutes };
     }
-    return { values, counters, steps, ...(inheritedFlight && { inheritedFlight: true }) };
+    return { values, counters, steps, ...(incomplete.length && { incomplete }), ...(inheritedFlight && { inheritedFlight: true }) };
   }
 
   function validateStartingAircraft(doc) {

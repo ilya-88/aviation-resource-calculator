@@ -1,4 +1,4 @@
-const CACHE = "aviation-resource-template-exp30";
+const CACHE = "aviation-resource-template-exp31";
 const ASSETS = [
   "./",
   "./index.html",
