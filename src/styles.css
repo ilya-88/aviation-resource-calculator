@@ -444,3 +444,8 @@ button.setting-row { cursor: pointer; }
 .map-node-caption small { display: block; }
 .map-node-tools { display: flex; }
 .map-node-tools [data-map-grip] { touch-action: none; cursor: grab; }
+
+.formula-editor:not([hidden]) { display: grid; gap: .55rem; }
+.formula-editor[hidden], .form-grid [hidden] { display: none !important; }
+.formula-keys { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
+.formula-line { overflow-wrap: anywhere; padding: .5rem; border: 1px solid currentColor; border-radius: .5rem; }

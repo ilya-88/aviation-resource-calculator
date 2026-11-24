@@ -1,0 +1,105 @@
+{
+  "kind": "aircraft-start",
+  "version": 1,
+  "template": {
+    "id": "civil-formula-30",
+    "name": "Учебный стенд формул",
+    "schemaVersion": 1,
+    "positions": [
+      {
+        "id": "body",
+        "kind": "airframe",
+        "label": "Формуляр самолёта",
+        "usageCounters": [
+          {
+            "columnKey": "total",
+            "name": "Итого",
+            "unit": "мин",
+            "source": "formula",
+            "factor": 1,
+            "workMode": "total",
+            "formula": {
+              "emptyZero": true,
+              "tokens": [
+                {
+                  "ref": "cell:time-a"
+                },
+                "+",
+                {
+                  "ref": "cell:share"
+                }
+              ]
+            }
+          },
+          {
+            "columnKey": "share",
+            "name": "Доля второго интервала",
+            "unit": "мин",
+            "source": "formula",
+            "factor": 1,
+            "workMode": "entry",
+            "formula": {
+              "emptyZero": true,
+              "tokens": [
+                {
+                  "ref": "cell:time-b"
+                },
+                {
+                  "round": 5
+                },
+                "*",
+                20,
+                "%"
+              ]
+            }
+          },
+          {
+            "columnKey": "time-a",
+            "name": "Первый интервал",
+            "unit": "мин",
+            "source": "raw:board:first",
+            "factor": 1,
+            "workMode": "entry"
+          },
+          {
+            "columnKey": "time-b",
+            "name": "Второй интервал",
+            "unit": "мин",
+            "source": "raw:board:second",
+            "factor": 1,
+            "workMode": "entry"
+          }
+        ]
+      }
+    ],
+    "inputs": [
+      {
+        "id": "first",
+        "scope": "board",
+        "type": "duration",
+        "format": "HH:MM",
+        "role": "flight",
+        "label": "Первый интервал"
+      },
+      {
+        "id": "second",
+        "scope": "board",
+        "type": "duration",
+        "format": "HH:MM",
+        "label": "Второй интервал"
+      }
+    ],
+    "engineCounters": [],
+    "rules": []
+  },
+  "aircraft": {
+    "boardNumber": "Т-30",
+    "serialNumber": "DEMO-FORMULA-30",
+    "blocks": [
+      {
+        "position": "body"
+      }
+    ],
+    "resources": []
+  }
+}

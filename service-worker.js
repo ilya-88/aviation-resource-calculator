@@ -1,9 +1,11 @@
-const CACHE = "aviation-resource-template-exp29";
+const CACHE = "aviation-resource-template-exp30";
 const ASSETS = [
   "./",
   "./index.html",
   "./src/styles.css",
   "./src/calculations.js",
+  "./src/formulas.js",
+  "./src/formula-editor.js",
   "./src/aircraft-templates.js",
   "./src/app.js",
   "./manifest.webmanifest",

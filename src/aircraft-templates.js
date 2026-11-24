@@ -1,8 +1,8 @@
 (function (root, factory) {
-  const api = factory();
+  const api = factory(typeof module === "object" && module.exports ? require("./formulas.js") : root.formulas);
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.aircraftTemplates = api;
-})(globalThis, function () {
+})(globalThis, function (formulas) {
   "use strict";
 
   const landingRoles = ["runway", "carrier", "touch", "circuit", "arresterHooks"];
@@ -292,6 +292,11 @@
           requireValue(row.unit !== "дата" || row.workMode === "entry", "Даты нельзя суммировать");
         }
         requireValue(aggregateUnits.includes(row.unit) || (row.workMode && ["дата", "дн."].includes(row.unit)), `Проверь единицу показателя «${name}»`);
+        if (row.columnKey != null) requireValue(typeof row.columnKey === "string" && /^[a-zA-Z0-9-]{1,80}$/.test(row.columnKey), "Некорректная ссылка графы");
+        if (row.source === "formula") {
+          requireValue(row.workMode && row.formula && row.factor === 1 && !row.additionalInputs?.length, "Проверь формулу графы");
+          return { name, columnKey: row.columnKey, source: "formula", factor: 1, workMode: row.workMode, unit: row.unit, formula: row.formula };
+        }
         const primary = parseInput(row);
         const additionalInputs = row.additionalInputs == null ? [] : list(row.additionalInputs, `источники показателя «${name}»`, parseInput);
         unique([primary, ...additionalInputs], "source", `источники показателя «${name}»`);
@@ -307,8 +312,17 @@
           }
           requireValue(row.unit !== "дата" || (!additionalInputs.length && primary.factor === 1), "Для даты выбери один источник без коэффициента");
         }
-        return { name, ...(row.workMode && { workMode: row.workMode }), ...(row.fieldKey && { fieldKey: row.fieldKey }), source: primary.source, unit: row.unit, factor: primary.factor, ...(additionalInputs.length && { additionalInputs }) };
+        return { name, ...(row.columnKey && { columnKey: row.columnKey }), ...(row.workMode && { workMode: row.workMode }), ...(row.fieldKey && { fieldKey: row.fieldKey }), source: primary.source, unit: row.unit, factor: primary.factor, ...(additionalInputs.length && { additionalInputs }) };
       });
+      if (position.usageCounters.some(row => row.columnKey || row.source === "formula")) {
+        const external = [...rawSources, { key: "work:date", unit: "дата" },
+          ...[...boardKeys].map(key => ({ key: "board:" + key, unit: key === "flight" || boardUsage?.find(row => row.key === key)?.kind === "time" ? "ч" : "шт." })),
+          ...[...engineKeys].map(key => { const field = counters.find(row => row.id === key.split(":")[2]);
+            return { key, unit: field.type === "count" ? "шт." : field.format === "HH:MM" ? "ч" : "с" }; }),
+          ...[...localFields].map(([key, unit]) => ({ key: "local:" + key, unit }))];
+        position.usageCounters.forEach((row, i) => { row.columnKey ??= "slot-" + i; });
+        formulas.order(position.usageCounters, formulas.catalog(position.usageCounters, external));
+      }
     }
     const checks = list(document.checks || [], "проверки вложенности", (row) => {
       requireValue(Array.isArray(row.ascending) && row.ascending.length >= 2 && row.ascending.length <= 12 &&
