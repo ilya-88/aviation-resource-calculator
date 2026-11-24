@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.31";
+  const APP_VERSION = "0.2.38-exp.32";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -204,6 +204,16 @@
   }
 
   const AGGREGATE_UNITS = aircraftTemplates.aggregateUnits;
+  function cellOptions(current) {
+    const groups = [
+      ["Количество", {"шт.": "Штуки", "пос.": "Посадки", "зап.": "Запуски", "сраб.": "Срабатывания"}],
+      ["Длительность", {"ч": "Часы", "мин": "Минуты", "с": "Секунды"}],
+      ["Календарь", {"дата": "Дата", "дн.": "Период в днях"}],
+      ["Текст", {"текст": "Текстовая запись"}],
+    ];
+    return groups.map(([label, options]) => `<optgroup label="${label}">${Object.entries(options).map(([unit, name]) =>
+      `<option value="${unit}"${unit === current ? " selected" : ""}>${name}</option>`).join("")}</optgroup>`).join("");
+  }
   const classicEngineUnits = { engineMinutes: "ч", starts: "зап.", maximum: "с", afterburner: "с", or: "с", combat: "с", combined: "с" };
   const classicEngineValues = (usage) => {
     const values = { engineMinutes: usage.minutes / 60, starts: usage.starts, maximum: usage.maximumSeconds,
@@ -240,7 +250,8 @@
         key: "local:" + field.fieldKey, unit: field.unit, label: `Запись о работе · ${owner.name} · ${field.name}`,
       });
     }
-    sources.push({ key: "work:date", label: "Дата записи о работе", unit: "дата" });
+    sources.push({ key: "work:date", label: "Дата записи о работе", unit: "дата" },
+      { key: "work:type", label: "Название вида работы", unit: "текст" });
     if (aircraft.workTemplate) sources.push(...aircraftTemplates.rawSourceList(aircraft.workTemplate)
       .filter(item => !aircraft.workTemplate.inputs.some(f => item.key === `raw:board:${f.id}` && f.role && !sourceEnabled(aircraft, f.role))));
     return sources;
@@ -299,13 +310,14 @@
       if (rule.workMode) row.dataset.fieldKey = rule.fieldKey || id();
       sourceLabels.set(rule.id, new Map(aggregateRuleInputs(rule).map(({ source, sourceLabel }) => [source, sourceLabel])));
       function sourceOptions({ source, sourceLabel }) {
-        const allowed = rule.workMode ? [...sources, { key: "formula", label: "Формула из граф" }] : sources.filter(item => !item.key.startsWith("raw:") && item.key !== "work:date");
+        const allowed = rule.workMode ? [...sources, { key: "formula", label: "Формула из граф" }] : sources.filter(item => !item.key.startsWith("raw:") && !item.key.startsWith("work:") && item.unit !== "текст");
         const choices = allowed.some(({ key }) => key === source) ? allowed :
           [...allowed, { key: source, label: `${sourceLabel || "Исходный показатель"} · недоступен` }];
         return choices.map(({ key, label }) => `<option value="${escapeHtml(key)}"${key === source ? " selected" : ""}>${escapeHtml(label)}</option>`).join("");
       }
       row.innerHTML = `
         <label class="form-span">Показатель<input data-rule="name" type="text" maxlength="80" required value="${escapeHtml(rule.name)}" placeholder="Например, циклы"></label>
+        <label>${rule.workMode ? "Тип ячейки и единица" : "Единица итога"}<select data-rule="unit"${unitLocked(rule.id) ? " disabled" : ""}>${rule.workMode ? cellOptions(rule.unit) : AGGREGATE_UNITS.map(unit => `<option${unit === rule.unit ? " selected" : ""}>${unit}</option>`).join("")}</select></label>
         ${rule.workMode ? `<label>Запись в формуляр<select data-rule="workMode">
           <option value="entry" ${rule.workMode === "entry" ? "selected" : ""}>Значение за работу</option>
           <option value="total" ${rule.workMode === "total" ? "selected" : ""}>Прибавлять к наработке</option></select></label>` : ""}
@@ -313,7 +325,6 @@
           `<option value="${escapeHtml(item.id)}"${item.id === rule.workTypeId ? " selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select></label>
         <label class="form-span">Откуда брать значение<select data-rule="source">${sourceOptions(rule)}</select></label>
         ${rule.workMode ? '<section class="form-span formula-editor" data-formula hidden></section>' : ""}
-        <label>Единица итога<select data-rule="unit"${unitLocked(rule.id) ? " disabled" : ""}>${(rule.workMode ? [...AGGREGATE_UNITS, "дата", "дн."] : AGGREGATE_UNITS).map((unit) => `<option${unit === rule.unit ? " selected" : ""}>${unit}</option>`).join("")}</select></label>
         <label>Коэффициент<input data-rule="factor" type="number" min="0" max="1000000" step="any" value="${rule.factor}" required></label>
         <div class="form-span section-stack" data-rule-inputs hidden></div>
         <button type="button" class="small-button" data-rule-add-input>Добавить источник</button>
@@ -331,14 +342,32 @@
         editors.set(row, editor);
       }
       function updateExample() {
-        const isFormula = row.querySelector("[data-rule=source]").value === "formula";
+        const picker = row.querySelector("[data-rule=source]");
+        const isText = unit.value === "текст";
+        const mode = row.querySelector("[data-rule=workMode]");
+        if (mode) {
+          mode.disabled = isText || unit.value === "дата";
+          if (mode.disabled) mode.value = "entry";
+          for (const option of picker.options) {
+            const source = sources.find(item => item.key === option.value);
+            option.disabled = option.value !== "manual" && (isText ? source?.unit !== "текст" : source?.unit === "текст");
+          }
+          if (picker.selectedOptions[0]?.disabled) picker.value = "manual";
+          if (isText) {
+            factor.value = "1";
+            additional.replaceChildren();
+            for (const input of row.querySelectorAll("[data-rule=sne], [data-rule=ppr]")) input.closest("label").hidden = true;
+          }
+        }
+        const isFormula = picker.value === "formula";
         if (panel) {
           panel.hidden = !isFormula;
-          factor.closest("label").hidden = isFormula;
-          row.querySelector("[data-rule-add-input]").hidden = isFormula;
-          additional.hidden = isFormula || !additional.children.length;
-          row.querySelector("[data-rule-example]").hidden = isFormula;
+          factor.closest("label").hidden = isFormula || isText;
+          row.querySelector("[data-rule-add-input]").hidden = isFormula || isText;
+          additional.hidden = isFormula || isText || !additional.children.length;
+          row.querySelector("[data-rule-example]").hidden = isFormula || isText;
           if (isFormula) { editors.get(row).refresh(); return; }
+          if (isText) return;
         }
         const factors = [factor, ...additional.querySelectorAll("[data-additional-factor]")];
         const settings = readFields(row);
@@ -379,7 +408,7 @@
       for (const input of rule.additionalInputs || []) addInput(input);
       row.querySelector("[data-rule-add-input]").onclick = () => {
         const selected = new Set(aggregateRuleInputs(readFields(row)).map(({ source }) => source));
-        const next = sources.find(({ key }) => !selected.has(key) && (rule.workMode || (!key.startsWith("raw:") && key !== "work:date")));
+        const next = sources.find(({ key, unit }) => unit !== "текст" && !selected.has(key) && (rule.workMode || (!key.startsWith("raw:") && !key.startsWith("work:"))));
         if (next) addInput({ source: next.key, factor: 1 });
         else showToast("Все доступные источники уже добавлены");
       };
@@ -389,7 +418,7 @@
         updateExample();
       });
       factor.addEventListener("input", updateExample);
-      unit.addEventListener("change", updateExample);
+      unit.addEventListener("change", syncMode);
       updateExample();
       row.querySelector("[data-rule-remove]").onclick = () => row.remove();
       function syncMode() {
@@ -406,7 +435,9 @@
       for (const row of list.children) if (row.querySelector("[data-rule=source]").value === "formula") editors.get(row)?.refresh();
     }
     refreshFormulas();
-    list.addEventListener("change", refreshFormulas);
+    list.addEventListener("input", event => {
+      if (event.target.matches("[data-rule=name], [data-rule=unit]")) refreshFormulas();
+    });
     list.addEventListener("click", event => { if (event.target.closest("[data-rule-remove]")) refreshFormulas(); });
     root.querySelector("[data-aggregate-rule-add]").onclick = () => add();
     const candidates = aircraft.blocks.filter((item) => item !== block && item.usageCounters?.length);
@@ -465,8 +496,8 @@
         return { id: row.dataset.ruleId, columnKey: row.dataset.columnKey, ...values, sourceLabel: "Формула из граф" };
       }
       if (values.workMode) {
-        if (values.unit === "дата" && (values.workMode !== "entry" || inputs.length !== 1 || values.factor !== 1))
-          throw new Error("Дата записывается за работу из одного источника без коэффициента");
+        if (["дата", "текст"].includes(values.unit) && (values.workMode !== "entry" || inputs.length !== 1 || values.factor !== 1))
+          throw new Error("Дата или текст записываются за работу из одного источника без коэффициента");
         for (const input of inputs) {
           if (input.source.startsWith("local:")) {
             const ownerRow = [...list.children].find(other => other.dataset.fieldKey === input.source.slice(6));
@@ -496,12 +527,13 @@
   }
 
   function initialCounterTotals(rows, previous = {}) {
-    return { ...previous, ...Object.fromEntries(rows.map(({ id, sne, ppr }) => [id, { sne, ppr: ppr ?? null }])) };
+    return { ...previous, ...Object.fromEntries(rows.filter(row => row.workMode !== "entry").map(({ id, sne, ppr }) => [id, { sne, ppr: ppr ?? null }])) };
   }
 
   function manualWorkField(rule) {
     const key = escapeHtml(manualCounterName(rule));
     const title = escapeHtml(rule.name);
+    if (rule.workMode && rule.unit === "текст") return `<label>${title}<input name="${key}" type="text" maxlength="500"></label>`;
     if (rule.workMode && rule.unit === "дата") return `<label>${title}<input type="date" name="${key}"></label>`;
     if (rule.workMode && rule.unit === "дн.") return `<fieldset><legend>${title}</legend><div class="field-pair">
       <label>С даты<input type="date" name="${key}-start"></label><label>До даты<input type="date" name="${key}-end"></label></div></fieldset>`;
@@ -514,6 +546,7 @@
 
   function manualWorkValue(rule, data) {
     const key = manualCounterName(rule);
+    if (rule.workMode && rule.unit === "текст") return data.get(key)?.trim() || null;
     if (rule.workMode && rule.unit === "дата") return calendarDay(data.get(key));
     if (rule.workMode && rule.unit === "дн.") {
       const from = calendarDay(data.get(key + "-start"));
@@ -532,7 +565,7 @@
   function hasManualReading(block, data) {
     return (block?.usageCounters || []).some(rule => matchesWork(rule, data.get("operationType")) &&
       aggregateRuleInputs(rule).some(input => input.source === "manual") &&
-      [manualCounterName(rule), manualCounterName(rule) + "-start", manualCounterName(rule) + "-end"].some(key => data.get(key) != null && data.get(key) !== ""));
+      [manualCounterName(rule), manualCounterName(rule) + "-start", manualCounterName(rule) + "-end"].some(key => String(data.get(key) ?? "").trim() !== ""));
   }
 
   function aggregateManualInputs(aircraft) {
@@ -571,6 +604,7 @@
     const values = new Map(Object.entries(sources).map(([key, value]) => [`board:${key}`, value]));
     const units = new Map(aggregateUsageSources(aircraft).map(item => [item.key, item.unit]));
     values.set("work:date", calendarDay(date));
+    values.set("work:type", (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find(item => item.id === workData.get("operationType"))?.label);
     for (const [key, value] of Object.entries(boardValues)) values.set(`raw:board:${key}`, value);
     if (templateEngines) {
       for (const entry of templateEngines.filter(item => item.blockId)) {
@@ -597,6 +631,13 @@
       const results = new Map();
       return ordered.flatMap((rule) => {
         if (!matchesWork(rule, workData.get("operationType"))) return [];
+        if (rule.unit === "текст") {
+          const manual = rule.source === "manual" ? rule : localFields.get(rule.source);
+          const textValue = manual ? manualWorkValue(manual, workData) : values.get(rule.source);
+          if (!textValue) return [];
+          return [{ blockId: block.id, blockName: block.name, serialNumber: block.serialNumber, counterId: rule.id,
+            name: rule.name, unit: rule.unit, workMode: "entry", sourceKey: rule.source, source: rule.sourceLabel, textValue }];
+        }
         if (rule.source === "formula") {
           const read = key => {
             if (key.startsWith("cell:")) return results.get(key);
@@ -658,11 +699,13 @@
   }
 
   function formValue(amount, unit) {
+    if (unit === "текст") return String(amount);
     if (unit === "дата") return formatDate(new Date(amount * 86400000).toISOString().slice(0, 10));
     return formatNumber(amount, 6) + " " + unit;
   }
 
   function aggregateAccrualCalculation(entry) {
+    if (entry.unit === "текст") return `<small>${escapeHtml(entry.textValue)}</small>`;
     if (entry.expression) return `<small>${escapeHtml(entry.expression)} = ${escapeHtml(formValue(entry.amount, entry.unit))}</small>` +
       entry.inputs.map(part => `<small>${escapeHtml(part.source)}: ${part.input == null ? "пусто (0)" : escapeHtml(formValue(part.input, part.sourceUnit))}</small>`).join("");
     if (entry.workMode) {
@@ -761,7 +804,7 @@
     }));
     if (!owner?.usageCounters?.length) return sources;
     const available = new Set(aggregateUsageSources(aircraft, false, owner).map(({ key }) => key));
-    return [...sources, ...owner.usageCounters.filter(rule => rule.unit !== "дата").map((rule) => ({
+    return [...sources, ...owner.usageCounters.filter(rule => !["дата", "текст"].includes(rule.unit)).map((rule) => ({
       key: aggregateResourceKey(rule.id), label: `Формуляр · ${rule.name} (${rule.unit})`,
       enabled: rule.source === "formula" || aggregateRuleInputs(rule).some(({ source, factor }) => factor > 0 && available.has(source)),
     }))];
@@ -803,6 +846,7 @@
   function resourceAccruals(aircraft, date, sources, engineUsage, aggregateUsage, inactive = new Set()) {
     const aggregateByOwner = new Map();
     for (const entry of aggregateUsage) {
+      if (entry.unit === "текст" || entry.unit === "дата") continue;
       if (!aggregateByOwner.has(entry.blockId)) aggregateByOwner.set(entry.blockId, {});
       aggregateByOwner.get(entry.blockId)[aggregateResourceKey(entry.counterId)] = entry.amount;
     }
@@ -2661,7 +2705,7 @@
       catch (error) { preview.textContent = error.message; showToast(error.message); return; }
       const { work, aggregateUsage } = calculated;
       if (!Object.values(work.boardInputs.fields).some(Boolean) && !Object.values(work.boardInputs.groups).some((rows) => rows.length) &&
-          !work.customUsage.length && !aggregateUsage.some(entry => entry.sourceKey !== "work:date") && !work.engines.some((engine) => Object.values(engine.values).some((value) => value != null) || engine.incomplete?.length)) {
+          !work.customUsage.length && !aggregateUsage.some(entry => !["work:date", "work:type"].includes(entry.sourceKey)) && !work.engines.some((engine) => Object.values(engine.values).some((value) => value != null) || engine.incomplete?.length)) {
         showToast("Введи данные работы");
         return;
       }
@@ -2772,7 +2816,7 @@
     }
     function calculate(data) {
       const flight = Number(data.get("flightHours")) * 60 + Number(data.get("flightMinutes"));
-      const supplied = key => data.get(key) != null && data.get(key) !== "";
+      const supplied = key => String(data.get(key) ?? "").trim() !== "";
       const hasBoardTime = supplied("flightHours") || supplied("flightMinutes");
       const inactive = new Set();
       const left = engineIncrement(data, "left", leftBlock, flight);
@@ -2845,7 +2889,7 @@
       try { computed = calculate(data); } catch (error) { showToast(error.message); return; }
       const { flight, left, right, engineUsage, accruals, customUsage, aggregateUsage } = computed;
       if (!["flightHours", "flightMinutes", ...OPTIONAL_USAGE_TYPES].some(key => data.has(key) && data.get(key) !== "") &&
-          !engineUsage.size && !customUsage.length && !aggregateUsage.some(row => row.sourceKey !== "work:date")) {
+          !engineUsage.size && !customUsage.length && !aggregateUsage.some(row => !["work:date", "work:type"].includes(row.sourceKey))) {
         showToast("Введи хотя бы одно показание"); return;
       }
       const backup = structuredClone(aircraft);
@@ -3298,7 +3342,7 @@
       const formulaButton = rule.workMode ? `<button type="button" class="small-button" data-column-rule="${escapeHtml(rule.id)}">Связи графы</button>` : "";
       if (rule.workMode === "entry") {
         const last = aircraft.shifts.flatMap(shift => (shift.aggregateAccruals || [])
-          .filter(entry => entry.blockId === block.id && entry.counterId === rule.id).map(entry => ({ date: shift.date, value: entry.amount })))
+          .filter(entry => entry.blockId === block.id && entry.counterId === rule.id).map(entry => ({ date: shift.date, value: entry.textValue ?? entry.amount })))
           .sort((a, b) => a.date.localeCompare(b.date)).at(-1);
         return `<article class="metric" data-form-widget="aggregate-counter:${escapeHtml(rule.id)}"><span data-tile-caption>${escapeHtml(rule.name)}</span>
           <strong>${last ? escapeHtml(formValue(last.value, rule.unit)) : "—"}</strong><small>${escapeHtml(rule.sourceLabel || "Из записи о работе")}</small>${condition}${formulaButton}</article>`;
@@ -3571,12 +3615,13 @@
           modesSeconds: structuredClone(block.modesSeconds ?? null),
           pprModesSeconds: structuredClone(block.pprModesSeconds ?? null),
           repairs: block.repairs,
-          ...(block.usageCounters?.length && { aggregate: block.usageCounters.map((rule) => ({
+          ...(block.usageCounters?.length && { aggregate: block.usageCounters.filter(rule => rule.workMode !== "entry").map((rule) => ({
             ...rule, ...block.usageTotals?.[rule.id],
           })) }),
         };
         block.repairs += 1;
         for (const rule of block.usageCounters || []) {
+          if (rule.workMode === "entry") continue;
           block.usageTotals[rule.id] = { sne: block.usageTotals[rule.id]?.sne ?? 0, ppr: 0 };
         }
         if (block.kind === "airframe") {
@@ -3871,7 +3916,7 @@
     const historyNames = { totalFlightMinutes: "sneMinutes", actualLandings: "sneLandings",
       pprFlightMinutes: "pprMinutes", pprLandings: "pprLandings" };
     const counterStep = (key) => key === "starts" || key === "pprStarts" ? "1" : "any";
-    const aggregateCounters = block.usageCounters || [];
+    const aggregateCounters = (block.usageCounters || []).filter(rule => rule.workMode !== "entry");
     const counterName = (rule, period) => `aggregate-usage:${rule.id}:${period}`;
     const counterFields = (historical) => aggregateCounters.map((rule) => `
       <div class="field-pair" data-aggregate-readings="${escapeHtml(rule.id)}">${["sne", "ppr"].map((period) =>
@@ -4132,7 +4177,7 @@
           name: rule.name, expression: formulas.describe(rule.formula, catalog), enabled: true, installed: blockInstalledOn(block, todayIso()), counter: true }));
       }
       return aggregateRuleInputs(rule).map(({ source, sourceLabel, factor }) => ({
-        key: source, source: sourceLabel, target: block.id, name: rule.name, factor,
+        key: source, source: sourceLabel, target: block.id, name: rule.name, factor, unit: rule.unit,
         enabled: factor > 0 && aggregateSources.has(source), installed: blockInstalledOn(block, todayIso()), counter: true, condition: pprCondition,
       }));
     }));
@@ -4230,8 +4275,8 @@
       const matching = edges.filter((edge) => isSource ? edge.key === key : edge.target === key);
       const heading = isSource ? sourceLabels.get(key) || key : nodes.find((item) => item.id === key)?.name;
       details.innerHTML = `<h2>${escapeHtml(heading || "")}</h2>${matching.length ? `<ul class="accrual-items">${matching.map((edge) => `<li>
-        <strong>${escapeHtml(sourceLabels.get(edge.key) || edge.key)}${edge.expression ? "" : " × " + formatNumber(edge.factor)} → ${escapeHtml(nodes.find((item) => item.id === edge.target)?.name || "")} · ${escapeHtml(edge.name)}</strong>
-        <small>${edge.expression ? escapeHtml(edge.expression) : shift ? `${formatNumber(edge.input, 6)} × ${formatNumber(edge.factor, 6)} = ${formatNumber(edge.amount, 6)}` :
+        <strong>${escapeHtml(sourceLabels.get(edge.key) || edge.key)}${edge.expression || edge.unit === "текст" ? "" : " × " + formatNumber(edge.factor)} → ${escapeHtml(nodes.find((item) => item.id === edge.target)?.name || "")} · ${escapeHtml(edge.name)}</strong>
+        <small>${edge.unit === "текст" ? escapeHtml(edge.textValue ?? "Текстовая запись") : edge.expression ? escapeHtml(edge.expression) : shift ? `${formatNumber(edge.input, 6)} × ${formatNumber(edge.factor, 6)} = ${formatNumber(edge.amount, 6)}` :
           `${edge.counter ? "Счётчик формуляра" : "Списание ресурса"} · ${!edge.enabled ? "Источник отключён" :
             !edge.installed ? "Агрегат демонтирован" : edge.target === boardNode ? "Начисляется на борт" : "Агрегат должен быть установлен на дату работы"}
             ${edge.installedDate ? ` · с ${formatDate(edge.installedDate)}` : ""}
@@ -4943,24 +4988,27 @@
           if (field) sources.set(`position:${slot.id}:${field.id}`, slot.label + " · " + field.label);
         }
       const option = (key, title, value) => `<option value="${escapeHtml(key)}" ${key === value ? "selected" : ""}>${escapeHtml(title)}</option>`;
-      return `<div data-template-property="usageRules"><strong>Показатели агрегата</strong>
+      return `<div data-template-property="usageRules"><strong>Графы формуляра</strong>
         ${(position.usageCounters || []).map((rule, i) => {
           const choices = new Map(sources);
           if (rule.workMode) {
             if (rule.formula) choices.set("formula", "Формула из граф");
             choices.set("work:date", "Дата записи о работе");
+            choices.set("work:type", "Название вида работы");
             for (const field of aircraftTemplates.rawSourceList(draft)) choices.set(field.key, field.label);
             for (const field of position.usageCounters.filter(item => item.fieldKey && item.source === "manual")) choices.set("local:" + field.fieldKey, field.name);
           }
           if (!choices.has(rule.source)) choices.set(rule.source, rule.source);
           return `<div data-position-counter><div class="field-pair">
             <label>Название<input data-counter-name value="${escapeHtml(rule.name)}" maxlength="120"></label>
-            <label>Единица<select data-counter-unit>${(rule.workMode ? [...AGGREGATE_UNITS, "дата", "дн."] : AGGREGATE_UNITS).map((u) => option(u, u, rule.unit)).join("")}</select></label>
+            <label>Тип ячейки и единица<select data-counter-unit>${rule.workMode ? cellOptions(rule.unit) : AGGREGATE_UNITS.map(u => option(u, u, rule.unit)).join("")}</select></label>
             <label>Источник<select data-counter-source>${[...choices].map(([k, v]) => option(k, v, rule.source)).join("")}</select></label>
+            ${rule.workMode ? `<label>Запись в формуляр<select data-counter-mode>${option("entry", "Значение за работу", rule.workMode)}${option("total", "Прибавлять к наработке", rule.workMode)}</select></label>` : ""}
+            <label>Из каких работ брать данные<select data-counter-work>${option("", "Любая работа", rule.workTypeId || "")}${(draft.operationTypes || DEFAULT_OPERATION_TYPES).map(item => option(item.id, item.label, rule.workTypeId)).join("")}</select></label>
             <label>Коэффициент<input data-counter-factor type="number" min="0" max="1000000" step="any" value="${rule.factor}"></label>
           </div><button type="button" class="small-button" data-counter-remove="${i}" data-slot-index="${index}">Убрать показатель</button></div>`;
         }).join("")}
-        <button type="button" class="secondary-button" data-counter-add data-slot-index="${index}">Добавить показатель агрегата</button></div>`;
+        <button type="button" class="secondary-button" data-counter-add data-slot-index="${index}">Добавить графу</button></div>`;
     }
     function draw(key) {
       const { fields } = config[key];
@@ -4995,8 +5043,27 @@
         const hide = (keys, hidden) => keys.forEach((key) => {
           entry.querySelector(`[data-template-property="${key}"]`).hidden = hidden;
         });
-        if (entry.dataset.templateEntry === "positions") hide(["linkSource", "linkCounters"], value("kind") !== "unit");
-        if (entry.dataset.templateEntry === "positions") hide(["usageRules"], value("kind") === "airframe");
+        if (entry.dataset.templateEntry === "positions") {
+          hide(["linkSource", "linkCounters"], value("kind") !== "unit");
+          for (const row of entry.querySelectorAll("[data-position-counter]")) {
+            const mode = row.querySelector("[data-counter-mode]");
+            if (!mode) continue;
+            const unit = row.querySelector("[data-counter-unit]").value;
+            mode.disabled = unit === "текст" || unit === "дата";
+            if (mode.disabled) mode.value = "entry";
+            const factor = row.querySelector("[data-counter-factor]");
+            factor.closest("label").hidden = mode.disabled;
+            if (mode.disabled) factor.value = "1";
+            const source = row.querySelector("[data-counter-source]");
+            const locals = draft.positions[Number(entry.querySelector("[data-slot-index]").dataset.slotIndex)]?.usageCounters || [];
+            for (const option of source.options) {
+              const isText = option.value === "work:type" || locals.some(field => field.unit === "текст" && field.fieldKey && option.value === "local:" + field.fieldKey);
+              option.disabled = option.value !== "manual" && (unit === "текст") !== isText;
+            }
+            if (source.selectedOptions[0]?.disabled) source.value = "manual";
+          }
+        }
+
         if (entry.dataset.templateEntry === "inputs") hide(["role"], value("scope") !== "board");
         if (value("type")) hide(["format"], value("type") !== "duration");
         if (value("operation")) {
@@ -5018,7 +5085,10 @@
             if (linkSource) position.engineLink = { source: linkSource, counters: linkCounters === "all" ? "all" : commaList(linkCounters || "") };
             const { usageCounters, formLayout } = draft.positions[index];
             if (usageCounters) position.usageCounters = [...entry.querySelectorAll("[data-position-counter]")].map((node, i) => ({
-              ...usageCounters[i], name: node.querySelector("[data-counter-name]").value.trim(),
+              ...usageCounters[i], ...(usageCounters[i].workMode && { workMode: node.querySelector("[data-counter-mode]").value }),
+              workTypeId: node.querySelector("[data-counter-work]").value,
+              fieldKey: node.querySelector("[data-counter-mode]") && node.querySelector("[data-counter-source]").value === "manual" ? usageCounters[i].fieldKey || id() : undefined,
+              name: node.querySelector("[data-counter-name]").value.trim(),
               unit: node.querySelector("[data-counter-unit]").value, source: node.querySelector("[data-counter-source]").value,
               factor: node.querySelector("[data-counter-factor]").valueAsNumber,
             }));
@@ -5062,7 +5132,7 @@
         readDraft();
         const position = draft.positions[Number(editCounter.dataset.slotIndex)];
         const rules = position.usageCounters ||= [];
-        if (editCounter.hasAttribute("data-counter-add")) rules.push({ name: "", unit: "шт.", source: "manual", factor: 1 });
+        if (editCounter.hasAttribute("data-counter-add")) rules.push({ name: "", unit: "шт.", source: "manual", factor: 1, workMode: "entry", columnKey: id() });
         else {
           const removed = Number(editCounter.dataset.counterRemove);
           rules.splice(removed, 1);

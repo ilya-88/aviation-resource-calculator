@@ -36,6 +36,7 @@
   const timeUnits = { "ч": 3600, "мин": 60, "с": 1 };
   function dimension(unit) {
     if (Object.hasOwn(timeUnits, unit)) return "duration";
+    if (unit === "текст") return "text";
     if (unit === "дата") return "date";
     if (unit === "дн.") return "period";
     return "count";
@@ -294,17 +295,18 @@
         if (row.workTypeId) requireValue((operationTypes || [{id:"0"}, {id:"1"}, {id:"2"}]).some(item => item.id === row.workTypeId), "Вид работы графы отсутствует в шаблоне");
         function parseInput({ source, factor }) {
           requireValue(source === "manual" || (typeof source === "string" && source.startsWith("board:") && boardKeys.has(source.slice(6))) ||
-            engineKeys.has(source) || (row.workMode && (rawKeys.has(source) || (typeof source === "string" && source.startsWith("local:") && localFields.has(source.slice(6)) && source !== "local:" + row.fieldKey) || source === "work:date")), `Не найден источник показателя «${name}» в формуляре «${position.label}»`);
+            engineKeys.has(source) || (row.workMode && (rawKeys.has(source) || (typeof source === "string" && source.startsWith("local:") && localFields.has(source.slice(6)) && source !== "local:" + row.fieldKey) || ["work:date", "work:type"].includes(source))), `Не найден источник показателя «${name}» в формуляре «${position.label}»`);
           requireValue(Number.isFinite(factor) && factor >= 0 && factor <= 1000000, `Проверь коэффициент показателя «${name}»`);
           return { source, factor };
         }
         if (row.workMode != null) {
           requireValue(["entry", "total"].includes(row.workMode), "Неизвестное назначение графы");
-          requireValue(row.unit !== "дата" || row.workMode === "entry", "Даты нельзя суммировать");
+          requireValue(!["дата", "текст"].includes(row.unit) || row.workMode === "entry", "Дата и текст сохраняются только за работу");
         }
-        requireValue(aggregateUnits.includes(row.unit) || (row.workMode && ["дата", "дн."].includes(row.unit)), `Проверь единицу показателя «${name}»`);
+        requireValue(aggregateUnits.includes(row.unit) || (row.workMode && ["дата", "дн.", "текст"].includes(row.unit)), `Проверь единицу показателя «${name}»`);
         if (row.columnKey != null) requireValue(typeof row.columnKey === "string" && /^[a-zA-Z0-9-]{1,80}$/.test(row.columnKey), "Некорректная ссылка графы");
         if (row.source === "formula") {
+          requireValue(row.unit !== "текст", "Текст нельзя вычислить по формуле");
           requireValue(row.workMode && row.formula && row.factor === 1 && !row.additionalInputs?.length, "Проверь формулу графы");
           return { name, ...workFilter, columnKey: row.columnKey, source: "formula", factor: 1, workMode: row.workMode, unit: row.unit, formula: row.formula };
         }
@@ -318,10 +320,10 @@
             const field = key.startsWith("position:") ? counters.find(item => item.id === key.split(":")[2]) : null;
             const engineUnit = field ? (field.type === "count" ? "шт." : field.format === "HH:MM" ? "ч" : "с") : null;
             const unit = boardUnit || engineUnit || (key.startsWith("local:") && localFields.get(key.slice(6))) || rawSources.find(item => item.key === key)?.unit ||
-              (part.source === "work:date" ? "дата" : null);
+              (key === "work:date" ? "дата" : key === "work:type" ? "текст" : null);
             if (unit) unitScale(unit, row.unit);
           }
-          requireValue(row.unit !== "дата" || (!additionalInputs.length && primary.factor === 1), "Для даты выбери один источник без коэффициента");
+          requireValue(!["дата", "текст"].includes(row.unit) || (!additionalInputs.length && primary.factor === 1), "Для даты или текста выбери один источник без коэффициента");
         }
         return { name, ...workFilter, ...(row.columnKey && { columnKey: row.columnKey }), ...(row.workMode && { workMode: row.workMode }), ...(row.fieldKey && { fieldKey: row.fieldKey }), source: primary.source, unit: row.unit, factor: primary.factor, ...(additionalInputs.length && { additionalInputs }) };
       });
@@ -510,6 +512,8 @@
           (/^counter:(0|[1-9]\d*)$/.test(source) && Number(source.slice(8)) < (position.usageCounters?.length || 0)) ||
           (/^[a-zA-Z][a-zA-Z0-9]{0,47}$/.test(source) &&
             (position.kind === "engine" || position.engineLink))), "Неизвестный источник расхода");
+        if (source.startsWith("counter:")) requireValue(!["дата", "текст"].includes(position.usageCounters[Number(source.slice(8))].unit),
+          "Дата и текст не могут расходовать ресурс");
         return { source, factor: number(input.factor, "коэффициент") };
       });
       unique(inputs, "source", "источники расхода");

@@ -246,3 +246,27 @@ test("Неполный повторяющийся ввод сохраняет и
   raw.fields.runs = "1";
   assert.equal(templates.calculate(template, raw, "engine", { partial: true }).counters.result, 600);
 });
+
+test("Текст за работу допускает ручной ввод и вид работы, исключает арифметику и расход ресурса", () => {
+  const example = structuredClone(require("../examples/civil-form-check-29.json"));
+  const meter = example.template.positions.at(-1);
+  const note = { name: "Запись", columnKey: "note", workMode: "entry", unit: "текст", source: "manual", factor: 1, fieldKey: "note-input" };
+  meter.usageCounters.push(note);
+  const copy = { ...note, name: "Копия", columnKey: "copy", source: "local:note-input" };
+  delete copy.fieldKey;
+  meter.usageCounters.push(copy);
+  const validate = () => templates.validateStartingAircraft(example);
+  assert.equal(validate().template.positions.at(-1).usageCounters.at(-1).unit, "текст");
+  for (const changes of [{ factor: 2 }, { workMode: "total" }, { unit: "шт." }, { source: "work:date" },
+    { source: "formula", formula: { tokens: [{ ref: "cell:note" }], emptyZero: false }, unit: "шт." }]) {
+    Object.assign(copy, changes);
+    assert.throws(validate);
+    Object.assign(copy, { factor: 1, workMode: "entry", unit: "текст", source: "local:note-input" });
+    delete copy.formula;
+  }
+  copy.source = "work:type";
+  assert.equal(validate().template.positions.at(-1).usageCounters.at(-1).source, "work:type");
+  example.aircraft.resources.push({ name: "Счётчик", position: meter.id, unit: "шт.", remaining: 5, limit: 5,
+    inputs: [{ source: "counter:1", factor: 1 }] });
+  assert.throws(validate, /не могут расходовать ресурс/);
+});

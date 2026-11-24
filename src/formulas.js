@@ -17,6 +17,7 @@
   function calculate(formula, unit, sources, read) {
     if (!formula || !Array.isArray(formula.tokens) || !formula.tokens.length || formula.tokens.length > 100 ||
         typeof formula.emptyZero !== "boolean") fail("Собери выражение из граф и чисел");
+    if (unit === "текст") fail("Текст нельзя вычислить по формуле");
     const tokens = formula.tokens;
     const operands = new Map();
     let at = 0, present = false, missing = false;
@@ -32,6 +33,7 @@
         term = { n: token, k: "constant" };
       } else if (token && typeof token.ref === "string") {
         const source = sources.get(token.ref);
+        if (source?.unit === "текст") fail("Текст нельзя использовать в формуле");
         if (!source) fail("Графа, на которую ссылается формула, отсутствует");
         const value = read ? read(token.ref) : null;
         if (value == null) missing = true;

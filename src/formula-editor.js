@@ -21,7 +21,7 @@ function attachFormulaEditor(panel, initial, sources, currentKey, unit, escapeHt
   }
   function refresh() {
     const all = sources();
-    const keys = [...all.values()].filter(item => item.key !== currentKey);
+    const keys = [...all.values()].filter(item => item.key !== currentKey && item.unit !== "текст");
     const cells = keys.filter(item => item.key.startsWith("cell:") || item.key.startsWith("position:"));
     find("[data-cell-list]").innerHTML = cells.map(item =>
       `<button type="button" class="small-button" data-ref="${escapeHtml(item.key)}">${escapeHtml(item.label)}</button>`).join("");
