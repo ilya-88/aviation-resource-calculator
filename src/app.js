@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.43";
+  const APP_VERSION = "0.2.38-exp.44";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1184,6 +1184,7 @@
     else if (state.view === "board-details") renderBoardDetails();
     else if (state.view === "board-image") renderBoardImage();
     else if (state.view === "block") renderBlock();
+    else if (state.view === "paper-examples") renderPaperExamples();
     else if (state.view === "correct-usage") renderUsageCorrection();
     else if (state.view === "block-usage-rules") renderAggregateRules();
     else if (state.view === "usage-map") renderUsageMap();
@@ -1273,6 +1274,7 @@
         <button class="primary-button" data-action="add-aircraft">${icon("plus")} Добавить самолёт</button>
       </section>
       ${aircraftImportControls()}
+      <button type="button" class="secondary-button" data-view="paper-examples">Образцы формуляров</button>
       <section class="section-stack aircraft-list" aria-label="Список самолётов">
         ${aircraftCards || `<div class="empty-state"><h2>Самолётов пока нет</h2><p>Добавьте первый борт, чтобы начать учёт.</p></div>`}
       </section>
@@ -4139,7 +4141,7 @@
     const layout = prepareFormLayout(aircraft, block, layoutEditing);
     if (layoutEditing) return layout;
     mountPaperLedger(aircraft, block, position, logFields);
-    app.querySelector("[data-jump-ledger]")?.addEventListener("click", () => document.getElementById("work-ledger").scrollIntoView());
+    app.querySelector("[data-jump-ledger]")?.addEventListener("click", () => app.querySelector(".paper-properties").open = false);
 
     for (const button of app.querySelectorAll("[data-column-rule]")) button.onclick = () => {
       focusedFormColumn = button.dataset.columnRule;
@@ -4465,8 +4467,8 @@
     const columns = [], records = [];
     const number = v => Number.isFinite(v) ? formatNumber(v, 6) : "—";
     const byDate = aircraft.shifts.slice().sort((a, b) => a.date.localeCompare(b.date));
-    function column(label, format = number, current = null) {
-      columns.push({ label, format, current });
+    function column(label, format = number, current = null, group) {
+      columns.push({ ...(group ? {group, label} : paperHeading(label)), format, current });
     }
     // A cell distinguishes what was posted in this entry from its closing reading.
     function cell(value, amount = null) { return { value, amount }; }
@@ -4475,7 +4477,7 @@
       const time = v => v == null ? "—" : displayedReading(v, "мин");
       const roleKeys = ["touch", "arresterHooks", "runway", "carrier", "circuit"].filter(k => sourceEnabled(aircraft, k)
         || byDate.some(s => k === "arresterHooks" ? s.arresterHooks > 0 : s.landingsByType?.[k] > 0));
-      column("Вид полёта / работы", v => v ?? "—");
+      column("Вид полёта", v => v ?? "—");
       column(usageRule("flight", aircraft).label + " за запись", time);
       for (const [title, key] of [["Налёт ППР","pprFlightMinutes"], ["Налёт СНЭ","totalFlightMinutes"]]) column(title, time, aircraft[key]);
       for (const k of roleKeys) column(usageRule(k, aircraft).label);
@@ -4518,11 +4520,11 @@
         const units = field?.type === "duration" && rule ? aircraftTemplates.unitScale(rule.unit, "с") : 1;
         const value = n => n == null ? null : n * units;
         if (startsOnly && field?.role === "starts") {
-          column("Запуски"); column("Сумма ППР", number, block.repairs ? total?.ppr ?? block.pprStarts : null);
-          column("Сумма СНЭ", number, total?.sne ?? block.starts);
+          column("За смену", number, null, "Запуски"); column("ППР", number, block.repairs ? total?.ppr ?? block.pprStarts : null, "Запуски");
+          column("СНЭ", number, total?.sne ?? block.starts, "Запуски");
         } else {
           const native = field?.role === "starts" ? block.repairs ? block.pprStarts : block.starts : null;
-          column(spec.label, format, value(total?.[period]) ?? native);
+          column(spec.label, format, value(total?.[period]) ?? native, spec.group);
         }
         return { spec, field, rule, value };
       });
@@ -4539,9 +4541,10 @@
               const ppr = afterRepair ? balances?.ppr?.[1] ?? observed(shift, block.id + ":pprStarts") : null;
               const sne = balances?.sne?.[1] ?? observed(shift, block.id + ":starts");
               if (startsOnly) cells.push(cell(n,n), cell(ppr), cell(sne));
-              else cells.push(cell(n == null ? null : number(n) + " / " + number(afterRepair ? ppr : sne), n));
-            } else if (spec.withPpr) {
-              cells.push(cell(n == null ? null : number(n) + " / " + number(balances?.ppr?.[1]), n));
+              else cells.push(cell(n != null || (afterRepair ? ppr : sne) != null ? [number(n), number(afterRepair ? ppr : sne)] : null, n));
+            } else if (spec.withPpr || (rule && field.type === "count" && !spec.perEntry)) {
+              const closing = spec.withPpr ? balances?.ppr?.[1] : end;
+              cells.push(cell(n != null || closing != null ? [number(n), number(closing)] : null, n));
             } else {
               const shown = rule && n != null && end == null ? aircraftTemplates.formatValue(field, n) + " за запись" : rule ? end : n;
               cells.push(cell(shown, n));
@@ -4588,41 +4591,141 @@
     return { columns, records };
   }
 
-  function mountPaperLedger(aircraft, block, position, fields) {
-    const { columns, records } = paperLedger(aircraft, block, position, fields);
+  function paperHeading(label) {
+    // Older journal definitions have a single caption. Split only known presentation prefixes.
+    if (["Запуски", "Включения ОР"].includes(label)) return {group:"Количество", label};
+    const grouped = /^(Циклы|Максимал|Земля|Полёт|Суммарная наработка|Налёт|Посадки)\s+(?:·\s*)?(.+)$/u.exec(label);
+    return grouped ? {group: grouped[1], label: grouped[2]} : {group: "", label};
+  }
+
+  function paperTableHead(columns) {
+    const cells = [{label: "Дата", group: ""}, ...columns];
+    const groups = [], leaves = [];
+    for (let i = 0; i < cells.length;) {
+      const col = cells[i];
+      const css = i === 0 ? ' class="paper-date"' : "";
+      if (!col.group) {
+        groups.push(`<th scope="col" aria-colindex="${i+1}" rowspan="2"${css}>${escapeHtml(col.label)}</th>`);
+        i++;
+        continue;
+      }
+      const from = i;
+      while (i < cells.length && cells[i].group === col.group) {
+        leaves.push(`<th scope="col" aria-colindex="${i+1}">${escapeHtml(cells[i].label)}</th>`);
+        i++;
+      }
+      groups.push(`<th scope="colgroup" aria-colindex="${from+1}" colspan="${i-from}">${escapeHtml(col.group)}</th>`);
+    }
+    return `<tr>${groups.join("")}</tr><tr>${leaves.join("")}</tr><tr class="paper-numbers" aria-hidden="true">${cells.map((_,i) => `<td${i ? "" : ' class="paper-date"'}>${i+1}</td>`).join("")}</tr>`;
+  }
+
+  function paperCell(value, format) {
+    if (!Array.isArray(value)) return escapeHtml(format(value));
+    const [a,b] = value.map(escapeHtml);
+    return `<span class="paper-pair" aria-label="${a} / ${b}"><span>${a}</span><i>/</i><span>${b}</span></span>`;
+  }
+
+  let sampleKey = "airframe";
+  let expandedPaperOwner = null;
+  function renderPaperExamples() {
+    const sample = paperExamples[sampleKey];
+    app.innerHTML = shell(`<nav class="paper-samples" aria-label="Формуляры">
+      ${Object.entries(paperExamples).map(([key,s]) => `<button type="button" data-sample="${key}" aria-pressed="${key === sampleKey}">${escapeHtml(s.name)}</button>`).join("")}</nav>`,
+      {title: "Образцы формуляров", subtitle: sample.name + " · стр. " + sample.page, back: true, settings: false});
+    for (const b of app.querySelectorAll("[data-sample]")) b.onclick = () => { sampleKey = b.dataset.sample; render(); };
+    mountPaperLedger(null, null, null, [], sample);
+  }
+
+  function fromPaperExample(sample) {
+    const format = v => v == null ? "" : String(v);
+    const columns = sample.columns.map(c => ({...c, format}));
+    const records = sample.rows.map(([caption, ...data]) => {
+      const subtotal = caption.startsWith("Итого ");
+      const month = /(\d\d)\.(\d{4})$/.exec(caption);
+      return {caption, subtotal, month: month ? month[2] + "-" + month[1] : "", cells: data.map((v, i) => {
+        const pair = v.includes("/") ? v.split("/") : null;
+        const input = pair ? pair[0] : v;
+        const kind = columns[i].kind;
+        let amount = null;
+        if (!subtotal && kind && /^\d+$/.test(input)) amount = Number(input);
+        if (!subtotal && kind === "duration" && /^\d+:[0-5]\d$/.test(input)) {
+          const [h,m] = input.split(":").map(Number);
+          amount = h*60+m;
+        }
+        return {value: pair || v, amount};
+      })};
+    });
+    return {columns, records};
+  }
+
+  function mountPaperLedger(aircraft, block, position, fields, sample = null) {
+    const {columns, records} = sample ? fromPaperExample(sample) : paperLedger(aircraft, block, position, fields);
     const section = document.createElement("section");
-    section.className = "paper-journal";
     section.id = "work-ledger";
-    section.innerHTML = `<h2>Учёт работы</h2><div class="paper-tools">
-      <label>Период <select aria-label="Период журнала"><option value="">Все записи</option></select></label>
+    section.className = "paper-journal";
+    section.setAttribute("aria-label", "Учёт работы");
+    section.innerHTML = `<div class="paper-tools"><select aria-label="Период журнала"><option value="">Все даты</option></select>
       <button type="button" data-zoom="-1" aria-label="Уменьшить">−</button>
       <button type="button" data-zoom="0" aria-label="Стандартный масштаб">100%</button>
       <button type="button" data-zoom="1" aria-label="Увеличить">+</button>
-      <button type="button" data-totals>Итоги</button></div>
+      <button type="button" data-totals>Итоги</button>
+      ${sample ? "" : '<button type="button" data-view="paper-examples">Образец</button>'}</div>
       <div class="paper-scroll" tabindex="0" aria-label="Таблица учёта работы">
       <table><thead></thead><tbody></tbody><tfoot></tfoot></table></div>`;
-    app.querySelector("main").prepend(section);
+    const main = app.querySelector("main");
+    if (sample) {
+      main.append(section);
+      section.insertAdjacentHTML("beforeend", '<small class="paper-key">? — неразборчиво. Прочерк и пустая ячейка сохранены как на странице.</small>');
+    } else {
+      const controls = document.createElement("details");
+      controls.className = "paper-properties";
+      controls.innerHTML = "<summary>Карточки и реквизиты</summary>";
+      controls.append(...main.children);
+      controls.id = "paper-form-controls";
+      controls.open = expandedPaperOwner === block.id;
+      main.append(section, controls);
+      const more = document.createElement("button");
+      more.type = "button"; more.textContent = "⋯"; more.setAttribute("aria-label", "Карточки и реквизиты");
+      more.setAttribute("aria-controls", controls.id); more.setAttribute("aria-expanded", String(controls.open));
+      more.onclick = () => { controls.open = !controls.open; if (controls.open) controls.scrollIntoView({block:"start"}); };
+      controls.ontoggle = () => {
+        if (!controls.isConnected) return;
+        expandedPaperOwner = controls.open ? block.id : null;
+        more.setAttribute("aria-expanded", String(controls.open));
+      };
+      section.querySelector(".paper-tools").append(more);
+      const exampleButton = section.querySelector('[data-view="paper-examples"]');
+      exampleButton.onclick = () => {
+        sampleKey = block.kind === "airframe" ? "airframe" : block.kind === "engine" ? "engine" :
+          onlyStarts(fields) ? "gtde" : position?.engineLink ? "vka" : "airframe";
+      };
+    }
     const viewport = section.querySelector(".paper-scroll"), table = viewport.querySelector("table");
     const select = section.querySelector("select");
-    const months = [...new Set(records.map(r => r.date?.slice(0,7)).filter(Boolean))].sort().reverse();
+    const monthOf = row => row.month ?? row.date?.slice(0,7);
+    const months = [...new Set(records.map(monthOf).filter(Boolean))].sort().reverse();
     for (const m of months) select.add(new Option(m.slice(5) + "." + m.slice(0,4), m));
-    const labels = ["Дата работы", ...columns.map(c => c.label)];
-    table.tHead.innerHTML = "<tr>" + labels.map((label,i) => `<th scope="col"><span>${escapeHtml(label)}</span><small>${i+1}</small></th>`).join("") + "</tr>";
+    table.tHead.innerHTML = paperTableHead(columns);
     function draw() {
-      const rows = records.filter(r => !select.value || r.date.startsWith(select.value));
+      const rows = records.filter(r => !select.value || monthOf(r) === select.value);
       const sums = columns.map(() => null), sinceRepair = columns.map(() => null);
-      const values = cells => cells.map((v,i) => `<td>${escapeHtml(columns[i].format(v))}</td>`).join("");
+      const values = cells => cells.map((v,i) => `<td>${paperCell(v,columns[i].format)}</td>`).join("");
       table.tBodies[0].innerHTML = rows.map(r => {
         r.cells.forEach((c,i) => {
-          if (!Number.isFinite(c.amount)) return;
+          if (r.subtotal || !Number.isFinite(c.amount)) return;
           sums[i] = (sums[i] ?? 0) + c.amount;
-          if (r.repairNumber != null && r.repairNumber === block.repairs) sinceRepair[i] = (sinceRepair[i] ?? 0) + c.amount;
+          if (r.repairNumber != null && r.repairNumber === block?.repairs) sinceRepair[i] = (sinceRepair[i] ?? 0) + c.amount;
         });
-        return `<tr><th scope="row">${formatDate(r.date)}</th>${values(r.cells.map(c => c.value))}</tr>`;
-      }).join("") || `<tr><td colspan="${labels.length}">Записей пока нет</td></tr>`;
-      table.tFoot.innerHTML = `<tr><th scope="row">Итого за период</th>${values(sums)}</tr>
-        ${sinceRepair.some(v => v != null) ? `<tr><th scope="row">ППР за период</th>${values(sinceRepair)}</tr>` : ""}
-        <tr><th scope="row">На ${formatDate(todayIso())}</th>${values(columns.map(c => c.current))}</tr>`;
+        return `<tr${r.subtotal ? ' class="paper-subtotal"' : ''}><th class="paper-date" scope="row">${escapeHtml(r.caption ?? formatDate(r.date))}</th>${values(r.cells.map(c => c.value))}</tr>`;
+      }).join("") || `<tr><td colspan="${columns.length+1}">Записей пока нет</td></tr>`;
+      if (sample) {
+        const total = sums.map((n,i) => n != null && columns[i].kind === "duration" ? calc.formatDuration(n) : n);
+        table.tFoot.innerHTML = `<tr><th class="paper-date" scope="row">По строкам</th>${values(total)}</tr>`;
+      } else {
+        table.tFoot.innerHTML = `<tr><th class="paper-date" scope="row">За период</th>${values(sums)}</tr>
+          ${sinceRepair.some(v => v != null) ? `<tr><th class="paper-date" scope="row">ППР за период</th>${values(sinceRepair)}</tr>` : ""}
+          <tr><th class="paper-date" scope="row">На ${formatDate(todayIso())}</th>${values(columns.map(c => c.current))}</tr>`;
+      }
       viewport.scrollTop = 0;
     }
     select.onchange = draw;
@@ -6742,6 +6845,7 @@
     const about = document.querySelector("[data-action='about']");
     if (about) about.addEventListener("click", () => navigateTo("about"));
     document.querySelectorAll("[data-block-id]").forEach((button) => button.addEventListener("click", () => {
+      expandedPaperOwner = null;
       state.selectedBlockId = button.dataset.blockId;
       navigateTo("block");
     }));

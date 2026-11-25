@@ -33,6 +33,7 @@ def check(browser, version, edit):
     if edit:
         right = next(b for b in board()["blocks"] if b["templateSlotId"] == "engine-right")
         page.locator(f'[data-block-id="{right["id"]}"]').first.click()
+        page.get_by_role("button", name="Карточки и реквизиты").click()
         page.locator("#edit-form-layout").click()
         page.locator('[data-tile-key="form-field:manufactureDate"]').click()
         page.locator('[data-layout-action=hide]').click()

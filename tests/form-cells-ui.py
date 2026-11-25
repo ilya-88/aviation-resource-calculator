@@ -34,6 +34,7 @@ def check(page):
         if not page.locator("[data-block-id]").filter(has_text=name).count():
             page.locator("[data-aircraft-tab=aggregates]").click()
         page.locator("[data-block-id]").filter(has_text=name).first.click()
+        page.get_by_role("button", name="Карточки и реквизиты").click()
 
     def reopen_board():
         page.reload()

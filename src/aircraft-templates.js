@@ -262,6 +262,7 @@
         requireValue(field || (column.field == null && column.label), "Неизвестная графа журнала");
         requireValue(!column.withPpr || field?.type === "count", "Для итога ППР выбери счётчик");
         return { ...(field && { field: field.id }), label: label(column.label || field.label, "название графы"),
+          ...(column.group && {group: label(column.group, "группа граф")}),
           ...(column.perEntry && { perEntry: true }), ...(column.withPpr && { withPpr: true }) };
       });
     }

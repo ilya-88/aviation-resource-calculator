@@ -31,6 +31,7 @@ with sync_playwright() as pw:
 
     def aircraft_form():
         page.get_by_role("button", name="Формуляр самолёта Норма").first.click()
+        page.get_by_role("button", name="Карточки и реквизиты").click()
 
     def save_work():
         page.get_by_role("button", name="Внести работу").click()

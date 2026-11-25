@@ -22,6 +22,26 @@ def test_ledger():
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto((ROOT / "index.html").as_uri())
 
+        page.get_by_role("button", name="Образцы формуляров").click()
+        sheet = page.locator("#work-ledger")
+        for key, expected in [("airframe", 11), ("engine", 11), ("vka", 13), ("gtde", 15)]:
+            page.locator(f"[data-sample={key}]").click()
+            rows = sheet.locator("tbody tr:not(.paper-subtotal)")
+            assert rows.count() == expected, key
+            assert sheet.locator("thead th").first.inner_text() == "Дата"
+            if key in ("engine", "vka"):
+                cycles = sheet.get_by_role("columnheader", name="Циклы", exact=True)
+                assert cycles.get_attribute("colspan") == ("3" if key == "engine" else "2")
+                if key == "engine":
+                    assert [rows.nth(i).locator("td").first.text_content() for i in range(3)] == ["1/62","2/64","3/67"]
+                month, book, visible = ("2020-08", "27", "27") if key == "engine" else ("2018-08", "20", "9")
+                sheet.locator("select").select_option(month)
+                assert sheet.locator(".paper-subtotal td").first.inner_text() == book
+                assert sheet.locator("tfoot td").first.inner_text() == visible
+            if key == "gtde":
+                assert rows.nth(1).locator("td").all_text_contents()[:3] == ["4", "4", "1000"]
+        page.locator(".topbar [data-action=back]").click()
+
         def upload(f, action):
             page.locator("#aircraft-template-file").set_input_files(f)
             page.get_by_role("button", name=action, exact=True).click()
@@ -57,6 +77,8 @@ def test_ledger():
             page.locator(f'.equipment-block[data-block-id="{block["id"]}"]').click()
             sheet = page.locator("#work-ledger")
             assert sheet.evaluate("e=>e===e.parentElement.firstElementChild")
+            assert not page.locator("#paper-form-controls").is_visible()
+            assert sheet.get_by_role("button", name="Карточки и реквизиты").get_attribute("aria-expanded") == "false"
             rows = sheet.locator("tbody tr")
             if slot == "airframe":
                 assert rows.count() == 1

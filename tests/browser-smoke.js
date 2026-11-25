@@ -177,14 +177,22 @@ async function main() {
       });
       const maximas = Object.entries(pair[0].counters).filter(([key]) => key.startsWith('maximum')).map(([,value]) => value);
       openEngine('engine-left');
-      const logColumns = () => [...document.querySelectorAll('#work-ledger thead th span')].map(header => header.textContent);
+      const logColumns = () => {
+        const heads = [...document.querySelectorAll('#work-ledger th[scope=col]')];
+        const groups = [...document.querySelectorAll('#work-ledger th[scope=colgroup]')];
+        const index = h => Number(h.getAttribute('aria-colindex'));
+        return heads.sort((a,b) => index(a)-index(b)).map(h => {
+          const g = groups.find(g => index(h) >= index(g) && index(h) < index(g) + g.colSpan);
+          return g && g.textContent !== 'Количество' ? g.textContent + ' · ' + h.textContent : h.textContent;
+        });
+      };
       const orderedHeadings = [
-        'Дата работы', 'Запуски', 'Земля · Б', 'Земля · Б + УБ', 'Полёт · Б', 'Полёт · Б + УБ', 'Максимал · ОР',
+        'Дата', 'Запуски', 'Земля · Б', 'Земля · Б + УБ', 'Полёт · Б', 'Полёт · Б + УБ', 'Максимал · ОР',
         'Максимал · ОР + Б', 'Максимал · Б + УБ', 'Итог · Б', 'Итог · Б + УБ', 'Работа на заказ',
       ].join('|');
       const logValues = () => [...document.querySelectorAll('#work-ledger tbody tr:first-child td')].map(cell => cell.textContent).join('|');
       const leftLog = logColumns().join('|') === orderedHeadings &&
-        logValues() === '1 / 1|00:13|00:23|00:40|00:50|00:00:03|00:00:08|00:00:12|00:43|00:55|—';
+        logValues() === '1/1|00:13|00:23|00:40|00:50|00:00:03|00:00:08|00:00:12|00:43|00:55|—';
       const logBeforeSettings = document.querySelector('#work-ledger table').compareDocumentPosition(document.querySelector('#block-form [name=name]')) === Node.DOCUMENT_POSITION_FOLLOWING;
       const repair = document.querySelector('#block-event-form');
       repair.elements.type.value = 'repair';
@@ -192,7 +200,7 @@ async function main() {
       back();
       openEngine('engine-right');
       const rightLog = logColumns().join('|') === orderedHeadings &&
-        logValues() === '2 / 2|00:13|00:23|00:40|01:00|00:00:03|00:00:08|00:00:12|00:43|01:05|—';
+        logValues() === '2/2|00:13|00:23|00:40|01:00|00:00:03|00:00:08|00:00:12|00:43|01:05|—';
       const event = document.querySelector('#block-event-form');
       event.elements.type.value = 'dismantle';
       event.requestSubmit();
@@ -205,7 +213,7 @@ async function main() {
       });
       const gtdeLogs = ['gtde-1', 'gtde-2'].every((slot, index) => {
         openEngine(slot);
-        const match = logColumns().join('|') === 'Дата работы|Запуски|Сумма ППР|Сумма СНЭ' &&
+        const match = logColumns().join('|') === 'Дата|Запуски · За смену|Запуски · ППР|Запуски · СНЭ' &&
           logValues() === [index + 1, '—', index + 1].join('|');
         if (index === 0) {
           const unitRepair = document.querySelector('#block-event-form');
@@ -963,7 +971,10 @@ async function main() {
       const click = selector => get(selector).click();
       const back = () => window.handleAndroidBack();
       const keySelector = key => '[data-tile-key="' + key + '"]';
-      const visit = slot => click('[data-block-id="' + bySlot(slot).id + '"]');
+      const visit = slot => {
+        click('[data-block-id="' + bySlot(slot).id + '"]');
+        click('[aria-controls=paper-form-controls]');
+      };
       const active = '.counter-tile-active';
       const selector = (key, action) => keySelector(key) + ' [data-layout-action="' + action + '"]';
       const touch = (element, type, x, y) => {
