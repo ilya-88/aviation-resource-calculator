@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.40";
+  const APP_VERSION = "0.2.38-exp.41";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1592,14 +1592,17 @@
     if (template.layout.navigation) aircraft.boardNavigationLayout = structuredClone(template.layout.navigation);
   }
 
+  function installedFormLayout(aircraft, block, layout) {
+    if (!layout) return undefined;
+    const bySlot = new Map(aircraft.blocks.map(item => [`form:assembly-slot:${item.templateSlotId}`, `form:assembly:${item.id}`]));
+    const byIndex = formCounterKeys(block, true);
+    return remapFormLayout(layout, key => byIndex.get(key) || bySlot.get(key) || (aircraftTemplates.isFormKey(key) ? key : null));
+  }
+
   function applyTemplateFormLayouts(aircraft) {
-    const bySlot = new Map(aircraft.blocks.map((block) => [`form:assembly-slot:${block.templateSlotId}`, `form:assembly:${block.id}`]));
     for (const block of aircraft.blocks) {
       const layout = templatePositionFor(aircraft, block)?.formLayout;
-      if (!layout) continue;
-      const byIndex = formCounterKeys(block, true);
-      block.formLayout = remapFormLayout(layout, (key) => byIndex.get(key) || bySlot.get(key) ||
-        (aircraftTemplates.isFormKey(key) ? key : null));
+      if (layout) block.formLayout = installedFormLayout(aircraft, block, layout);
     }
   }
 
@@ -1903,6 +1906,18 @@
       });
       block.usageTotals ??= {};
       pos.usageCounters = rules;
+    }
+    for (const pos of template.positions) {
+      const nextLayout = next.positions.find(p => p.id === pos.id).formLayout;
+      if (same(pos.formLayout, nextLayout)) continue;
+      for (const block of updated.blocks.filter(b => b.templateSlotId === pos.id)) {
+        const original = board.blocks.find(b => b.id === block.id);
+        if (original.formLayout && !same(original.formLayout, installedFormLayout(board, original, pos.formLayout))) continue;
+        if (nextLayout) block.formLayout = installedFormLayout(updated, block, nextLayout);
+        else delete block.formLayout;
+      }
+      if (nextLayout) pos.formLayout = structuredClone(nextLayout);
+      else delete pos.formLayout;
     }
     // Reject any other schema changes instead of silently applying a partial update.
     check(same(aircraftTemplates.validateTemplate(template), next));
@@ -5882,19 +5897,23 @@
         }
         template = aircraftTemplates.validateTemplate(incoming);
         if (incoming.previousTemplate) {
-          const previous = aircraftTemplates.validateTemplate(incoming.previousTemplate);
+          const previous = [];
+          for (let file = incoming.previousTemplate; file; file = file.previousTemplate) {
+            const candidate = aircraftTemplates.validateTemplate(file);
+            if (candidate.id !== template.id || candidate.name !== template.name) break;
+            previous.push(candidate);
+          }
           const current = state.templateCatalog.find(t => t.id === template.id && t.name === template.name);
-          if (current && previous.id === template.id && previous.name === template.name &&
-              (sameTemplate(current, previous) || sameTemplate(current, template))) {
+          if (current && (previous.some(t => sameTemplate(current, t)) || sameTemplate(current, template))) {
             const boards = state.aircraft.filter(b => b.workTemplate?.id === template.id && b.type === template.name &&
-              sameTemplate(b.workTemplate, previous));
+              previous.some(t => sameTemplate(b.workTemplate, t)));
             if (!boards.length && sameTemplate(current, template)) { status.textContent = "Эта версия типа уже установлена"; return; }
             chooseLayoutAction(`Обновить тип «${escapeHtml(template.name)}»?` +
               (boards.length ? ` Обновятся борта: ${boards.map(b => escapeHtml(b.boardNumber)).join(", ")}.` : ""),
               [["update", "Обновить тип"], ["cancel", "Отмена"]], action => {
                 if (action !== "update") return;
                 try {
-                  const updates = new Map(boards.map(b => [b, boardWithUpdatedLinks(b, previous, template)]));
+                  const updates = new Map(boards.map(b => [b, boardWithUpdatedLinks(b, previous.find(t => sameTemplate(b.workTemplate, t)), template)]));
                   saveImportedLinks(updates, current, template);
                   render(); showToast("Тип обновлён");
                 } catch (problem) { status.textContent = problem.message; showToast(problem.message); }
