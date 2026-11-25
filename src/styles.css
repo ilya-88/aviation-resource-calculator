@@ -466,7 +466,7 @@ button.setting-row { cursor: pointer; }
 .paper-tools, .paper-samples { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin: 0 0 5px; }
 .paper-tools :is(select,button), .paper-samples button { min-height: 34px; padding: 3px 8px; border: 1px solid #a7b3ba; border-radius: 6px; background: var(--paper); color: var(--ink); font: inherit; font-size: 14px; touch-action: manipulation; }
 .paper-tools [data-zoom="0"] { min-width: 3.6em; }
-.paper-samples button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.paper-samples button[aria-pressed="true"], .paper-tools button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 .paper-properties:not([open]) { display: none; }
 .paper-properties > summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
 .paper-scroll { width: 100%; max-height: 75vh; max-height: 75dvh; overflow: auto; border: 1px solid #89959b; background: #faf8ef; }
@@ -477,7 +477,12 @@ button.setting-row { cursor: pointer; }
 .paper-scroll thead :is(th,td) { max-width: 12ch; background: #e9e8dc; vertical-align: middle; text-align: center; font-weight: 600; }
 .paper-scroll .paper-numbers td { font-size: .8em; font-weight: 400; }
 .paper-scroll .paper-date { position: sticky; left: 0; z-index: 1; background: #f1efe3; white-space: nowrap; }
-.paper-scroll tbody th.paper-date, .paper-scroll tfoot th.paper-date { text-align: left; white-space: normal; width: 9ch; max-width: 9ch; padding-inline: .24em; }
+.paper-scroll tbody th.paper-date, .paper-scroll tfoot th.paper-date { text-align: left; white-space: normal; width: 6.5ch; padding-inline: .32em; }
+.paper-day, .paper-year { display: block; white-space: nowrap; line-height: 1.38; }
+.paper-year { font-size: .91em; }
+.paper-duration-pair { display: inline-grid; text-align: right; }
+.paper-duration-pair > :first-child { font-weight: normal; }
+.paper-date-separator { position: absolute; clip-path: inset(50%); }
 .paper-scroll thead abbr { text-decoration: none; }
 .paper-scroll th.paper-date { font-variant-numeric: tabular-nums; }
 .paper-scroll .paper-subtotal, .paper-scroll tfoot { background: #e2ede7; font-weight: 650; }

@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.46";
+  const APP_VERSION = "0.2.38-exp.47";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -973,6 +973,7 @@
   let state = loadState();
   const viewStack = [];
   let primaryWorkspace = null;
+  let trainingStorageKey = "training89Nov25";
 
   function loadState() {
     try {
@@ -1004,8 +1005,11 @@
   function saveState() {
     try {
       const persisted = persistedWorkspace(primaryWorkspace || state);
-      if (primaryWorkspace) persisted.training89 = persistedWorkspace(state);
-      else if (state.training89) persisted.training89 = state.training89;
+      const main = primaryWorkspace || state;
+      for (const key of ["training89", "training89Nov25"]) {
+        if (main[key]) persisted[key] = main[key];
+      }
+      if (primaryWorkspace) persisted[trainingStorageKey] = persistedWorkspace(state);
       const json = JSON.stringify(persisted);
       if (window.AndroidBridge?.storeState) {
         if (!window.AndroidBridge.storeState(json)) return false;
@@ -1014,7 +1018,7 @@
     } catch (_) {
       return false;
     }
-    if (primaryWorkspace) primaryWorkspace.training89 = persistedWorkspace(state);
+    if (primaryWorkspace) primaryWorkspace[trainingStorageKey] = persistedWorkspace(state);
     else syncAndroidReminders();
     return true;
   }
@@ -1240,8 +1244,9 @@
       <main class="content">${content}</main>`;
   }
 
-  function openTrainingBoard() {
-    const workspace = state.training89 || trainingBoard;
+  function openTrainingBoard(key) {
+    const workspace = state[key] || trainingBoard;
+    trainingStorageKey = key;
     const copy = normalizeState(structuredClone(workspace));
     if (!copy.aircraft.some(board => board.boardNumber === "89")) {
       showToast("Не удалось открыть копию борта 89");
@@ -1306,13 +1311,15 @@
       <div class="operation-tags">
         <button type="button" class="secondary-button" data-view="paper-examples">Образцы формуляров</button>
         <button type="button" class="secondary-button" id="open-training-board">Тестовая копия борта 89</button>
+        ${state.training89 ? '<button type="button" class="secondary-button" id="open-previous-training">Моя прежняя тестовая копия</button>' : ""}
       </div>
       <section class="section-stack aircraft-list" aria-label="Список самолётов">
         ${aircraftCards || `<div class="empty-state"><h2>Самолётов пока нет</h2><p>Добавьте первый борт, чтобы начать учёт.</p></div>`}
       </section>
       ${nearestNote}
     `, { title: "Самолёты", subtitle: "Авиаресурс" });
-    app.querySelector("#open-training-board")?.addEventListener("click", openTrainingBoard);
+    app.querySelector("#open-training-board")?.addEventListener("click", () => openTrainingBoard("training89Nov25"));
+    app.querySelector("#open-previous-training")?.addEventListener("click", () => openTrainingBoard("training89"));
     bindTemplateImport();
   }
 
@@ -4585,13 +4592,13 @@
           const native = field?.role === "starts" ? block.repairs ? block.pprStarts : block.starts : null;
           column(spec.label, format, value(total?.[period]) ?? native, spec.group);
         }
-        return { spec, field, rule, value };
+        return { spec, field, rule, value, format };
       });
       for (const shift of byDate) {
         const entries = shift.templateWork?.[position.kind === "unit" ? "units" : "engines"] || [];
         for (const entry of entries.filter(e => e.blockId === block.id)) {
           const cells = [];
-          for (const { field, spec, rule, value } of descriptions) {
+          for (const { field, spec, rule, value, format } of descriptions) {
             const n = entry.counters?.[field?.id];
             const balances = rule && shift.aggregateAccruals?.find(r => r.blockId === block.id && r.counterId === rule.id)?.balances;
             const afterRepair = entry.repairNumber != null;
@@ -4606,7 +4613,9 @@
               cells.push(cell(n != null || closing != null ? [number(n), number(closing)] : null, n));
             } else {
               const shown = rule && n != null && end == null ? aircraftTemplates.formatValue(field, n) + " за запись" : rule ? end : n;
-              cells.push(cell(shown, n));
+              const item = cell(shown, n);
+              if (field?.type === "duration" && rule && n != null && end != null) item.entryAndTotal = [format(n), format(end)];
+              cells.push(item);
             }
           }
           records.push({ date: shift.date, shift, cells, repairNumber: entry.repairNumber });
@@ -4682,7 +4691,17 @@
     return `<tr>${groups.join("")}</tr><tr>${leaves.join("")}</tr><tr class="paper-numbers" aria-hidden="true">${cells.map((_,i) => `<td${i ? "" : ' class="paper-date"'}>${i+1}</td>`).join("")}</tr>`;
   }
 
+  function paperDate(caption) {
+    const match = /^([0-9?]{2}\.[0-9?]{2})\.(\d{4})$/.exec(caption);
+    if (!match) return escapeHtml(caption);
+    return `<span class="paper-day">${match[1]}<span class="paper-date-separator">.</span></span><span class="paper-year">${match[2]}</span>`;
+  }
+
   function paperCell(value, format) {
+    if (value?.entryAndTotal) {
+      const [entry, closing] = value.entryAndTotal.map(escapeHtml);
+      return `<span class="paper-duration-pair" aria-label="За смену ${entry}. Итог ${closing}"><span>+${entry}</span><span>Σ ${closing}</span></span>`;
+    }
     if (!Array.isArray(value)) return escapeHtml(format(value));
     const [a,b] = value.map(escapeHtml);
     return `<span class="paper-pair" aria-label="${a} / ${b}"><span>${a}</span><i>/</i><span>${b}</span></span>`;
@@ -4732,6 +4751,7 @@
       <button type="button" data-zoom="0" aria-label="Стандартный масштаб">100%</button>
       <button type="button" data-zoom="1" aria-label="Увеличить">+</button>
       <button type="button" data-totals>Итоги</button>
+      ${records.some(r => r.cells.some(c => c.entryAndTotal)) ? '<button type="button" data-entry-amounts aria-pressed="false">За смену и итог</button>' : ""}
       ${sample ? "" : '<button type="button" data-view="paper-examples">Образец</button>'}</div>
       <div class="paper-scroll" tabindex="0" aria-label="Таблица учёта работы">
       <table><thead></thead><tbody></tbody><tfoot></tfoot></table></div>`;
@@ -4757,6 +4777,13 @@
         more.setAttribute("aria-expanded", String(controls.open));
       };
       section.querySelector(".paper-tools").append(more);
+      const note = primaryWorkspace && aircraft.trainingReadingNotes?.[block.templateSlotId];
+      if (note) {
+        const info = document.createElement("small");
+        info.className = "paper-key";
+        info.textContent = note;
+        section.append(info);
+      }
       const exampleButton = section.querySelector('[data-view="paper-examples"]');
       exampleButton.onclick = () => {
         sampleKey = block.kind === "airframe" ? "airframe" : block.kind === "engine" ? "engine" :
@@ -4769,6 +4796,11 @@
     const months = [...new Set(records.map(monthOf).filter(Boolean))].sort().reverse();
     for (const m of months) select.add(new Option(m.slice(5) + "." + m.slice(0,4), m));
     table.tHead.innerHTML = paperTableHead(columns);
+    const entryAmounts = section.querySelector("[data-entry-amounts]");
+    if (entryAmounts) entryAmounts.onclick = () => {
+      entryAmounts.setAttribute("aria-pressed", String(entryAmounts.getAttribute("aria-pressed") !== "true"));
+      draw();
+    };
     function draw() {
       const rows = records.filter(r => !select.value || monthOf(r) === select.value);
       const sums = columns.map(() => null), sinceRepair = columns.map(() => null);
@@ -4779,7 +4811,7 @@
           sums[i] = (sums[i] ?? 0) + c.amount;
           if (r.repairNumber != null && r.repairNumber === block?.repairs) sinceRepair[i] = (sinceRepair[i] ?? 0) + c.amount;
         });
-        return `<tr${r.subtotal ? ' class="paper-subtotal"' : ''}><th class="paper-date" scope="row">${escapeHtml(r.caption ?? formatDate(r.date))}</th>${values(r.cells.map(c => c.value))}</tr>`;
+        return `<tr${r.subtotal ? ' class="paper-subtotal"' : ''}><th class="paper-date" scope="row">${paperDate(r.caption ?? formatDate(r.date))}</th>${values(r.cells.map(c => c.entryAndTotal && entryAmounts?.getAttribute("aria-pressed") === "true" ? c : c.value))}</tr>`;
       }).join("") || `<tr><td colspan="${columns.length+1}">Записей пока нет</td></tr>`;
       if (sample) {
         const total = sums.map((n,i) => n != null && columns[i].kind === "duration" ? calc.formatDuration(n) : n);
@@ -4787,7 +4819,7 @@
       } else {
         table.tFoot.innerHTML = `<tr><th class="paper-date" scope="row">За период</th>${values(sums)}</tr>
           ${sinceRepair.some(v => v != null) ? `<tr><th class="paper-date" scope="row">ППР за период</th>${values(sinceRepair)}</tr>` : ""}
-          <tr><th class="paper-date" scope="row">На ${formatDate(todayIso())}</th>${values(columns.map(c => c.current))}</tr>`;
+          <tr><th class="paper-date" scope="row">На ${paperDate(formatDate(todayIso()))}</th>${values(columns.map(c => c.current))}</tr>`;
       }
       viewport.scrollTop = 0;
     }
