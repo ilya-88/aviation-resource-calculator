@@ -14,7 +14,7 @@
   }
 
   // Entries on a date are applied first. A reading taken at close of day replaces that field only.
-  function at(board, date) {
+  function at(board, date, beforeClosingObservation = false) {
     if (!valid(date)) throw new Error("Проверь дату показаний");
     const values = new Map();
     values.expiries = new Map();
@@ -32,7 +32,7 @@
       for (const row of shift.flow || []) {
         if (!row.output?.startsWith("balance:")) continue;
         const key = row.output.slice(8);
-        increment(key, row.amount - row.previous, row.previous);
+        increment(key, row.delta ?? (row.amount - row.previous), row.previous);
         posted.add(key);
       }
       for (const item of [...(shift.templateWork?.engines || []), ...(shift.templateWork?.units || [])]) {
@@ -88,6 +88,7 @@
       }, event.recordedAt);
     }
     for (const [when, observation] of Object.entries(board.readingsByDate || {})) add(when, 2, () => {
+      if (beforeClosingObservation && when === date) return;
       for (const [key, n] of Object.entries(observation)) values.set(key, n);
     });
     timeline.sort((a,b) => a.date.localeCompare(b.date) ||
@@ -116,8 +117,9 @@
     for (const shift of board.shifts || []) {
       if (!valid(shift.date) || shift.date <= from || shift.date > to) continue;
       for (const row of shift.flow || []) {
-        if (row.output?.startsWith("balance:") && Number.isFinite(row.previous) && Number.isFinite(row.amount)) {
-          post(row.output.slice(8), row.amount - row.previous);
+        if (row.output?.startsWith("balance:")) {
+          const known = Number.isFinite(row.previous) && Number.isFinite(row.amount);
+          post(row.output.slice(8), row.delta ?? (known ? row.amount - row.previous : null));
         }
       }
       for (const [name, count] of Object.entries(shift.landingsByType || {})) post("landing:" + name, count);

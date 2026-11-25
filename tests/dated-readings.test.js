@@ -54,3 +54,14 @@ test("Календарь учитывает конец месяца, висок�
   assert.equal(at(board,"2024-03-15").get("resource:r"), 0);
   assert.equal(at(board,"2024-04-01").get("resource:r"), 334);
 });
+
+test("Более позднее показание и смена без известного начального итога", () => {
+  const board = { readingsByDate: { "2026-11-24": { actualLandings: 1251 } },
+    shifts: [{ date: "2026-10-31", flow: [{ output: "balance:actualLandings", delta: 1, previous: null, amount: null }] }] };
+  assert.equal(at(board, "2026-10-31").has("actualLandings"), false);
+  assert.equal(at(board, "2026-11-24", true).has("actualLandings"), false);
+  assert.equal(at(board, "2026-11-24").get("actualLandings"), 1251);
+  assert.equal(postedBetween(board, "2026-10-30", "2026-11-24").get("actualLandings"), 1);
+  board.readingsByDate["2026-10-29"] = { actualLandings: 100 };
+  assert.equal(at(board, "2026-11-24", true).get("actualLandings"), 101);
+});

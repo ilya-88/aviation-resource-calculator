@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.45";
+  const APP_VERSION = "0.2.38-exp.46";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -972,6 +972,7 @@
 
   let state = loadState();
   const viewStack = [];
+  let primaryWorkspace = null;
 
   function loadState() {
     try {
@@ -983,22 +984,28 @@
     return normalizeState(structuredClone(seedState));
   }
 
+  function persistedWorkspace(workspace) {
+    return {
+      globalNotifications: workspace.globalNotifications,
+      selectedAircraftId: workspace.selectedAircraftId,
+      typeSettings: workspace.typeSettings,
+      aircraftTypes: workspace.aircraftTypes,
+      archivedAircraftTypes: workspace.archivedAircraftTypes,
+      removedAircraftTypes: workspace.removedAircraftTypes,
+      usageRules: workspace.usageRules,
+      usageInheritanceVersion: USAGE_INHERITANCE_VERSION,
+      sharedGround: workspace.sharedGround,
+      usageTypeOverrides: workspace.usageTypeOverrides,
+      templateCatalog: workspace.templateCatalog,
+      aircraft: workspace.aircraft,
+    };
+  }
+
   function saveState() {
     try {
-      const persisted = {
-        globalNotifications: state.globalNotifications,
-        selectedAircraftId: state.selectedAircraftId,
-        typeSettings: state.typeSettings,
-        aircraftTypes: state.aircraftTypes,
-        archivedAircraftTypes: state.archivedAircraftTypes,
-        removedAircraftTypes: state.removedAircraftTypes,
-        usageRules: state.usageRules,
-        usageInheritanceVersion: USAGE_INHERITANCE_VERSION,
-        sharedGround: state.sharedGround,
-        usageTypeOverrides: state.usageTypeOverrides,
-        templateCatalog: state.templateCatalog,
-        aircraft: state.aircraft,
-      };
+      const persisted = persistedWorkspace(primaryWorkspace || state);
+      if (primaryWorkspace) persisted.training89 = persistedWorkspace(state);
+      else if (state.training89) persisted.training89 = state.training89;
       const json = JSON.stringify(persisted);
       if (window.AndroidBridge?.storeState) {
         if (!window.AndroidBridge.storeState(json)) return false;
@@ -1007,7 +1014,8 @@
     } catch (_) {
       return false;
     }
-    syncAndroidReminders();
+    if (primaryWorkspace) primaryWorkspace.training89 = persistedWorkspace(state);
+    else syncAndroidReminders();
     return true;
   }
 
@@ -1209,7 +1217,8 @@
   }
 
   function shell(content, options) {
-    const title = options?.title || "Авиаресурс";
+    const baseTitle = options?.title || "Авиаресурс";
+    const title = primaryWorkspace ? baseTitle + " · тестовая копия" : baseTitle;
     const subtitle = options?.subtitle ?? "Инженерный учёт ресурсов";
     const back = options?.back;
     const settingsScope = options?.settingsScope || "general";
@@ -1232,20 +1241,26 @@
   }
 
   function openTrainingBoard() {
-    const board = structuredClone(trainingBoard);
-    const template = board.workTemplate;
-    const existing = state.templateCatalog.find(t => t.id === template.id && t.name === template.name);
-    if (isArchivedType(template.name) || (!existing && (templateNameTaken(template.name) || templateIdTaken(template.id)))) {
-      showToast("Тип учебного борта занят или находится в корзине");
+    const workspace = state.training89 || trainingBoard;
+    const copy = normalizeState(structuredClone(workspace));
+    if (!copy.aircraft.some(board => board.boardNumber === "89")) {
+      showToast("Не удалось открыть копию борта 89");
       return;
     }
-    const previous = { aircraftTypes: state.aircraftTypes, templateCatalog: state.templateCatalog, usageTypeOverrides: state.usageTypeOverrides };
-    if (!existing) registerTemplate(template);
-    board.notifications = false;
-    if (!finishAircraftCreation(board)) Object.assign(state, previous);
+    primaryWorkspace = state;
+    state = copy;
+    state.selectedAircraftId = state.aircraft.find(board => board.boardNumber === "89").id;
+    state.aircraftTab = "aggregates";
+    viewStack.length = 0;
+    navigateTo("aircraft");
   }
 
   function renderHome() {
+    if (primaryWorkspace) {
+      state = primaryWorkspace;
+      primaryWorkspace = null;
+      viewStack.length = 0;
+    }
     const aircraftCards = state.aircraft.map((aircraft) => {
       const urgent = aircraft.resources.filter((resource) => resource.status !== "ok").length;
       return `
@@ -1290,9 +1305,7 @@
       ${aircraftImportControls()}
       <div class="operation-tags">
         <button type="button" class="secondary-button" data-view="paper-examples">Образцы формуляров</button>
-        ${state.aircraft.some(b => b.id === trainingBoard.id || b.serialNumber === trainingBoard.serialNumber ||
-          (b.type === trainingBoard.type && b.boardNumber === trainingBoard.boardNumber)) ? "" :
-          '<button type="button" class="secondary-button" id="open-training-board">Открыть учебный борт У-01</button>'}
+        <button type="button" class="secondary-button" id="open-training-board">Тестовая копия борта 89</button>
       </div>
       <section class="section-stack aircraft-list" aria-label="Список самолётов">
         ${aircraftCards || `<div class="empty-state"><h2>Самолётов пока нет</h2><p>Добавьте первый борт, чтобы начать учёт.</p></div>`}
@@ -3286,6 +3299,7 @@
     const backup = structuredClone(aircraft);
     applyWorkUsage(aircraft, { flight, actualLandings, equivalent, arresterHooks, date: work.date, engineUsage, accruals, aggregateUsage, flow, sources: templateWorkSources(work), accrueUnits: false });
     applyAggregateAccruals(aircraft, aggregateUsage);
+    datePostingBalances(backup, work.date, flow, aggregateUsage);
     const operation = (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find((item) => item.id === operationType);
     const previous = aircraft.shifts.at(-1);
     if (previous) { delete previous.beforeUsage; delete previous.afterUsage; }
@@ -3297,6 +3311,31 @@
     if (!saveState()) { Object.assign(aircraft, backup); showToast("Не удалось сохранить работу"); return; }
     navigateBack();
     showToast(work.engines.some((engine) => engine.pending) ? "Работа сохранена. Есть данные без привязки двигателя" : "Работа сохранена");
+  }
+
+  // A later closing observation can supply today's reading, never the opening of an older row.
+  function datePostingBalances(before, date, flow, accruals) {
+    const covered = new Set(Object.entries(before.readingsByDate || {}).filter(([when]) => when >= date)
+      .flatMap(([, readings]) => Object.keys(readings)));
+    if (!covered.size) return;
+    const opening = datedReadings.at(before, date, true);
+    for (const row of flow) {
+      if (!row.output.startsWith("balance:")) continue;
+      const key = row.output.slice(8);
+      if (!covered.has(key)) continue;
+      row.delta = row.amount - row.previous;
+      row.previous = opening.get(key) ?? null;
+      row.amount = row.previous == null ? null : row.previous + row.delta;
+    }
+    for (const row of accruals) {
+      for (const period of Object.keys(row.balances || {})) {
+        const key = "column:" + row.counterId + ":" + period;
+        if (!covered.has(key)) continue;
+        const previous = opening.get(key);
+        if (previous == null) delete row.balances[period];
+        else row.balances[period] = [previous, previous + row.amount];
+      }
+    }
   }
 
   function alignDatedTotals(aircraft, workDate) {
@@ -5268,12 +5307,13 @@
     }));
     const storedFlow = shift?.flow || [];
     const recordedFlow = storedFlow.filter(row => {
+      if (row.output.startsWith("balance:") && row.amount == null) return false;
       if (!row.owner || !row.output.startsWith("balance:" + row.owner + ":")) return true;
       const field = row.output.split(":").at(-1);
       if (!["starts", "pprStarts"].includes(field)) return true;
       const source = row.inputs[0]?.key;
       const same = (shift.aggregateAccruals || []).filter(e => e.blockId === row.owner &&
-        e.sourceKey === source && e.factor === 1 && e.unit === "зап." && e.balances && !e.inputs);
+        e.sourceKey === source && e.factor === 1 && e.unit === "зап." && e.balances?.[field === "starts" ? "sne" : "ppr"] && !e.inputs);
       return same.length !== 1;
     });
     if (shift) recordedFlow.push(...groupedReadingFlows(aircraft, shift.templateWork, storedFlow));
@@ -7186,7 +7226,7 @@
   }
 
   function syncAndroidReminders() {
-    if (typeof window.AndroidBridge?.syncResourceReminders !== "function") return;
+    if (primaryWorkspace || typeof window.AndroidBridge?.syncResourceReminders !== "function") return;
     try { window.AndroidBridge.syncResourceReminders(JSON.stringify(resourceReminders())); }
     catch (_) { recordDiagnostic("reminders.sync.error"); }
   }
