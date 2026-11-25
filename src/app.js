@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.44";
+  const APP_VERSION = "0.2.38-exp.45";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1231,6 +1231,20 @@
       <main class="content">${content}</main>`;
   }
 
+  function openTrainingBoard() {
+    const board = structuredClone(trainingBoard);
+    const template = board.workTemplate;
+    const existing = state.templateCatalog.find(t => t.id === template.id && t.name === template.name);
+    if (isArchivedType(template.name) || (!existing && (templateNameTaken(template.name) || templateIdTaken(template.id)))) {
+      showToast("Тип учебного борта занят или находится в корзине");
+      return;
+    }
+    const previous = { aircraftTypes: state.aircraftTypes, templateCatalog: state.templateCatalog, usageTypeOverrides: state.usageTypeOverrides };
+    if (!existing) registerTemplate(template);
+    board.notifications = false;
+    if (!finishAircraftCreation(board)) Object.assign(state, previous);
+  }
+
   function renderHome() {
     const aircraftCards = state.aircraft.map((aircraft) => {
       const urgent = aircraft.resources.filter((resource) => resource.status !== "ok").length;
@@ -1274,12 +1288,18 @@
         <button class="primary-button" data-action="add-aircraft">${icon("plus")} Добавить самолёт</button>
       </section>
       ${aircraftImportControls()}
-      <button type="button" class="secondary-button" data-view="paper-examples">Образцы формуляров</button>
+      <div class="operation-tags">
+        <button type="button" class="secondary-button" data-view="paper-examples">Образцы формуляров</button>
+        ${state.aircraft.some(b => b.id === trainingBoard.id || b.serialNumber === trainingBoard.serialNumber ||
+          (b.type === trainingBoard.type && b.boardNumber === trainingBoard.boardNumber)) ? "" :
+          '<button type="button" class="secondary-button" id="open-training-board">Открыть учебный борт У-01</button>'}
+      </div>
       <section class="section-stack aircraft-list" aria-label="Список самолётов">
         ${aircraftCards || `<div class="empty-state"><h2>Самолётов пока нет</h2><p>Добавьте первый борт, чтобы начать учёт.</p></div>`}
       </section>
       ${nearestNote}
     `, { title: "Самолёты", subtitle: "Авиаресурс" });
+    app.querySelector("#open-training-board")?.addEventListener("click", openTrainingBoard);
     bindTemplateImport();
   }
 
@@ -4601,17 +4621,21 @@
   function paperTableHead(columns) {
     const cells = [{label: "Дата", group: ""}, ...columns];
     const groups = [], leaves = [];
+    const heading = label => label === "Включения ОР"
+      ? '<abbr aria-label="Включения ОР" title="Включения ОР">Вкл.<br>ОР</abbr>'
+      : escapeHtml(label);
     for (let i = 0; i < cells.length;) {
       const col = cells[i];
       const css = i === 0 ? ' class="paper-date"' : "";
-      if (!col.group) {
-        groups.push(`<th scope="col" aria-colindex="${i+1}" rowspan="2"${css}>${escapeHtml(col.label)}</th>`);
+      const loneCount = col.group === "Количество" && cells[i+1]?.group !== col.group;
+      if (!col.group || loneCount) {
+        groups.push(`<th scope="col" aria-colindex="${i+1}" rowspan="2"${css}>${heading(col.label)}</th>`);
         i++;
         continue;
       }
       const from = i;
       while (i < cells.length && cells[i].group === col.group) {
-        leaves.push(`<th scope="col" aria-colindex="${i+1}">${escapeHtml(cells[i].label)}</th>`);
+        leaves.push(`<th scope="col" aria-colindex="${i+1}">${heading(cells[i].label)}</th>`);
         i++;
       }
       groups.push(`<th scope="colgroup" aria-colindex="${from+1}" colspan="${i-from}">${escapeHtml(col.group)}</th>`);

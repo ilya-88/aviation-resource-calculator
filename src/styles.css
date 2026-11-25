@@ -470,14 +470,16 @@ button.setting-row { cursor: pointer; }
 .paper-properties:not([open]) { display: none; }
 .paper-properties > summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
 .paper-scroll { width: 100%; max-height: 75vh; max-height: 75dvh; overflow: auto; border: 1px solid #89959b; background: #faf8ef; }
-.paper-scroll table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; color: #25313a; font-size: 13px; line-height: 1.12; font-variant-numeric: tabular-nums; }
+.paper-scroll table { width: max-content; border-collapse: separate; border-spacing: 0; color: #25313a; font-size: 13px; line-height: 1.12; font-variant-numeric: tabular-nums; }
 .paper-scroll :is(th,td) { padding: .19em .34em; border: 0; border-right: 1px solid #b4bbb9; border-bottom: 1px solid #b4bbb9; text-align: right; }
 .paper-scroll td { white-space: nowrap; }
 .paper-scroll thead { position: sticky; top: 0; z-index: 3; }
 .paper-scroll thead :is(th,td) { max-width: 12ch; background: #e9e8dc; vertical-align: middle; text-align: center; font-weight: 600; }
 .paper-scroll .paper-numbers td { font-size: .8em; font-weight: 400; }
 .paper-scroll .paper-date { position: sticky; left: 0; z-index: 1; background: #f1efe3; white-space: nowrap; }
-.paper-scroll tbody th.paper-date, .paper-scroll tfoot th.paper-date { text-align: left; }
+.paper-scroll tbody th.paper-date, .paper-scroll tfoot th.paper-date { text-align: left; white-space: normal; width: 9ch; max-width: 9ch; padding-inline: .24em; }
+.paper-scroll thead abbr { text-decoration: none; }
+.paper-scroll th.paper-date { font-variant-numeric: tabular-nums; }
 .paper-scroll .paper-subtotal, .paper-scroll tfoot { background: #e2ede7; font-weight: 650; }
 .paper-pair { display: inline-grid; grid-template-columns: 1fr 1fr; min-width: 2.4em; width: 100%; position: relative; vertical-align: middle; background: linear-gradient(to bottom right,transparent 49%,#7e8989 50%,transparent 52%); }
 .paper-pair > span:first-child { grid-area: 1/1; justify-self: start; }
