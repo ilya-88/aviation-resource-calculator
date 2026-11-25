@@ -205,8 +205,8 @@ async function main() {
       });
       const gtdeLogs = ['gtde-1', 'gtde-2'].every((slot, index) => {
         openEngine(slot);
-        const match = logColumns().join('|') === 'Дата работы|Запуски|Сумма СНЭ|Сумма ППР' &&
-          logValues() === [index + 1, index + 1, '—'].join('|');
+        const match = logColumns().join('|') === 'Дата работы|Запуски|Сумма ППР|Сумма СНЭ' &&
+          logValues() === [index + 1, '—', index + 1].join('|');
         if (index === 0) {
           const unitRepair = document.querySelector('#block-event-form');
           unitRepair.elements.type.value = 'repair';

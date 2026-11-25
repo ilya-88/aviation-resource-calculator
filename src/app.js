@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.36";
+  const APP_VERSION = "0.2.38-exp.37";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1709,7 +1709,7 @@
   }
   // A start file may carry the previous definition to upgrade the same saved board in place.
   // Compare the live rules as well as the template: users can edit a form independently.
-  function updateImportedLinks(board, previous, next, identifiers) {
+  function boardWithUpdatedLinks(board, previous, next, identifiers) {
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     const check = ok => { if (!ok) throw new Error("Настройки этого борта отличаются от исходного шаблона. Изменения не внесены"); };
     check(same(aircraftTemplates.validateTemplate(board.workTemplate), previous));
@@ -1721,7 +1721,15 @@
       if (airframe && (!airframe.serialNumber || airframe.serialNumber === "Не указан")) airframe.serialNumber = updated.serialNumber;
     }
     const template = updated.workTemplate;
-    for (const key of ["inputs", "engineCounters", "rules"]) {
+    // Historical entries retain their original scalar values. Grouping that same
+    // input changes the entry form only for subsequent work.
+    for (const [i, oldInput] of previous.inputs.entries()) {
+      const incoming = next.inputs[i];
+      check(incoming && same(oldInput, oldInput.group || !incoming.group ? incoming :
+        Object.fromEntries(Object.entries(incoming).filter(([key]) => key !== "group" && key !== "entryMode"))));
+    }
+    template.inputs = next.inputs;
+    for (const key of ["repeatGroups", "engineCounters", "rules"]) {
       check(same(previous[key], next[key].slice(0, previous[key].length)));
       template[key] = next[key];
     }
@@ -1753,9 +1761,16 @@
     }
     // Reject any other schema changes instead of silently applying a partial update.
     check(same(aircraftTemplates.validateTemplate(template), next));
-    const index = state.aircraft.indexOf(board);
-    state.aircraft[index] = updated;
-    if (!saveState()) { state.aircraft[index] = board; throw new Error("Не удалось сохранить связи"); }
+    return updated;
+  }
+  function saveImportedLinks(updates, catalogEntry, next) {
+    const originals = { aircraft: state.aircraft, templateCatalog: state.templateCatalog };
+    state.aircraft = state.aircraft.map(board => updates.get(board) || board);
+    if (catalogEntry) state.templateCatalog = state.templateCatalog.map(t => t === catalogEntry ? next : t);
+    if (!saveState()) { Object.assign(state, originals); throw new Error("Не удалось сохранить связи"); }
+  }
+  function sameTemplate(a, normalized) {
+    return a && JSON.stringify(aircraftTemplates.validateTemplate(a)) === JSON.stringify(normalized);
   }
   const defaultCounterLayout = [
     { keys: ["flightSne", "flightPpr"], wide: true },
@@ -2603,6 +2618,8 @@
   }
 
   function templateFieldMarkup(field) {
+    if (field.entryMode === "flag") return `<label>${escapeHtml(field.label)}<select data-template-field="${field.id}">
+      <option value="">—</option><option value="1">Да</option><option value="0">Нет</option></select></label>`;
     const attributes = field.type === "count" ? 'type="number" step="1" min="0"' :
       `type="text" maxlength="12" placeholder="${field.format === "HH:MM:SS" ? "00:00:00" : "00:00"}"`;
     return `<label>${escapeHtml(field.label)}<input data-template-field="${field.id}" ${attributes}></label>`;
@@ -2689,10 +2706,18 @@
     bindAggregateManualInputs(form, aircraft);
     function addRow(group) {
       const inputs = template.inputs.filter((field) => field.group === group.dataset.templateGroup);
+      const spec = template.repeatGroups.find(item => item.id === group.dataset.templateGroup);
       group.querySelector(".template-rows").insertAdjacentHTML("beforeend", `<div class="field-pair template-row" data-template-row>
+        <strong class="form-span" data-row-title></strong>
         ${inputs.map(templateFieldMarkup).join("")}
+        ${spec.noteLabel ? `<label>${escapeHtml(spec.noteLabel)}<input data-template-field="_note" maxlength="160"></label>` : ""}
         <button type="button" class="small-button" data-template-remove>Убрать строку</button>
       </div>`);
+      numberRows(group);
+    }
+    function numberRows(group) {
+      const spec = template.repeatGroups.find(item => item.id === group.dataset.templateGroup);
+      group.querySelectorAll("[data-row-title]").forEach((title, i) => { title.textContent = spec.label + " " + (i + 1); });
     }
     form.querySelectorAll("[data-template-group]").forEach(addRow);
     const inputValues = (element) => Object.fromEntries([...element.querySelectorAll(":scope > label > [data-template-field]")]
@@ -2785,9 +2810,11 @@
       if (event.target.closest("[data-template-add]")) {
         const group = event.target.closest("[data-template-group]");
         addRow(group);
-        group.querySelector("[data-template-row]:last-child input")?.focus();
+        group.querySelector("[data-template-row]:last-child [data-template-field]")?.focus();
       } else if (event.target.closest("[data-template-remove]")) {
+        const group = event.target.closest("[data-template-group]");
         event.target.closest("[data-template-row]").remove();
+        numberRows(group);
       } else return;
       update();
     });
@@ -4033,28 +4060,38 @@
     const kind = position.kind === "unit" ? "units" : "engines";
     const items = aircraft.shifts.filter((entry) => entry.templateWork).sort((a, b) => a.date.localeCompare(b.date))
       .flatMap((shift) => (shift.templateWork[kind] || []).filter((entry) => entry.blockId === block.id)
-        .map((entry) => ({ date: shift.date, entry })));
-    const rows = items.map(({ date, entry }) => {
+        .map((entry) => ({ date: shift.date, shift, entry })));
+    const rows = items.map(({ date, shift, entry }) => {
       const current = repairs.get(entry.repairNumber) || {};
       if (entry.repairNumber != null) repairs.set(entry.repairNumber, current);
       return `<tr><th scope="row">${formatDate(date)}</th>${fields.map((field) => {
         const value = entry.counters[field.id];
-        if (value == null) return "<td>—</td>";
+        if (value == null) return startsOnly ? "<td>—</td><td>—</td><td>—</td>" : "<td>—</td>";
         totals[field.id] = (totals[field.id] || 0) + value;
         if (entry.repairNumber != null) current[field.id] = (current[field.id] || 0) + value;
-        if (startsOnly) {
-          return `<td>${value}</td><td>${totals[field.id]}</td><td>${current[field.id] ?? "—"}</td>`;
+        if (field.role === "starts") {
+          const source = `position:${position.id}:${field.id}`;
+          const matches = (shift.aggregateAccruals || []).filter(row => row.blockId === block.id &&
+            row.sourceKey === source && row.factor === 1 && row.unit === "зап." && row.balances && !row.inputs);
+          const balances = startsOnly && matches.length === 1 ? matches[0].balances : null;
+          const native = key => shift.flow?.find(row => row.output === "balance:" + block.id + ":" + key)?.amount;
+          const sne = balances?.sne?.[1] ?? native("starts");
+          const ppr = entry.repairNumber == null ? null : balances?.ppr?.[1] ?? native("pprStarts");
+          if (startsOnly) return `<td>${value}</td><td>${ppr ?? "—"}</td><td>${sne ?? "—"}</td>`;
+          return `<td>${value} / ${(entry.repairNumber == null ? sne : ppr) ?? "—"}</td>`;
         }
-        return `<td>${aircraftTemplates.formatValue(field, value)}${field.role === "starts" ? ` / ${aircraftTemplates.formatValue(field,
-          entry.repairNumber == null ? totals[field.id] : current[field.id])}` : ""}</td>`;
+        return `<td>${aircraftTemplates.formatValue(field, value)}</td>`;
       }).join("")}</tr>`;
     }).join("");
     const foot = (title, values) => `<tr><th scope="row">${title}</th>${fields.map((field) =>
       `<td>${aircraftTemplates.formatValue(field, values[field.id])}</td>`).join("")}</tr>`;
-    const headers = startsOnly ? ["Дата работы", "Запуски", "Сумма СНЭ", "Сумма ППР"] :
+    const headers = startsOnly ? ["Дата работы", "Запуски", "Сумма ППР", "Сумма СНЭ"] :
       ["Дата работы", ...fields.map((field) => field.label)];
+    const startsRules = startsOnly ? (block.usageCounters || []).filter(rule => rule.source === `position:${position.id}:${fields[0].id}` &&
+      rule.factor === 1 && rule.unit === "зап." && rule.workMode !== "entry" && !rule.workTypeId && !rule.additionalInputs?.length) : [];
+    const startTotals = startsRules.length === 1 ? block.usageTotals?.[startsRules[0].id] : null;
     const summary = startsOnly ? `<tr><th scope="row">Текущие показания</th><td>—</td>
-      <td>${block.starts ?? 0}</td><td>${block.repairs ? block.pprStarts ?? 0 : "—"}</td></tr>` :
+      <td>${block.repairs ? startTotals?.ppr ?? block.pprStarts ?? 0 : "—"}</td><td>${startTotals?.sne ?? block.starts ?? 0}</td></tr>` :
       `${foot("СНЭ по журналу", totals)}${block.repairs ? foot("ППР по журналу", repairs.get(block.repairs) || {}) : ""}`;
     const engineSource = position.engineLink && aircraft.workTemplate.positions.find((item) => item.id === position.engineLink.source);
     return `<section class="section-stack" data-form-widget="journal"><h2 data-tile-caption>${position.kind === "engine" ? "Записи формуляра двигателя" : "Записи формуляра агрегата"}</h2>
@@ -4274,9 +4311,21 @@
     const work = shift.templateWork;
     function rawValues(raw, scope) {
       const fields = scope === "board" && work.boardFields ? work.boardFields : template.inputs.filter((field) => field.scope === scope);
+      const shown = new Set();
       return fields.map((field) => {
-        const values = field.group ? (raw.groups[field.group] || []).map((row, index) => row[field.id] ? `${index + 1}. ${row[field.id]}` : "").filter(Boolean) :
-          [raw.fields[field.id]].filter(Boolean);
+        if (field.group && Object.hasOwn(raw.groups || {}, field.group)) {
+          if (shown.has(field.group)) return "";
+          shown.add(field.group);
+          const group = template.repeatGroups.find(item => item.id === field.group);
+          const columns = fields.filter(input => input.group === field.group);
+          return raw.groups[field.group].map((row, i) => {
+            const parts = columns.filter(col => row[col.id] != null && row[col.id] !== "")
+              .map(col => escapeHtml(col.label) + " " + escapeHtml(String(row[col.id])));
+            if (row._note) parts.push(escapeHtml(group?.noteLabel || "Примечание") + " " + escapeHtml(row._note));
+            return `<dt>${escapeHtml(group?.label || field.group)} ${i + 1}</dt><dd>${parts.join(" · ")}</dd>`;
+          }).join("");
+        }
+        const values = [raw.fields[field.id]].filter(v => v != null && v !== "");
         const label = field.role === "flight" ? aircraftTemplates.normalizeFlightLabel(field.label) : field.label;
         return values.length ? `<dt>${escapeHtml(label)}</dt><dd>${values.map(escapeHtml).join(" · ")}</dd>` : "";
       }).join("");
@@ -5153,8 +5202,10 @@
       inputs: { title: "Поля ввода", fields: [
         ["label", "Название"], ["id", "Идентификатор поля"], ["scope", "Чьи данные", scopes], ["type", "Единицы", types],
         ["format", "Формат времени", formats], ["role", "Показатель борта", boardRoles], ["group", "Группа строк", "group-ids"],
+        ["entryMode", "Ввод количества", [["", "Число"], ["flag", "Да / нет по строкам"]]],
       ], sample: { scope: "engine", type: "duration", format: "HH:MM", label: "" }, prefix: "input" },
       repeatGroups: { title: "Повторяющиеся строки", fields: [
+        ["noteLabel", "Подпись текстового поля строки"],
         ["label", "Название"], ["id", "Идентификатор группы"], ["scope", "Чьи данные", scopes], ["countField", "Поле с числом строк", "input-ids"],
       ], sample: { scope: "engine", label: "" }, prefix: "group" },
       engineCounters: { title: "Графы формуляра двигателя", fields: [
@@ -5283,7 +5334,10 @@
           }
         }
 
-        if (entry.dataset.templateEntry === "inputs") hide(["role"], value("scope") !== "board");
+        if (entry.dataset.templateEntry === "inputs") {
+          hide(["role"], value("scope") !== "board");
+          hide(["entryMode"], value("type") !== "count" || !value("group"));
+        }
         if (value("type")) hide(["format"], value("type") !== "duration");
         if (value("operation")) {
           const copies = value("operation") === "copy";
@@ -5489,7 +5543,12 @@
               (fillSerial ? ` Заполнить заводской № ${escapeHtml(info.serialNumber)}${!current.rfNumber && info.rfNumber ? " и RF " + escapeHtml(info.rfNumber) : ""}.` : ""),
               [["update", "Обновить связи"], ["cancel", "Отмена"]], action => {
                 if (action !== "update") return;
-                try { updateImportedLinks(current, previous, pack.template, fillSerial ? info : null); render(); showToast("Связи борта обновлены"); }
+                try {
+                  const updated = boardWithUpdatedLinks(current, previous, pack.template, fillSerial ? info : null);
+                  const catalogEntry = state.templateCatalog.find(t => t.id === previous.id && sameTemplate(t, previous));
+                  saveImportedLinks(new Map([[current, updated]]), catalogEntry, pack.template);
+                  render(); showToast("Связи борта обновлены");
+                }
                 catch (error) { status.textContent = error.message; showToast(error.message); }
               });
             return;
@@ -5503,6 +5562,27 @@
           return;
         }
         template = aircraftTemplates.validateTemplate(incoming);
+        if (incoming.previousTemplate) {
+          const previous = aircraftTemplates.validateTemplate(incoming.previousTemplate);
+          const current = state.templateCatalog.find(t => t.id === template.id && t.name === template.name);
+          if (current && previous.id === template.id && previous.name === template.name &&
+              (sameTemplate(current, previous) || sameTemplate(current, template))) {
+            const boards = state.aircraft.filter(b => b.workTemplate?.id === template.id && b.type === template.name &&
+              sameTemplate(b.workTemplate, previous));
+            if (!boards.length && sameTemplate(current, template)) { status.textContent = "Эта версия типа уже установлена"; return; }
+            chooseLayoutAction(`Обновить тип «${escapeHtml(template.name)}»?` +
+              (boards.length ? ` Обновятся борта: ${boards.map(b => escapeHtml(b.boardNumber)).join(", ")}.` : ""),
+              [["update", "Обновить тип"], ["cancel", "Отмена"]], action => {
+                if (action !== "update") return;
+                try {
+                  const updates = new Map(boards.map(b => [b, boardWithUpdatedLinks(b, previous, template)]));
+                  saveImportedLinks(updates, current, template);
+                  render(); showToast("Тип обновлён");
+                } catch (problem) { status.textContent = problem.message; showToast(problem.message); }
+              });
+            return;
+          }
+        }
       } catch (problem) {
         status.textContent = problem instanceof SyntaxError ? "Файл не является корректным JSON" : problem.message;
         return;

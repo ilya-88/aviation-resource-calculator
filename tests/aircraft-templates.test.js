@@ -4,6 +4,24 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const templates = require("../src/aircraft-templates");
 
+test("строки ведомости различают отметку, ноль и пропуск", () => {
+  const template = templates.validateTemplate({ schemaVersion: 1, id: "logbook", name: "Журнал",
+    positions: [{ id: "body", kind: "airframe", label: "Формуляр" }],
+    repeatGroups: [{ id: "entries", label: "Вылет", scope: "board", noteLabel: "Вид полёта" }],
+    inputs: [
+      { id: "flight", label: "Время", type: "duration", format: "HH:MM", scope: "board", role: "flight", group: "entries" },
+      { id: "mark", label: "Отметка", type: "count", scope: "board", group: "entries", entryMode: "flag" },
+    ] });
+  const read = mark => templates.calculate(template, { fields: {}, groups: { entries: [
+    { flight: "00:08", mark: "1", _note: "Учебный" }, { flight: "00:22", mark }
+  ] } }, "board", { partial: true });
+  assert.deepEqual(read("0").values, { flight: 1800, mark: 1 });
+  assert.equal(read("1").values.mark, 2);
+  assert.equal(read("").values.mark, null);
+  assert.throws(() => read("2"), /да или нет/);
+  assert.equal(template.repeatGroups[0].noteLabel, "Вид полёта");
+});
+
 test("налёт борта, индивидуальное время двигателя и пустая наземная смена", () => {
   const time = (id) => ({ id, type: "duration", format: "HH:MM", scope: "engine" });
   const template = { inputs: [time("air"), time("ground")], repeatGroups: [], checks: [],

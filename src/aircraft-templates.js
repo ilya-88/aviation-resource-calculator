@@ -203,12 +203,17 @@
       const group = identifier(row.id, "повторяющиеся строки");
       requireValue(scopes.includes(row.scope), `Неизвестная область ввода: ${group}`);
       return { id: group, label: label(row.label, group), scope: row.scope,
+        ...(row.noteLabel && { noteLabel: label(row.noteLabel, group) }),
         ...(row.countField != null && { countField: identifier(row.countField, group) }) };
     });
     unique(groups, "id", "повторяющиеся строки");
     const inputs = list(document.inputs, "поля ввода", (row) => {
       requireValue(scopes.includes(row.scope), `Неизвестная область ввода: ${row.id}`);
       const input = field(row, row.scope);
+      if (row.entryMode) {
+        requireValue(row.entryMode === "flag" && input.type === "count" && row.group, "Отметка требует счётного поля в группе строк");
+        input.entryMode = row.entryMode;
+      }
       if (row.group != null) {
         requireValue(groups.some((group) => group.id === row.group && group.scope === row.scope), `Не найдена группа поля: ${input.id}`);
         input.group = row.group;
@@ -371,6 +376,7 @@
     if (!value) return null;
     if (field.type === "count") {
       const count = Number(value);
+      if (field.entryMode === "flag") requireValue(value === "0" || value === "1", `«${field.label}»: выбери да или нет`);
       requireValue(/^\d+$/.test(value) && Number.isSafeInteger(count) && count <= 1000000000, `«${field.label}»: введи целое число`);
       return count;
     }
