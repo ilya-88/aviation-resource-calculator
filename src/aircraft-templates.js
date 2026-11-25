@@ -282,8 +282,8 @@
     });
     if (boardUsage) unique(boardUsage, "key", "показатели борта");
     const boardKeys = new Set([...boardRoles, ...(boardUsage || []).map(({ key }) => key)]);
-    const engineKeys = new Set(positions.filter((position) => position.kind === "engine").flatMap((position) =>
-      rules.map((rule) => `position:${position.id}:${rule.target}`)));
+    const engineKeys = new Set(positions.flatMap(position => positionCounters({ engineCounters: counters }, position)
+      .filter(field => rules.some(rule => rule.target === field.id)).map(field => `position:${position.id}:${field.id}`)));
     const rawSources = rawSourceList({ inputs, positions });
     const rawKeys = new Set(rawSources.map(item => item.key));
     for (const position of positions.filter((row) => row.usageCounters != null)) {

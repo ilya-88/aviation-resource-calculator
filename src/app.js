@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.35";
+  const APP_VERSION = "0.2.38-exp.36";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -231,9 +231,9 @@
       sources.push({ key: `board:${source.key}`, label: `Самолёт · ${usageRule(source.key, aircraft).label} (${unit})`, unit });
     }
     if (aircraft.workTemplate) {
-      const { positions, engineCounters, rules } = aircraft.workTemplate;
-      for (const position of positions.filter((item) => item.kind === "engine")) {
-        for (const field of engineCounters.filter((item) => rules.some((rule) => rule.target === item.id))) {
+      const { positions, rules } = aircraft.workTemplate;
+      for (const position of positions) {
+        for (const field of aircraftTemplates.positionCounters(aircraft.workTemplate, position).filter((item) => rules.some((rule) => rule.target === item.id))) {
           const unit = field.type === "count" ? (field.role === "starts" ? "зап." : "шт.") : field.format === "HH:MM:SS" ? "с" : "ч";
           sources.push({ key: `position:${position.id}:${field.id}`, label: `${position.label} · ${field.label} (${unit})`, unit });
         }
@@ -606,7 +606,7 @@
     sync();
   }
 
-  function aggregateAccruals(aircraft, date, sources, workData, engineUsage, templateEngines, boardValues = {}, inactive = new Set()) {
+  function aggregateAccruals(aircraft, date, sources, workData, engineUsage, templateEntries, boardValues = {}, inactive = new Set()) {
     const values = new Map(Object.entries(sources).map(([key, value]) => [`board:${key}`, value]));
     const units = new Map(aggregateUsageSources(aircraft).map(item => [item.key, item.unit]));
     const landingReadings = OPTIONAL_USAGE_TYPES.filter(key => key !== "arresterHooks" && Object.hasOwn(sources, key));
@@ -614,11 +614,9 @@
     values.set("work:date", calendarDay(date));
     values.set("work:type", (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find(item => item.id === workData.get("operationType"))?.label);
     for (const [key, value] of Object.entries(boardValues)) values.set(`raw:board:${key}`, value);
-    if (templateEngines) {
-      for (const entry of templateEngines.filter(item => item.blockId)) {
-        for (const [key, value] of Object.entries(entry.reportedValues || entry.values)) values.set(`raw:${entry.slotId}:${key}`, value);
-      }
-      for (const entry of templateEngines.filter(({ blockId }) => blockId)) {
+    if (templateEntries) {
+      for (const entry of templateEntries.filter(item => item.blockId)) {
+        for (const [key, value] of Object.entries(entry.reportedValues || entry.values || {})) values.set(`raw:${entry.slotId}:${key}`, value);
         for (const field of aircraft.workTemplate.engineCounters) {
           const value = entry.counters[field.id];
           if (value != null) values.set(`position:${entry.slotId}:${field.id}`, value / (field.format === "HH:MM" ? 3600 : 1));
@@ -880,7 +878,7 @@
           flowKey: Object.hasOwn(engineValues, key) ? engine.flowKeys?.[key] || `engine:${owner.id}:${key}` :
             Object.hasOwn(sources, key) ? "board:" + key : key }));
       const amount = inputs.reduce((sum, item) => sum + item.amount, 0);
-      if (!amount) return [];
+      if (!inputs.length) return [];
       return [{ resourceId: resource.id, blockId: owner?.kind === "airframe" ? null : owner?.id, name: resource.name, object: resource.object, unit: resource.unit,
         priority: resource.priority === true,
         labels: Object.fromEntries(resourceSources(aircraft, owner).map((source) => [source.key, calculationSourceLabel(source)])),
@@ -1708,6 +1706,56 @@
       Object.assign(state, previous);
       throw error;
     }
+  }
+  // A start file may carry the previous definition to upgrade the same saved board in place.
+  // Compare the live rules as well as the template: users can edit a form independently.
+  function updateImportedLinks(board, previous, next, identifiers) {
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    const check = ok => { if (!ok) throw new Error("Настройки этого борта отличаются от исходного шаблона. Изменения не внесены"); };
+    check(same(aircraftTemplates.validateTemplate(board.workTemplate), previous));
+    const updated = structuredClone(board);
+    if (identifiers) {
+      updated.serialNumber = identifiers.serialNumber;
+      if (!updated.rfNumber) updated.rfNumber = identifiers.rfNumber;
+      const airframe = updated.blocks.find(b => b.kind === "airframe");
+      if (airframe && (!airframe.serialNumber || airframe.serialNumber === "Не указан")) airframe.serialNumber = updated.serialNumber;
+    }
+    const template = updated.workTemplate;
+    for (const key of ["inputs", "engineCounters", "rules"]) {
+      check(same(previous[key], next[key].slice(0, previous[key].length)));
+      template[key] = next[key];
+    }
+    check(previous.positions.length === next.positions.length);
+    for (const pos of template.positions) {
+      const old = previous.positions.find(p => p.id === pos.id);
+      const newPos = next.positions.find(p => p.id === pos.id);
+      check(newPos?.kind === pos.kind);
+      if (newPos.engineLink) pos.engineLink = newPos.engineLink;
+      if (same(old.usageCounters, newPos.usageCounters)) continue;
+      const blocks = updated.blocks.filter(b => b.templateSlotId === pos.id);
+      check(blocks.length === 1);
+      const block = blocks[0], live = block.usageCounters || [], rules = newPos.usageCounters;
+      check(rules && live.length === (old.usageCounters || []).length && rules.length >= live.length);
+      const labels = new Map(aggregateUsageSources(updated, true, block).map(s => [s.key, s.label]));
+      block.usageCounters = rules.map((rule, i) => {
+        const before = old.usageCounters?.[i], saved = live[i];
+        if (before) {
+          check(same(before.unit, rule.unit) && same(before.columnKey, rule.columnKey) &&
+            (before.columnKey || before.name === rule.name) &&
+            Object.keys(before).every(k => same(saved[k], before[k])) &&
+            ["formula","additionalInputs","workTypeId","fieldKey","boardCounter","workMode"].every(k => same(saved[k], before[k])));
+          if (same(rule, before)) return saved;
+        }
+        return { ...rule, id: saved?.id || id(), sourceLabel: labels.get(rule.source) || rule.source };
+      });
+      block.usageTotals ??= {};
+      pos.usageCounters = rules;
+    }
+    // Reject any other schema changes instead of silently applying a partial update.
+    check(same(aircraftTemplates.validateTemplate(template), next));
+    const index = state.aircraft.indexOf(board);
+    state.aircraft[index] = updated;
+    if (!saveState()) { state.aircraft[index] = board; throw new Error("Не удалось сохранить связи"); }
   }
   const defaultCounterLayout = [
     { keys: ["flightSne", "flightPpr"], wide: true },
@@ -2713,7 +2761,7 @@
         customUsage: readCustomWork(aircraft, data),
         boardFields: template.inputs.filter((field) => field.scope === "board") };
       const sources = templateWorkSources(work);
-      const aggregateUsage = aggregateAccruals(aircraft, date, sources, data, null, engines, boardValues, inactive);
+      const aggregateUsage = aggregateAccruals(aircraft, date, sources, data, null, [...engines, ...work.units], boardValues, inactive);
       const engineUsage = templateEngineUsage(aircraft, template, work);
       const accruals = resourceAccruals(aircraft, date, sources, engineUsage, aggregateUsage, inactive);
       return { work, aggregateUsage, engineUsage, accruals, flow };
@@ -2800,7 +2848,7 @@
           const field = fields.find(item => item.role === role);
           return field && entry.counters[field.id] != null ? [[key, `position:${entry.slotId}:${field.id}`]] : [];
         }));
-      engineUsage.set(block, { flowKeys, minutes: byRole("total") / 60, flightMinutes: byRole("flight") / 60, starts: byRole("starts"),
+      engineUsage.set(block, { flowKeys, reported: Object.keys(flowKeys), minutes: byRole("total") / 60, flightMinutes: byRole("flight") / 60, starts: byRole("starts"),
         maximumSeconds: modes.combined, afterburnerSeconds: 0, modes, startsOnly: block.kind === "unit" && onlyStarts(fields) });
     }
     return engineUsage;
@@ -5426,6 +5474,26 @@
         if (incoming?.kind === "aircraft-start") {
           const pack = aircraftTemplates.validateStartingAircraft(incoming);
           const info = pack.aircraft;
+          const matches = incoming.previousTemplate && state.aircraft.filter(b => b.workTemplate?.id === pack.template.id &&
+            b.type === pack.template.name && b.boardNumber === info.boardNumber);
+          const current = matches?.length === 1 ? matches[0] : null;
+          const fillSerial = current && (!current.serialNumber || current.serialNumber === "Не указан") &&
+            !state.aircraft.some(b => b !== current && fold(b.serialNumber || "") === fold(info.serialNumber));
+          if (current && info.serialNumber && info.serialNumber !== "Не указан" && (current.serialNumber === info.serialNumber || fillSerial)) {
+            const previous = aircraftTemplates.validateTemplate(incoming.previousTemplate);
+            if (JSON.stringify(aircraftTemplates.validateTemplate(current.workTemplate)) === JSON.stringify(pack.template)) {
+              status.textContent = "Этот шаблон уже применён к борту";
+              return;
+            }
+            chooseLayoutAction(`Обновить связи борта ${escapeHtml(info.boardNumber)}? Показания, история и раскладка сохранятся.` +
+              (fillSerial ? ` Заполнить заводской № ${escapeHtml(info.serialNumber)}${!current.rfNumber && info.rfNumber ? " и RF " + escapeHtml(info.rfNumber) : ""}.` : ""),
+              [["update", "Обновить связи"], ["cancel", "Отмена"]], action => {
+                if (action !== "update") return;
+                try { updateImportedLinks(current, previous, pack.template, fillSerial ? info : null); render(); showToast("Связи борта обновлены"); }
+                catch (error) { status.textContent = error.message; showToast(error.message); }
+              });
+            return;
+          }
           chooseLayoutAction(`Импортировать борт ${escapeHtml(info.boardNumber)} · ${escapeHtml(pack.template.name)}? Формуляров: ${pack.template.positions.length}. Ресурсов: ${info.resources.length}. Начальные показания будут записаны без создания смены.`,
             [["import", "Импортировать борт"], ["cancel", "Отмена"]], (action) => {
               if (action !== "import") return;

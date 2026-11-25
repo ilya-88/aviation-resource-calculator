@@ -1,5 +1,6 @@
 """Local UI regression for a posted chain and an explicit zero on a second work record."""
 import json
+from copy import deepcopy
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -15,6 +16,11 @@ template["positions"][1]["usageCounters"].append({
     "formula": {"tokens": [{"ref": "cell:runs"}, "*", 2], "emptyZero": False},
 })
 pack["aircraft"]["resources"][0]["inputs"][0]["source"] = "counter:4"
+previous = deepcopy(pack)
+template["positions"][-1]["usageCounters"] = [{
+    "name": "Из связанного счётчика", "source": "position:meter:starts", "unit": "шт.", "factor": 3, "workMode": "total",
+}]
+pack["previousTemplate"] = previous["template"]
 
 
 def test_flow():
@@ -26,7 +32,7 @@ def test_flow():
         page.set_default_timeout(5000)
         page.goto((ROOT / "index.html").as_uri())
         page.locator("#aircraft-template-file").set_input_files({
-            "name": "demo.json", "mimeType": "application/json", "buffer": json.dumps(pack).encode(),
+            "name": "demo.json", "mimeType": "application/json", "buffer": json.dumps(previous).encode(),
         })
         page.get_by_role("button", name="Импортировать борт", exact=True).click()
         page.locator("[data-view=usage-map]").click()
@@ -52,17 +58,31 @@ def test_flow():
             page.locator(".map-wire[data-from]").first.wait_for(state="attached")
             return {tuple(pair) for pair in page.locator(".map-wire").evaluate_all("xs=>xs.map(x=>[x.dataset.from,x.dataset.to])")}
 
+        post("b", "1")
+        before = stored()
+        page.reload()
+        page.locator("#aircraft-template-file").set_input_files({
+            "name": "update.json", "mimeType": "application/json", "buffer": json.dumps(pack).encode(),
+        })
+        page.get_by_role("button", name="Обновить связи").click()
+        page.get_by_text("Связи борта обновлены", exact=True).wait_for()
+        after = stored()
+        assert before["id"] == after["id"] and before["shifts"] == after["shifts"] and before["resources"] == after["resources"]
         post("a", "2")
         first = stored()
         left = next(b for b in first["blocks"] if b.get("templateSlotId") == "a")
         rules = {r["columnKey"]: "aggregate:" + r["id"] for r in left["usageCounters"]}
         res = "resource:" + first["resources"][0]["id"]
+        meter = next(b for b in first["blocks"] if b.get("templateSlotId") == "meter")
+        column = meter["usageCounters"][0]["id"]
+        assert meter["usageTotals"][column]["sne"] == 6
         assert first["resources"][0]["remaining"] == 8
         board()
         page.locator("[data-view=usage-map]").click()
         expected = {("raw:a:start", rules["runs"]), ("raw:a:start", rules["check"]),
                     (rules["runs"], rules["weighted"]), (rules["weighted"], res),
-                    ("raw:a:start", "position:a:starts"), ("position:a:starts", "position:meter:starts")}
+                    ("raw:a:start", "position:a:starts"), ("position:a:starts", "position:meter:starts"),
+                    ("position:meter:starts", "aggregate:" + column)}
         first_paths = paths()
         assert expected <= first_paths, expected - first_paths
         assert not any("raw:b:" in source for source, _ in first_paths)
@@ -80,7 +100,7 @@ def test_flow():
         # Simulate a saved record from exp.34, which did not store native field traces.
         page.evaluate("""() => {
           const key = 'aviation-resource-prototype-v1', state = JSON.parse(localStorage.getItem(key));
-          const board = state.aircraft.at(-1), shift = board.shifts[0];
+          const board = state.aircraft.at(-1), shift = board.shifts.at(-2);
           delete shift.flow;
           for (const entry of shift.aggregateAccruals) {
             delete entry.balances;
