@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.41";
+  const APP_VERSION = "0.2.38-exp.42";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1193,6 +1193,7 @@
     else if (state.view === "resources") renderResources();
     else if (state.view === "shift") renderShift(false, readings);
     else if (state.view === "correct-shift") renderShift(true);
+    else if (state.view === "dated-readings") renderDatedReadings();
     else if (state.view === "reports") renderReports();
     else if (state.view === "settings") renderSettings();
     else if (state.view === "diagnostics") renderDiagnostics();
@@ -1329,6 +1330,7 @@
       <button class="add-block-button" data-action="add-resource" data-work="true">${icon("plus")} Добавить регламентную работу</button>
       <div class="section-heading history-heading"><div><h2>Последние смены</h2><p>Сохранённые начисления по выбранному борту.</p></div></div>
       <section class="history-list">${recentShifts || `<div class="empty-state compact-empty"><p>Смен пока нет. Добавьте первую запись.</p></div>`}</section>
+      <button class="add-block-button" data-view="dated-readings">Показания на дату</button>
       <button class="add-block-button" data-view="reports">Отчёты по сменам</button>`;
 
     const aggregatesTab = `
@@ -1691,9 +1693,159 @@
       serialNumber: board.serialNumber, rfNumber: board.rfNumber || "" };
   }
 
-  function baselineFile(board) {
+  const boardReadingLabels = { totalFlightMinutes: "Налёт СНЭ", pprFlightMinutes: "Налёт ППР",
+    actualLandings: "Посадки СНЭ", pprLandings: "Посадки ППР", equivalentLandings: "Посадки в зачёт", arresterHooks: "Зацепы" };
+  const unitReadingLabels = { sneMinutes: "Наработка СНЭ", pprMinutes: "Наработка ППР", starts: "Запуски СНЭ", pprStarts: "Запуски ППР",
+    sneLandings: "Посадки СНЭ", pprLandings: "Посадки ППР", maximumSeconds: "Максимал СНЭ", pprMaximumSeconds: "Максимал ППР",
+    afterburnerSeconds: "Форсаж СНЭ", pprAfterburnerSeconds: "Форсаж ППР" };
+
+  function readingCatalog(board) {
+    const entries = new Map();
+    function add(key, group, label, unit, get, set, extra) {
+      entries.set(key, { key, group, label, unit, get, set, ...extra });
+    }
+    for (const [key, label] of Object.entries(boardReadingLabels)) {
+      const time = key.endsWith("Minutes");
+      add(key, "Борт", time ? usageRule("flight", board).label + (key.startsWith("ppr") ? " ППР" : " СНЭ") : label,
+        time ? "мин" : "шт.", () => board[key], n => { board[key] = n; }, { integer: !time && key !== "equivalentLandings", pprOwner: key.startsWith("ppr") && board.blocks.find(b => b.kind === "airframe") });
+    }
+    for (const key of OPTIONAL_USAGE_TYPES.filter(k => k !== "arresterHooks" && sourceEnabled(board, k))) {
+      add("landing:" + key, "Борт", usageRule(key, board).label, "шт.", () => landingCount(board, key), n => {
+        const later = board.shifts.reduce((sum, s) => sum + Number(s.landingsByType?.[key] ?? s.raw?.[key] ?? 0), 0);
+        (board.initialLandingCounts ??= {})[key] = n - later;
+      }, { integer: true });
+    }
+    for (const block of board.blocks) {
+      const group = block.name + (block.serialNumber ? " · " + block.serialNumber : "");
+      const pos = templatePositionFor(board, block);
+      const start = pos && aircraftTemplates.positionCounters(board.workTemplate, pos).find(f => f.role === "starts");
+      const linkedStarts = start && startCounter(block, "position:" + pos.id + ":" + start.id);
+      if (block.kind !== "airframe") for (const [key, label] of Object.entries(unitReadingLabels)) {
+        if (block[key] == null && !["starts","pprStarts"].includes(key)) continue;
+        if (pos && ["sneLandings","pprLandings","maximumSeconds","pprMaximumSeconds","afterburnerSeconds","pprAfterburnerSeconds"].includes(key)) continue;
+        add(block.id + ":" + key, group, label, key.endsWith("Minutes") ? "мин" : key.endsWith("Seconds") ? "с" : "шт.",
+          () => block[key], n => { block[key] = n; }, { integer: /starts|landings/i.test(key), hidden: linkedStarts && /starts/i.test(key), pprOwner: key.startsWith("ppr") && block });
+      }
+      for (const rule of block.usageCounters || []) {
+        if (rule.workMode === "entry" || ["дата","текст"].includes(rule.unit)) continue;
+        for (const period of ["sne","ppr"]) add("column:" + rule.id + ":" + period, group, rule.name + (period === "sne" ? " СНЭ" : " ППР"), rule.unit,
+          () => block.usageTotals?.[rule.id]?.[period], n => { ((block.usageTotals ??= {})[rule.id] ??= {})[period] = n; }, { pprOwner: period === "ppr" && block, integer: linkedStarts?.id === rule.id });
+      }
+    }
+    for (const resource of board.resources) {
+      const owner = resourceOwner(board, resource);
+      const group = owner ? owner.name + (owner.serialNumber ? " · " + owner.serialNumber : "") : resource.object || "Борт";
+      add("resource:" + resource.id, group, resource.name, resource.unit,
+        () => resource.remaining, n => { resource.remaining = n; resource.status = resourceStatus(n, resource.limit); },
+        { expiry: resource.unit === "дн." ? resource.expiryDate : "", limit: resource.limit });
+    }
+    return entries;
+  }
+
+  function fileReadings(board, data, date) {
+    const values = { ...data.readings };
+    for (const [k,v] of Object.entries(data.landingCounts)) values["landing:" + k] = v;
+    for (const row of data.blocks) {
+      const block = board.blocks.find(b => b.templateSlotId === row.position);
+      values[block.id + ":repairs"] = row.repairs;
+      for (const [key, n] of Object.entries(row.readings)) values[block.id + ":" + key] = n;
+      for (const { counter, sne, ppr } of row.totals) {
+        const key = "column:" + block.usageCounters[counter].id;
+        if (sne != null) values[key + ":sne"] = sne;
+        if (ppr != null) values[key + ":ppr"] = ppr;
+      }
+    }
+    for (const r of data.resources) {
+      const owner = board.blocks.find(b => b.templateSlotId === r.position);
+      const matches = board.resources.filter(x => x.objectId === owner?.id && x.name === r.name && x.unit === r.unit);
+      if (matches.length !== 1) throw new Error("Проверь принадлежность ресурса: " + r.name);
+      const key = "resource:" + matches[0].id;
+      if (r.unit === "дн." && r.expiryDate) {
+        const deadlines = (board.deadlinesByDate ??= {});
+        (deadlines[date] ??= {})[key] = r.expiryDate;
+      }
+      values[key] = r.remaining;
+    }
+    return values;
+  }
+
+  function storeObservation(board, date, values) {
+    if (!datedReadings.valid(date) || date > todayIso()) throw new Error("Укажи дату показаний не позднее сегодняшней");
+    const dates = (board.readingsByDate ??= {});
+    dates[date] = { ...dates[date], ...values };
+    const keys = new Set(Object.keys(values));
+    // Mirror a direct starts counter into the legacy form field when it represents the same reading.
+    for (const block of board.blocks) {
+      const pos = templatePositionFor(board, block);
+      if (!pos) continue;
+      const start = aircraftTemplates.positionCounters(board.workTemplate, pos).find(f => f.role === "starts");
+      const rule = start && startCounter(block, "position:" + pos.id + ":" + start.id);
+      if (!rule) continue;
+      for (const [period, native] of [["sne","starts"],["ppr","pprStarts"]]) {
+        const col = "column:" + rule.id + ":" + period, field = block.id + ":" + native;
+        if (keys.has(col) && keys.has(field) && values[col] !== values[field]) throw new Error("Разные показания одного счётчика запусков: " + block.name);
+        if (!keys.has(col) && !keys.has(field)) continue;
+        const n = keys.has(col) ? values[col] : values[field];
+        dates[date][col] = dates[date][field] = n;
+        keys.add(col); keys.add(field);
+      }
+    }
+    const projected = datedReadings.at(board, todayIso()), catalog = readingCatalog(board);
+    for (const block of board.blocks) {
+      const key = block.id + ":repairs";
+      if (keys.has(key) && Number.isInteger(projected.get(key))) block.repairs = projected.get(key);
+    }
+    for (const r of board.resources) if (projected.expiries.has("resource:" + r.id)) r.expiryDate = projected.expiries.get("resource:" + r.id);
+    for (const key of keys) {
+      const field = catalog.get(key), value = projected.get(key);
+      if (field && Number.isFinite(value)) field.set(value);
+    }
+  }
+
+  function commitReadingBoard(current, copy) {
+    const previous = state.aircraft;
+    state.aircraft = previous.map(b => b === current ? copy : b);
+    if (!saveState()) { state.aircraft = previous; throw new Error("Не удалось сохранить показания"); }
+  }
+
+  function baselineFile(board, date = todayIso()) {
+    if (!datedReadings.valid(date) || date > todayIso()) throw new Error("Укажи прошедшую или сегодняшнюю дату");
     const { aircraft, template } = exportStartingAircraft(board);
-    return { ...identityFile(board, "aircraft-baseline"), readings: aircraft.readings, landingCounts: aircraft.landingCounts,
+    const at = datedReadings.at(board, date);
+    const historical = date !== todayIso();
+    if (historical && !Object.keys(board.readingsByDate || {}).some(d => d <= date)) {
+      throw new Error("До этой даты нет сохранённых показаний борта");
+    }
+    if (historical) {
+      const pick = (keys, prefix = "") => Object.fromEntries(keys.flatMap(k => {
+        const v = at.get(prefix + k);
+        return Number.isFinite(v) ? [[k, v]] : [];
+      }));
+      aircraft.readings = pick(BOARD_COUNTERS);
+      aircraft.landingCounts = pick(OPTIONAL_USAGE_TYPES.filter(k => k !== "arresterHooks"), "landing:");
+      for (const row of aircraft.blocks) {
+        const block = board.blocks.find(b => b.templateSlotId === row.position);
+        if (!block || !blockInstalledOn(block, date) || (block.manufactureDate && block.manufactureDate > date)) {
+          throw new Error("На эту дату состав борта отличался");
+        }
+        row.readings = pick(["sneMinutes", "pprMinutes", "sneLandings", "pprLandings", "starts", "pprStarts"], block.id + ":");
+        row.totals = (block.usageCounters || []).map((rule, counter) => ({ counter, ...pick(["sne","ppr"], "column:" + rule.id + ":") }));
+        const repairs = at.get(block.id + ":repairs");
+        if (repairs != null) row.repairs = repairs;
+        else if (row.lastRepairDate > date || block.events.some(e => e.type === "repair" && e.date > date)) {
+          throw new Error("Нет числа ремонтов на выбранную дату: " + block.name);
+        }
+        row.lastRepairDate = block.historicalRepairs?.[row.repairs]?.date || block.events.filter(e => e.type === "repair" && e.date <= date).map(e => e.date).sort().at(-1) || "";
+        if (row.lastRepairDate > date) row.lastRepairDate = "";
+      }
+    }
+    aircraft.resources = aircraft.resources.flatMap((row, i) => {
+      const key = "resource:" + board.resources[i].id;
+      if (historical && !Number.isFinite(at.get(key))) return [];
+      const remaining = at.get(key);
+      return [{ ...row, ...(Number.isFinite(remaining) && { remaining }), ...(at.expiries.has(key) && { expiryDate: at.expiries.get(key) }) }];
+    });
+    return { ...identityFile(board, "aircraft-baseline"), asOfDate: date, readings: aircraft.readings, landingCounts: aircraft.landingCounts,
       blocks: aircraft.blocks.map(({ manufactureDate, ...row }) => ({ ...row,
         columns: (template.positions.find(p => p.id === row.position).usageCounters || []).map(({ name, unit }) => ({ name, unit })) })),
       resources: aircraft.resources, ...(board.unconfirmedLimits?.length && { unconfirmedLimits: board.unconfirmedLimits }) };
@@ -1771,18 +1923,33 @@
   }
 
   function prepareBaseline(file) {
-    checkFileKeys(file, ["kind", "version", "templateId", "boardNumber", "serialNumber", "rfNumber", "readings", "landingCounts", "blocks", "resources", "unconfirmedLimits"]);
-    if (file.version !== 1 || !Array.isArray(file.blocks)) throw new Error("Проверь формат стартовых показаний");
+    checkFileKeys(file, ["kind", "version", "templateId", "boardNumber", "serialNumber", "rfNumber", "asOfDate", "readings", "landingCounts", "blocks", "resources", "unconfirmedLimits"]);
+    const when = file.asOfDate;
+    if (when != null && (!datedReadings.valid(when) || when > todayIso())) throw new Error("Проверь дату показаний");
+    if (file.version !== 1 || !Array.isArray(file.blocks)) throw new Error("Проверь формат показаний");
     const boards = state.aircraft.filter(b => b.workTemplate?.id === file.templateId && b.boardNumber === file.boardNumber &&
       (!file.serialNumber || b.serialNumber === file.serialNumber) && (!file.rfNumber || b.rfNumber === file.rfNumber));
     if (boards.length !== 1) throw new Error("Борт с такими номерами не найден однозначно. Проверь файл состава борта.");
     const [board] = boards;
-    if (board.baselineLoaded && !board.baselineAccountingVersion && board.shifts.length) return reconcileOpeningBalances(board, file);
-    if (board.baselineLoaded) throw new Error("Стартовые показания уже внесены");
+    if (board.baselineLoaded && !board.baselineAccountingVersion && board.shifts.length) {
+      let reconciled;
+      try { reconciled = reconcileOpeningBalances(board, file); } catch (err) {
+        if (!when) throw err;
+      }
+      if (reconciled) {
+        if (when) {
+          const data = aircraftTemplates.validateStartingAircraft({ kind: "aircraft-start", version: 1, template: boardTemplate(board), aircraft: file }).aircraft;
+          storeObservation(reconciled.copy, when, fileReadings(reconciled.copy, data, when));
+        }
+        return reconciled;
+      }
+    }
+    if (!when && board.baselineLoaded) throw new Error("Показания уже внесены");
+    const datedUpdate = Boolean(when && (board.baselineLoaded || board.shifts.length || board.resources.length));
     const hasBoardReadings = BOARD_COUNTERS.some(key => board[key] != null && (board.inventoryOnly || board[key] !== 0));
-    if (board.shifts.length || board.resources.length || hasBoardReadings ||
+    if (!datedUpdate && (board.shifts.length || board.resources.length || hasBoardReadings ||
         Object.keys(board.initialLandingCounts || {}).length || board.blocks.some(b => b.repairs || b.events.length ||
-          BLOCK_COUNTERS.some(key => b[key] != null) || Object.keys(b.usageTotals || {}).length)) {
+          BLOCK_COUNTERS.some(key => b[key] != null) || Object.keys(b.usageTotals || {}).length))) {
       throw new Error("У борта уже есть записи или показания. Они сохранены.");
     }
     const template = boardTemplate(board);
@@ -1799,6 +1966,7 @@
       if (!Array.isArray(raw.columns) || raw.columns.length !== rules.length || raw.columns.some((c,i) =>
           c?.name !== rules[i].name || c.unit !== rules[i].unit)) throw new Error("Проверь состав граф: " + block.name);
       Object.assign(block, row.readings, { repairs: row.repairs });
+      if (when && row.lastRepairDate > when) throw new Error("Дата ремонта позднее показаний: " + block.name);
       if (row.lastRepairDate) block.historicalRepairs = { [row.repairs]: { date: row.lastRepairDate, beforeRepair: {} } };
       for (const { counter, ...totals } of row.totals) block.usageTotals[rules[counter].id] = totals;
     }
@@ -1808,8 +1976,26 @@
         typeof r.unit !== "string" || !Number.isFinite(r.limit) || r.limit < 0 || r.remaining !== null)) throw new Error("Проверь лимиты без остатка");
       copy.unconfirmedLimits = structuredClone(file.unconfirmedLimits);
     }
+    if (datedUpdate) {
+      const result = structuredClone(board);
+      const values = fileReadings(result, data, when);
+      let repairDateChanged = false;
+      for (const row of data.blocks.filter(b => b.lastRepairDate)) {
+        const block = result.blocks.find(b => b.templateSlotId === row.position);
+        const history = (block.historicalRepairs ??= {});
+        if (history[row.repairs]?.date !== row.lastRepairDate) {
+          history[row.repairs] = { ...history[row.repairs], date: row.lastRepairDate };
+          repairDateChanged = true;
+        }
+      }
+      if (!repairDateChanged && Object.entries(values).every(([k,v]) => result.readingsByDate?.[when]?.[k] === v) &&
+        JSON.stringify(board.deadlinesByDate?.[when]) === JSON.stringify(result.deadlinesByDate?.[when])) throw new Error("Эти показания на эту дату уже сохранены");
+      storeObservation(result, when, values);
+      return { board, copy: result };
+    }
     Object.assign(copy, data.readings, { initialLandingCounts: data.landingCounts, inventoryOnly: false, baselineLoaded: true, baselineAccountingVersion: 2 });
     copy.resources = startingResources(copy, data.resources, slots);
+    if (when) storeObservation(copy, when, fileReadings(copy, data, when));
     return { board, copy };
   }
 
@@ -3082,12 +3268,24 @@
     const previous = aircraft.shifts.at(-1);
     if (previous) { delete previous.beforeUsage; delete previous.afterUsage; }
     aircraft.shifts.push({
-      id: id(), ...(importRecordId && { importRecordId }), date: work.date, flightMinutes: flight, operationType, operationLabel: operation?.label, templateWork: work, flow,
+      id: id(), recordedAt: new Date().toISOString(), ...(importRecordId && { importRecordId }), date: work.date, flightMinutes: flight, operationType, operationLabel: operation?.label, templateWork: work, flow,
       actualLandings, equivalentLandings: equivalent, arresterHooks, landingsByType: landings, accruals, aggregateAccruals: aggregateUsage,
     });
+    alignDatedTotals(aircraft, work.date);
     if (!saveState()) { Object.assign(aircraft, backup); showToast("Не удалось сохранить работу"); return; }
     navigateBack();
     showToast(work.engines.some((engine) => engine.pending) ? "Работа сохранена. Есть данные без привязки двигателя" : "Работа сохранена");
+  }
+
+  function alignDatedTotals(aircraft, workDate) {
+    const covered = Object.entries(aircraft.readingsByDate || {}).filter(([date]) => date >= workDate);
+    if (covered.length) {
+      const current = datedReadings.at(aircraft, todayIso()), catalog = readingCatalog(aircraft);
+      for (const key of new Set(covered.flatMap(([, values]) => Object.keys(values)))) {
+        const value = current.get(key);
+        if (Number.isFinite(value)) catalog.get(key)?.set(value);
+      }
+    }
   }
 
   function bindShiftForm(correction) {
@@ -3234,7 +3432,7 @@
       applyAggregateAccruals(aircraft, aggregateUsage);
       const operation = (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find((item) => item.id === data.get("operationType"));
       const entry = {
-        workInputVersion: 2, flow, id: correction?.id || id(),
+        workInputVersion: 2, flow, id: correction?.id || id(), recordedAt: correction?.recordedAt || new Date().toISOString(),
         beforeUsage,
         afterUsage: usageSnapshot(aircraft),
         revisions: correction ? [...(correction.revisions || []), {
@@ -3281,6 +3479,8 @@
         if (previous) { delete previous.beforeUsage; delete previous.afterUsage; }
         aircraft.shifts.push(entry);
       }
+      alignDatedTotals(aircraft, date);
+      entry.afterUsage = usageSnapshot(aircraft);
       if (!saveState()) {
         Object.assign(aircraft, backup);
         showToast("Не удалось сохранить работу");
@@ -3432,8 +3632,9 @@
     app.innerHTML = shell(`
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>Настройки самолёта</h1></div></section>
       <button class="setting-row" data-view="board-usage"><strong>Показатели работы этого борта</strong>${icon("chevron")}</button>
-      ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-board-template"><span><strong>Экспортировать шаблон борта</strong><small>Позиции, показатели, правила расчёта и раскладка карточек</small></span></button>' : ""}
-      ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-starting-aircraft"><span><strong>Экспортировать состав борта</strong><small>Номера и установленные агрегаты.</small></span></button><button type="button" class="setting-row" id="export-baseline"><span><strong>Экспортировать стартовые показания</strong><small>Наработка формуляров, ремонты и остатки ресурсов.</small></span></button>' : ""}
+      ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-board-template"><span><strong>Экспортировать тип самолёта</strong><small>Позиции, показатели, правила расчёта и раскладка карточек</small></span></button>' : ""}
+      ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-starting-aircraft"><span><strong>Экспортировать состав борта</strong><small>Номера и установленные агрегаты.</small></span></button><button type="button" class="setting-row" id="export-baseline"><span><strong>Экспортировать показания на сегодня</strong><small>Наработка формуляров, ремонты и остатки ресурсов.</small></span></button>' : ""}
+      <button class="setting-row" data-view="dated-readings"><strong>Показания на дату</strong></button>
       ${aircraftImportControls()}
       <section class="settings-list">
         <label class="setting-row"><span><strong>Уведомления этого самолёта</strong><small>${state.globalNotifications ? "Работы и ресурсы выбранного борта" : "Общие уведомления приложения выключены"}</small></span><input id="aircraft-notifications" type="checkbox" ${aircraft.notifications ? "checked" : ""} ${!state.globalNotifications ? "disabled" : ""}></label>
@@ -3465,7 +3666,7 @@
         try {
           const file = inventory ? exportStartingAircraft(aircraft, true) : baselineFile(aircraft);
           const suffix = aircraft.boardNumber.replace(/[^a-zA-Z0-9-]+/g, "-").slice(0, 39);
-          downloadAircraftFile(file, `aircraft-${suffix}-${inventory ? "inventory" : "baseline"}.json`);
+          downloadAircraftFile(file, `aircraft-${suffix}-${inventory ? "inventory" : file.asOfDate}.json`);
         } catch (error) { showToast(error.message); }
       });
     }
@@ -4005,7 +4206,7 @@
       event.preventDefault();
       const data = new FormData(event.currentTarget);
       const type = String(data.get("type"));
-      const item = { id: id(), type, date: String(data.get("date")), note: String(data.get("note") || "").trim() };
+      const item = { id: id(), recordedAt: new Date().toISOString(), type, date: String(data.get("date")), note: String(data.get("note") || "").trim() };
       if (type === "install" && block.templateSlotId && enginePositionOccupied(aircraft, block.templateSlotId, item.date, block.id)) {
         showToast("Эта позиция двигателя уже занята на дату установки");
         return;
@@ -4320,6 +4521,131 @@
       </table></div></section>`;
   }
 
+  function displayedReading(value, unit) {
+    if (value == null) return "—";
+    if (unit === "мин" || unit === "с" || unit === "ч") {
+      const seconds = Math.round(unit === "с" ? value : value * (unit === "мин" ? 60 : 3600));
+      return seconds % 60 || unit === "с" ? formatSeconds(seconds) : calc.formatDuration(seconds / 60);
+    }
+    return formatNumber(value, 6) + " " + unit;
+  }
+
+  function chooseReadingDate(file, apply) {
+    const dialog = document.createElement("dialog");
+    dialog.className = "confirm-dialog";
+    dialog.innerHTML = `<form><h2>Показания борта ${escapeHtml(file.boardNumber)} на дату</h2>
+      <label>На конец дня<input name="asOf" type="date" required max="${todayIso()}"></label>
+      <p>Для указанных граф будут сохранены итоги на выбранную дату. Смены этого дня уже входят в итог.</p>
+      <p role="alert"></p><button class="primary-button" type="submit">Внести показания</button>
+      <button class="secondary-button" type="button">Отмена</button></form>`;
+    app.append(dialog);
+    const form = dialog.querySelector("form");
+    form.elements.asOf.value = file.asOfDate || "";
+    form.querySelector('[type=button]').onclick = () => dialog.close();
+    dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    form.onsubmit = event => {
+      event.preventDefault();
+      try { apply(form.elements.asOf.value); dialog.close(); }
+      catch (e) { form.querySelector("[role=alert]").textContent = e.message; }
+    };
+    dialog.showModal();
+  }
+
+  function renderDatedReadings() {
+    let board = selectedAircraft();
+    const dates = Object.keys(board.readingsByDate || {}).sort();
+    app.innerHTML = shell(`<h1>Показания на дату</h1>
+      <form id="date-range" class="shift-form form-grid">
+        <label>С даты<input name="from" type="date" required value="${dates[0] || todayIso()}"></label>
+        <label>По дату<input name="to" type="date" required value="${todayIso()}"></label>
+        <label class="form-span">Формуляр или ресурс<select name="group"></select></label>
+        <p class="form-span" id="reading-period" role="status"></p></form>
+      <section id="reading-results"></section>
+      ${board.workTemplate ? '<button id="export-at-date" class="secondary-button">Скачать показания на конечную дату</button>' : ""}
+      <form id="observation" class="shift-form form-grid"><h2 class="form-span">Внести показание на конец дня</h2>
+        <label>Дата<input name="date" type="date" required max="${todayIso()}" value="${todayIso()}"></label>
+        <label>Графа<select name="key"></select></label>
+        <label>Значение<input name="amount" type="text" required></label>
+        <button class="primary-button" type="submit">Сохранить показание</button><p class="form-span" role="status"></p></form>`,
+      { title: "Показания на дату", subtitle: board.type + " · борт " + board.boardNumber, back: true, settings: false });
+    const range = document.getElementById("date-range"), entry = document.getElementById("observation");
+    const groups = range.elements.group, keys = entry.elements.key, description = document.getElementById("reading-period");
+    const results = document.getElementById("reading-results");
+    let catalog = readingCatalog(board);
+    for (const group of new Set([...catalog.values()].map(f => f.group))) groups.add(new Option(group, group));
+    function fields() { return [...catalog.values()].filter(f => f.group === groups.value && !f.hidden); }
+    function syncField() {
+      const f = catalog.get(keys.value);
+      entry.elements.amount.placeholder = !f ? "" : ["мин","с","ч"].includes(f.unit) ? (f.unit === "с" ? "ЧЧ:ММ:СС" : "ЧЧ:ММ") : f.unit;
+    }
+    function syncGroup() {
+      keys.replaceChildren();
+      for (const f of fields().filter(f => !f.expiry)) keys.add(new Option(f.label, f.key));
+      entry.hidden = !keys.options.length;
+      syncField();
+    }
+    function update() {
+      const from = range.elements.from.value, to = range.elements.to.value;
+      results.replaceChildren();
+      if (!datedReadings.valid(from) || !datedReadings.valid(to) || from > to) {
+        description.textContent = "Укажи начальную дату не позднее конечной."; return;
+      }
+      const start = datedReadings.at(board, from), end = datedReadings.at(board, to);
+      const postings = datedReadings.postedBetween(board, from, to);
+      function value(map, date, f) {
+        if (date > todayIso() && !f.expiry) return null;
+        if (map.has(f.key)) return map.get(f.key);
+        return date === todayIso() ? f.get() : null;
+      }
+      const rows = fields().map(f => {
+        const a = value(start, from, f), b = value(end, to, f);
+        const byWork = a == null || b == null;
+        const delta = byWork ? (to <= todayIso() ? postings.get(f.key) : null) : b - a;
+        const deadline = end.expiries.get(f.key);
+        return `<tr><th scope="row">${escapeHtml(f.label)}</th><td>${escapeHtml(displayedReading(a,f.unit))}</td>
+          <td>${escapeHtml(displayedReading(b,f.unit))}${deadline && b > 0 ? "<br>" + datedReadings.calendarPeriod(to, deadline) : ""}</td>
+          <td>${delta == null ? "—" : (delta > 0 ? "+" : delta < 0 ? "−" : "") + escapeHtml(displayedReading(Math.abs(delta),f.unit)) + (byWork ? " по сменам" : "")}</td></tr>`;
+      }).join("");
+      description.textContent = "Между датами: " + datedReadings.days(from,to) + " дн. · " + datedReadings.calendarPeriod(from,to) + (to > todayIso() ? ". На будущую дату рассчитан календарный остаток." : "");
+      results.innerHTML = `<div class="template-table-wrap"><table class="aircraft-counters"><thead><tr><th>Графа</th>
+        <th>${formatDate(from)}</th><th>${formatDate(to)}</th><th>Изменение</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+    range.onsubmit = e => e.preventDefault();
+    range.oninput = range.onchange = e => { if (e.target === groups) syncGroup(); if (e.target === range.elements.to) entry.elements.date.value = range.elements.to.value; update(); };
+    document.getElementById("export-at-date")?.addEventListener("click", () => {
+      try {
+        const file = baselineFile(board, range.elements.to.value);
+        const suffix = board.boardNumber.replace(/[^a-zA-Z0-9-]+/g, "-");
+        downloadAircraftFile(file, `aircraft-${suffix}-${file.asOfDate}.json`);
+      } catch (err) { showToast(err.message); }
+    });
+    keys.onchange = syncField;
+    entry.onsubmit = e => {
+      e.preventDefault();
+      const f = catalog.get(keys.value), text = entry.elements.amount.value.trim().replace(",", ".");
+      try {
+        let n;
+        if (["мин","с","ч"].includes(f.unit) && text.includes(":")) {
+          const parts = /^(\d+):([0-5]\d)(?::([0-5]\d))?$/.exec(text);
+          if (!parts) throw new Error("Введи время в формате ЧЧ:ММ или ЧЧ:ММ:СС");
+          n = (+parts[1]*3600 + +parts[2]*60 + Number(parts[3] || 0)) / (f.unit === "мин" ? 60 : f.unit === "ч" ? 3600 : 1);
+        } else {
+          if (!/^\d+(?:\.\d+)?$/.test(text)) throw new Error("Введи число или время");
+          n = Number(text);
+        }
+        if (f.integer && !Number.isInteger(n)) throw new Error("Для этого счётчика введи целое число");
+        if (f.pprOwner && !countsTowardPpr(f.pprOwner, entry.elements.date.value)) throw new Error("Для ППР нужен ремонт на дату показания");
+        if (!Number.isFinite(n) || n < 0 || n > Number.MAX_SAFE_INTEGER ||
+          (f.limit != null && n > f.limit)) throw new Error("Проверь значение показания");
+        const copy = structuredClone(board);
+        storeObservation(copy, entry.elements.date.value, { [f.key]: n });
+        commitReadingBoard(board, copy); board = copy; catalog = readingCatalog(board);
+        entry.querySelector("[role=status]").textContent = "Показание сохранено"; update();
+      } catch (err) { entry.querySelector("[role=status]").textContent = err.message; }
+    };
+    syncGroup(); update();
+  }
+
   function renderUsageCorrection() {
     const aircraft = selectedAircraft();
     const block = aircraft.blocks.find((item) => item.id === state.selectedBlockId);
@@ -4414,7 +4740,7 @@
           [id, { sne: sne ?? 0, ppr }])) };
       }
       block.repairs = current.repairs;
-      block.events.push({ id: id(), type: "correction", date: todayIso(), note: data.get("note"), previous, current });
+      block.events.push({ id: id(), type: "correction", date: todayIso(), recordedAt: new Date().toISOString(), note: data.get("note"), previous, current });
       if (saveState()) {
         render();
         showToast("Показания сохранены");
@@ -5315,7 +5641,7 @@
         </form>
         <div class="type-trash-actions">
           ${aircraftImportControls()}
-          <button type="button" class="secondary-button" id="create-aircraft-template">Создать шаблон</button>
+          <button type="button" class="secondary-button" id="create-aircraft-template">Создать тип самолёта</button>
         </div>
         <section class="settings-list" aria-label="Доступные типы">
           ${types.map((name, index) => `<div class="setting-row type-catalog-card"><span><strong>${escapeHtml(name)}</strong>
@@ -5511,7 +5837,7 @@
       ], sample: { operation: "copy", percent: 20, stepMinutes: 5, direction: "nearest" } },
       checks: { title: "Проверки последовательности", fields: [["ascending", "Идентификаторы полей через запятую, от меньшего к большему"]], sample: { ascending: [] } },
     };
-    app.innerHTML = shell(`<h1>Шаблон самолёта</h1>
+    app.innerHTML = shell(`<h1>Тип самолёта</h1>
       <form class="shift-form" id="template-editor-form">
         <div class="field-pair">
           <label>Название типа<input name="name" value="${escapeHtml(draft.name)}" maxlength="120" required></label>
@@ -5525,10 +5851,10 @@
         <div id="template-editor-suggestions"></div>
         <p id="template-editor-error" class="field-help" role="status"></p>
         <div class="type-trash-actions">
-          <button class="primary-button" type="submit">Сохранить шаблон</button>
+          <button class="primary-button" type="submit">Сохранить тип</button>
           <button class="secondary-button" id="export-draft-template" type="button">Экспортировать JSON</button>
         </div>
-      </form>`, { title: "Шаблон самолёта", back: true, settings: false });
+      </form>`, { title: "Тип самолёта", back: true, settings: false });
     const form = document.getElementById("template-editor-form");
     const error = document.getElementById("template-editor-error");
     const commaList = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
@@ -5804,7 +6130,7 @@
         if (!saveNewTemplate(copy)) { alert.textContent = "Не удалось сохранить копию шаблона"; return; }
         dialog.close();
         render();
-        showToast("Шаблон импортирован как новый тип");
+        showToast("Тип самолёта импортирован");
       });
       form.elements.name.addEventListener("input", () => { alert.textContent = ""; });
       dialog.addEventListener("close", () => dialog.remove(), { once: true });
@@ -5828,18 +6154,12 @@
           return;
         }
         if (incoming?.kind === "aircraft-baseline") {
-          const { board, reconcile } = prepareBaseline(incoming);
-          chooseLayoutAction(reconcile ? "Сверить старые итоги с исходным файлом? Введённые смены сохранятся." : `Внести стартовые показания в формуляры борта ${escapeHtml(board.boardNumber)}? Запись о смене не создаётся.`,
-            [["apply", reconcile ? "Сверить итоги" : "Внести стартовые показания"], ["cancel", "Отмена"]], action => {
-              if (action !== "apply") return;
-              try {
-                const { board: current, copy } = prepareBaseline(incoming);
-                const previous = state.aircraft;
-                state.aircraft = previous.map(b => b === current ? copy : b);
-                if (!saveState()) { state.aircraft = previous; throw new Error("Не удалось сохранить показания"); }
-                render(); showToast(reconcile ? "Старые итоги сверены" : "Стартовые показания внесены");
-              } catch (e) { status.textContent = e.message; }
-            });
+          if (incoming.asOfDate != null && (!datedReadings.valid(incoming.asOfDate) || incoming.asOfDate > todayIso())) throw new Error("Проверь дату показаний в файле");
+          chooseReadingDate(incoming, date => {
+            const { board, copy } = prepareBaseline({ ...incoming, asOfDate: date });
+            commitReadingBoard(board, copy);
+            render(); showToast("Показания на дату внесены");
+          });
           return;
         }
         if (incoming?.kind === "work-readings") {
@@ -5935,7 +6255,7 @@
       chooseLayoutAction(`Импортировать «${escapeHtml(template.name)}»? Формуляров: ${positions}. Полей ввода: ${template.inputs.length}.`,
         [["import", "Импортировать"], ["cancel", "Отмена"]], (action) => {
           if (action !== "import") return;
-          if (saveNewTemplate(template)) { render(); showToast("Шаблон импортирован"); }
+          if (saveNewTemplate(template)) { render(); showToast("Тип самолёта импортирован"); }
           else status.textContent = "Не удалось сохранить шаблон";
         });
     }

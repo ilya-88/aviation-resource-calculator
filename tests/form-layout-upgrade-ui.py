@@ -27,7 +27,7 @@ def check(browser, version, edit):
         previous = previous["previousTemplate"]
     upload({"name": "previous.json", "mimeType": "application/json",
             "buffer": json.dumps(previous).encode()}, "Импортировать")
-    page.get_by_text("Шаблон импортирован", exact=True).wait_for()
+    page.get_by_text("Тип самолёта импортирован", exact=True).wait_for()
     upload(EXAMPLES / "aircraft-89-inventory.json", "Добавить состав борта")
     page.locator("[data-view=shift]").wait_for()
     if edit:
