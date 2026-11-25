@@ -194,6 +194,7 @@
       requireValue(["airframe", "engine", "unit"].includes(row.kind), `Неизвестный вид формуляра: ${position}`);
       return { id: position, label: label(row.label, position), kind: row.kind, model: row.model ? label(row.model, position) : "",
         ...(row.engineLink != null && { engineLink: row.engineLink }),
+        ...(row.journal != null && { journal: row.journal }),
         ...(row.usageCounters != null && { usageCounters: row.usageCounters }),
         ...(row.formLayout != null && { formLayout: row.formLayout }) };
     });
@@ -253,6 +254,16 @@
         selected.every((key) => counters.some((counter) => counter.id === key)),
       `Укажи существующие графы для агрегата: ${position.id}`);
       position.engineLink = { source, counters: selected === "all" ? selected : [...selected] };
+    }
+    for (const pos of positions.filter(item => item.journal != null)) {
+      const available = positionCounters({ engineCounters: counters }, pos);
+      pos.journal = list(pos.journal, "графы журнала", column => {
+        const field = available.find(f => f.id === column.field);
+        requireValue(field || (column.field == null && column.label), "Неизвестная графа журнала");
+        requireValue(!column.withPpr || field?.type === "count", "Для итога ППР выбери счётчик");
+        return { ...(field && { field: field.id }), label: label(column.label || field.label, "название графы"),
+          ...(column.perEntry && { perEntry: true }), ...(column.withPpr && { withPpr: true }) };
+      });
     }
     const engineInput = (key) => inputs.find((row) => row.id === key && row.scope === "engine");
     const rules = list(document.rules || [], "правила начисления", (row) => {
@@ -599,6 +610,6 @@
       serialNumber: text(data.serialNumber), rfNumber: text(data.rfNumber), readings: board, landingCounts, blocks, resources } };
   }
 
-  return { boardCards, validateTemplate, validateStartingAircraft, validateWorkReadings, calculate, engineFlightInput, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits, unitScale, dimension, rawSourceList,
+  return { boardCards, parseValue, validateTemplate, validateStartingAircraft, validateWorkReadings, calculate, engineFlightInput, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits, unitScale, dimension, rawSourceList,
     isFormKey, normalizeFlightLabel, normalizeTemplateFlightLabel };
 });

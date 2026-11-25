@@ -1,0 +1,3078 @@
+{
+  "schemaVersion": 1,
+  "id": "su-33-forms",
+  "name": "Су-33 · формуляры",
+  "workTitle": "Запись работы",
+  "positions": [
+    {
+      "id": "airframe",
+      "label": "Формуляр самолёта",
+      "kind": "airframe",
+      "model": "",
+      "formLayout": {
+        "tiles": [
+          {
+            "keys": [
+              "form-field:name"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:serialNumber"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:aggregate-counter-index:0"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:aggregate-counter-index:1"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:aggregate-counter-index:2"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:aggregate-counter-index:3"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-metric:2"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-action:save"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:landing-count-touch"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-action:correct-usage"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:assemblies-title"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:assembly-slot:engine-left"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:assembly-slot:engine-right"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:assembly-slot:vka-left"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-action:add-resource"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:assembly-slot:vka-right"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:repairs"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:assembly-slot:gtde-left"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:assembly-slot:gtde-right"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:installation-history-title"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:installation-history-empty"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:events-title"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "event-field:type"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "event-field:date"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "event-field:note"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-action:save-event"
+            ],
+            "wide": false
+          }
+        ],
+        "hidden": [
+          "form-field:caption",
+          "form:resources-title",
+          "form:resources-empty",
+          "form-field:rfNumber",
+          "form:airframe-usage-title"
+        ]
+      },
+      "usageCounters": [
+        {
+          "columnKey": "board-totalFlightMinutes",
+          "boardCounter": "totalFlightMinutes",
+          "name": "Налёт СНЭ",
+          "unit": "мин",
+          "source": "board:flight",
+          "factor": 1,
+          "workMode": "entry"
+        },
+        {
+          "columnKey": "board-actualLandings",
+          "boardCounter": "actualLandings",
+          "name": "Посадки СНЭ",
+          "unit": "пос.",
+          "source": "work:landings",
+          "factor": 1,
+          "workMode": "entry"
+        },
+        {
+          "columnKey": "board-pprFlightMinutes",
+          "boardCounter": "pprFlightMinutes",
+          "name": "Налёт ППР",
+          "unit": "мин",
+          "source": "board:flight",
+          "factor": 1,
+          "workMode": "entry"
+        },
+        {
+          "columnKey": "board-pprLandings",
+          "boardCounter": "pprLandings",
+          "name": "Посадки ППР",
+          "unit": "пос.",
+          "source": "work:landings",
+          "factor": 1,
+          "workMode": "entry"
+        }
+      ]
+    },
+    {
+      "id": "engine-left",
+      "label": "Левый двигатель",
+      "kind": "engine",
+      "model": "",
+      "formLayout": {
+        "tiles": [
+          {
+            "keys": [
+              "form-field:name"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:caption"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:aggregate-settings"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:resources-title"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:resources-empty"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-action:add-resource"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:serialNumber"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:manufactureDate"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:drawingNumber"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:installed"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:repairs"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:sneMinutes"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:pprMinutes"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:starts"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-metric:0"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-metric:1"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-metric:2"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-metric:3"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-metric:4"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-metric:5"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-metric:6"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-metric:7"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-metric:8"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:groundPercent"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:groundStep"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-field:groundDirection"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-action:save"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-action:correct-usage"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:events-title"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form:events-empty"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "event-field:type"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "event-field:date"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "event-field:note"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "form-action:save-event"
+            ],
+            "wide": false
+          }
+        ],
+        "hidden": [
+          "form-field:sneLandings",
+          "form-field:pprLandings"
+        ]
+      },
+      "usageCounters": [
+        {
+          "name": "Включения ОР",
+          "unit": "шт.",
+          "source": "raw:engine-left:archive-reading-1",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Максимал ОР",
+          "unit": "с",
+          "source": "raw:engine-left:archive-reading-2",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Максимал Б + ОР",
+          "unit": "с",
+          "source": "raw:engine-left:archive-reading-3",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Максимал Б + УБ",
+          "unit": "с",
+          "source": "raw:engine-left:archive-reading-4",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Суммарная наработка Б",
+          "unit": "мин",
+          "source": "position:engine-left:period-b",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Суммарная наработка Б + УБ",
+          "unit": "мин",
+          "source": "position:engine-left:period-bub",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Циклы Б",
+          "unit": "шт.",
+          "workMode": "entry",
+          "source": "position:engine-left:cycle-b",
+          "factor": 1
+        },
+        {
+          "name": "Циклы УБ",
+          "unit": "шт.",
+          "workMode": "entry",
+          "source": "position:engine-left:cycle-ub",
+          "factor": 1
+        },
+        {
+          "name": "Земля Б",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:engine-left:ground-b",
+          "factor": 1
+        },
+        {
+          "name": "Земля Б + УБ",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:engine-left:ground-bub",
+          "factor": 1
+        },
+        {
+          "name": "Полёт Б",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:engine-left:air-b",
+          "factor": 1
+        },
+        {
+          "name": "Полёт Б + УБ",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:engine-left:air-bub",
+          "factor": 1
+        },
+        {
+          "name": "Циклы ОР за запись",
+          "unit": "шт.",
+          "source": "position:engine-left:archive-reading-1",
+          "factor": 1,
+          "workMode": "entry"
+        },
+        {
+          "name": "Для сверки с формуляром · Суммарная наработка Б",
+          "unit": "мин",
+          "workMode": "entry",
+          "factor": 1,
+          "source": "raw:engine-left:archive-reading-5"
+        },
+        {
+          "name": "Для сверки с формуляром · Суммарная наработка Б + УБ",
+          "unit": "мин",
+          "workMode": "entry",
+          "factor": 1,
+          "source": "raw:engine-left:archive-reading-6"
+        }
+      ],
+      "journal": [
+        {
+          "field": "starts",
+          "label": "Запуски"
+        },
+        {
+          "field": "archive-reading-1",
+          "label": "Включения ОР",
+          "withPpr": true
+        },
+        {
+          "field": "cycle-b",
+          "label": "Циклы Б",
+          "perEntry": true
+        },
+        {
+          "field": "cycle-ub",
+          "label": "Циклы УБ",
+          "perEntry": true
+        },
+        {
+          "field": "archive-reading-1",
+          "label": "Циклы ОР",
+          "perEntry": true
+        },
+        {
+          "field": "ground-b",
+          "label": "Земля Б"
+        },
+        {
+          "field": "ground-bub",
+          "label": "Земля Б + УБ"
+        },
+        {
+          "field": "air-b",
+          "label": "Полёт Б"
+        },
+        {
+          "field": "air-bub",
+          "label": "Полёт Б + УБ"
+        },
+        {
+          "field": "archive-reading-2",
+          "label": "Максимал ОР"
+        },
+        {
+          "field": "archive-reading-3",
+          "label": "Максимал Б + ОР"
+        },
+        {
+          "field": "archive-reading-4",
+          "label": "Максимал Б + УБ"
+        },
+        {
+          "field": "period-b",
+          "label": "Суммарная наработка Б"
+        },
+        {
+          "field": "period-bub",
+          "label": "Суммарная наработка Б + УБ"
+        },
+        {
+          "label": "Заказ Б + УБ"
+        }
+      ]
+    },
+    {
+      "id": "engine-right",
+      "label": "Правый двигатель",
+      "kind": "engine",
+      "model": "",
+      "usageCounters": [
+        {
+          "name": "Включения ОР",
+          "unit": "шт.",
+          "source": "raw:engine-right:archive-reading-1",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Максимал ОР",
+          "unit": "с",
+          "source": "raw:engine-right:archive-reading-2",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Максимал Б + ОР",
+          "unit": "с",
+          "source": "raw:engine-right:archive-reading-3",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Максимал Б + УБ",
+          "unit": "с",
+          "source": "raw:engine-right:archive-reading-4",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Суммарная наработка Б",
+          "unit": "мин",
+          "source": "position:engine-right:period-b",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Суммарная наработка Б + УБ",
+          "unit": "мин",
+          "source": "position:engine-right:period-bub",
+          "factor": 1,
+          "workMode": "total"
+        },
+        {
+          "name": "Циклы Б",
+          "unit": "шт.",
+          "workMode": "entry",
+          "source": "position:engine-right:cycle-b",
+          "factor": 1
+        },
+        {
+          "name": "Циклы УБ",
+          "unit": "шт.",
+          "workMode": "entry",
+          "source": "position:engine-right:cycle-ub",
+          "factor": 1
+        },
+        {
+          "name": "Земля Б",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:engine-right:ground-b",
+          "factor": 1
+        },
+        {
+          "name": "Земля Б + УБ",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:engine-right:ground-bub",
+          "factor": 1
+        },
+        {
+          "name": "Полёт Б",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:engine-right:air-b",
+          "factor": 1
+        },
+        {
+          "name": "Полёт Б + УБ",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:engine-right:air-bub",
+          "factor": 1
+        },
+        {
+          "name": "Циклы ОР за запись",
+          "unit": "шт.",
+          "source": "position:engine-right:archive-reading-1",
+          "factor": 1,
+          "workMode": "entry"
+        },
+        {
+          "name": "Для сверки с формуляром · Суммарная наработка Б",
+          "unit": "мин",
+          "workMode": "entry",
+          "factor": 1,
+          "source": "raw:engine-right:archive-reading-5"
+        },
+        {
+          "name": "Для сверки с формуляром · Суммарная наработка Б + УБ",
+          "unit": "мин",
+          "workMode": "entry",
+          "factor": 1,
+          "source": "raw:engine-right:archive-reading-6"
+        }
+      ],
+      "journal": [
+        {
+          "field": "starts",
+          "label": "Запуски"
+        },
+        {
+          "field": "archive-reading-1",
+          "label": "Включения ОР",
+          "withPpr": true
+        },
+        {
+          "field": "cycle-b",
+          "label": "Циклы Б",
+          "perEntry": true
+        },
+        {
+          "field": "cycle-ub",
+          "label": "Циклы УБ",
+          "perEntry": true
+        },
+        {
+          "field": "archive-reading-1",
+          "label": "Циклы ОР",
+          "perEntry": true
+        },
+        {
+          "field": "ground-b",
+          "label": "Земля Б"
+        },
+        {
+          "field": "ground-bub",
+          "label": "Земля Б + УБ"
+        },
+        {
+          "field": "air-b",
+          "label": "Полёт Б"
+        },
+        {
+          "field": "air-bub",
+          "label": "Полёт Б + УБ"
+        },
+        {
+          "field": "archive-reading-2",
+          "label": "Максимал ОР"
+        },
+        {
+          "field": "archive-reading-3",
+          "label": "Максимал Б + ОР"
+        },
+        {
+          "field": "archive-reading-4",
+          "label": "Максимал Б + УБ"
+        },
+        {
+          "field": "period-b",
+          "label": "Суммарная наработка Б"
+        },
+        {
+          "field": "period-bub",
+          "label": "Суммарная наработка Б + УБ"
+        },
+        {
+          "label": "Заказ Б + УБ"
+        }
+      ]
+    },
+    {
+      "id": "vka-left",
+      "label": "Левая ВКА",
+      "kind": "unit",
+      "model": "",
+      "engineLink": {
+        "source": "engine-left",
+        "counters": [
+          "starts",
+          "archive-reading-1",
+          "archive-reading-2",
+          "archive-reading-3",
+          "archive-reading-4",
+          "cycle-b",
+          "cycle-ub",
+          "ground-b",
+          "ground-bub",
+          "air-b",
+          "air-bub",
+          "period-b",
+          "period-bub"
+        ]
+      },
+      "usageCounters": [
+        {
+          "name": "Запуски",
+          "unit": "зап.",
+          "factor": 1,
+          "columnKey": "starts",
+          "source": "position:vka-left:starts",
+          "workMode": "total"
+        },
+        {
+          "name": "Включения ОР",
+          "unit": "шт.",
+          "workMode": "total",
+          "source": "position:vka-left:archive-reading-1",
+          "factor": 1,
+          "columnKey": "archive-reading-1"
+        },
+        {
+          "name": "Максимал ОР",
+          "unit": "с",
+          "workMode": "total",
+          "source": "position:vka-left:archive-reading-2",
+          "factor": 1,
+          "columnKey": "archive-reading-2"
+        },
+        {
+          "name": "Максимал Б + ОР",
+          "unit": "с",
+          "workMode": "total",
+          "source": "position:vka-left:archive-reading-3",
+          "factor": 1,
+          "columnKey": "archive-reading-3"
+        },
+        {
+          "name": "Максимал Б + УБ",
+          "unit": "с",
+          "workMode": "total",
+          "source": "position:vka-left:archive-reading-4",
+          "factor": 1,
+          "columnKey": "archive-reading-4"
+        },
+        {
+          "name": "Суммарная наработка Б",
+          "unit": "мин",
+          "workMode": "total",
+          "source": "position:vka-left:period-b",
+          "factor": 1,
+          "columnKey": "archive-reading-5"
+        },
+        {
+          "name": "Суммарная наработка Б + УБ",
+          "unit": "мин",
+          "workMode": "total",
+          "source": "position:vka-left:period-bub",
+          "factor": 1,
+          "columnKey": "archive-reading-6"
+        },
+        {
+          "name": "Циклы Б",
+          "unit": "шт.",
+          "workMode": "entry",
+          "source": "position:vka-left:cycle-b",
+          "factor": 1,
+          "columnKey": "cycle-b"
+        },
+        {
+          "name": "Циклы УБ",
+          "unit": "шт.",
+          "workMode": "entry",
+          "source": "position:vka-left:cycle-ub",
+          "factor": 1,
+          "columnKey": "cycle-ub"
+        },
+        {
+          "name": "Земля Б",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:vka-left:ground-b",
+          "factor": 1,
+          "columnKey": "ground-b"
+        },
+        {
+          "name": "Земля Б + УБ",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:vka-left:ground-bub",
+          "factor": 1,
+          "columnKey": "ground-bub"
+        },
+        {
+          "name": "Полёт Б",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:vka-left:air-b",
+          "factor": 1,
+          "columnKey": "air-b"
+        },
+        {
+          "name": "Полёт Б + УБ",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:vka-left:air-bub",
+          "factor": 1,
+          "columnKey": "air-bub"
+        }
+      ],
+      "journal": [
+        {
+          "field": "starts",
+          "label": "Запуски"
+        },
+        {
+          "field": "cycle-b",
+          "label": "Циклы Б",
+          "perEntry": true
+        },
+        {
+          "field": "cycle-ub",
+          "label": "Циклы УБ",
+          "perEntry": true
+        },
+        {
+          "field": "archive-reading-1",
+          "label": "Включения ОР"
+        },
+        {
+          "field": "ground-b",
+          "label": "Земля Б"
+        },
+        {
+          "field": "ground-bub",
+          "label": "Земля Б + УБ"
+        },
+        {
+          "field": "air-b",
+          "label": "Полёт Б"
+        },
+        {
+          "field": "air-bub",
+          "label": "Полёт Б + УБ"
+        },
+        {
+          "field": "archive-reading-2",
+          "label": "Максимал ОР"
+        },
+        {
+          "field": "archive-reading-3",
+          "label": "Максимал Б + ОР"
+        },
+        {
+          "field": "archive-reading-4",
+          "label": "Максимал Б + УБ"
+        },
+        {
+          "field": "period-b",
+          "label": "Суммарная наработка Б"
+        },
+        {
+          "field": "period-bub",
+          "label": "Суммарная наработка Б + УБ"
+        }
+      ]
+    },
+    {
+      "id": "vka-right",
+      "label": "Правая ВКА",
+      "kind": "unit",
+      "model": "",
+      "engineLink": {
+        "source": "engine-right",
+        "counters": [
+          "starts",
+          "archive-reading-1",
+          "archive-reading-2",
+          "archive-reading-3",
+          "archive-reading-4",
+          "cycle-b",
+          "cycle-ub",
+          "ground-b",
+          "ground-bub",
+          "air-b",
+          "air-bub",
+          "period-b",
+          "period-bub"
+        ]
+      },
+      "usageCounters": [
+        {
+          "name": "Запуски",
+          "unit": "зап.",
+          "factor": 1,
+          "columnKey": "starts",
+          "source": "position:vka-right:starts",
+          "workMode": "total"
+        },
+        {
+          "name": "Включения ОР",
+          "unit": "шт.",
+          "workMode": "total",
+          "source": "position:vka-right:archive-reading-1",
+          "factor": 1,
+          "columnKey": "archive-reading-1"
+        },
+        {
+          "name": "Максимал ОР",
+          "unit": "с",
+          "workMode": "total",
+          "source": "position:vka-right:archive-reading-2",
+          "factor": 1,
+          "columnKey": "archive-reading-2"
+        },
+        {
+          "name": "Максимал Б + ОР",
+          "unit": "с",
+          "workMode": "total",
+          "source": "position:vka-right:archive-reading-3",
+          "factor": 1,
+          "columnKey": "archive-reading-3"
+        },
+        {
+          "name": "Максимал Б + УБ",
+          "unit": "с",
+          "workMode": "total",
+          "source": "position:vka-right:archive-reading-4",
+          "factor": 1,
+          "columnKey": "archive-reading-4"
+        },
+        {
+          "name": "Суммарная наработка Б",
+          "unit": "мин",
+          "workMode": "total",
+          "source": "position:vka-right:period-b",
+          "factor": 1,
+          "columnKey": "archive-reading-5"
+        },
+        {
+          "name": "Суммарная наработка Б + УБ",
+          "unit": "мин",
+          "workMode": "total",
+          "source": "position:vka-right:period-bub",
+          "factor": 1,
+          "columnKey": "archive-reading-6"
+        },
+        {
+          "name": "Циклы Б",
+          "unit": "шт.",
+          "workMode": "entry",
+          "source": "position:vka-right:cycle-b",
+          "factor": 1,
+          "columnKey": "cycle-b"
+        },
+        {
+          "name": "Циклы УБ",
+          "unit": "шт.",
+          "workMode": "entry",
+          "source": "position:vka-right:cycle-ub",
+          "factor": 1,
+          "columnKey": "cycle-ub"
+        },
+        {
+          "name": "Земля Б",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:vka-right:ground-b",
+          "factor": 1,
+          "columnKey": "ground-b"
+        },
+        {
+          "name": "Земля Б + УБ",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:vka-right:ground-bub",
+          "factor": 1,
+          "columnKey": "ground-bub"
+        },
+        {
+          "name": "Полёт Б",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:vka-right:air-b",
+          "factor": 1,
+          "columnKey": "air-b"
+        },
+        {
+          "name": "Полёт Б + УБ",
+          "unit": "мин",
+          "workMode": "entry",
+          "source": "position:vka-right:air-bub",
+          "factor": 1,
+          "columnKey": "air-bub"
+        }
+      ],
+      "journal": [
+        {
+          "field": "starts",
+          "label": "Запуски"
+        },
+        {
+          "field": "cycle-b",
+          "label": "Циклы Б",
+          "perEntry": true
+        },
+        {
+          "field": "cycle-ub",
+          "label": "Циклы УБ",
+          "perEntry": true
+        },
+        {
+          "field": "archive-reading-1",
+          "label": "Включения ОР"
+        },
+        {
+          "field": "ground-b",
+          "label": "Земля Б"
+        },
+        {
+          "field": "ground-bub",
+          "label": "Земля Б + УБ"
+        },
+        {
+          "field": "air-b",
+          "label": "Полёт Б"
+        },
+        {
+          "field": "air-bub",
+          "label": "Полёт Б + УБ"
+        },
+        {
+          "field": "archive-reading-2",
+          "label": "Максимал ОР"
+        },
+        {
+          "field": "archive-reading-3",
+          "label": "Максимал Б + ОР"
+        },
+        {
+          "field": "archive-reading-4",
+          "label": "Максимал Б + УБ"
+        },
+        {
+          "field": "period-b",
+          "label": "Суммарная наработка Б"
+        },
+        {
+          "field": "period-bub",
+          "label": "Суммарная наработка Б + УБ"
+        }
+      ]
+    },
+    {
+      "id": "gtde-left",
+      "label": "Левый ГТДЭ",
+      "kind": "unit",
+      "model": "",
+      "usageCounters": [
+        {
+          "name": "Запуски",
+          "columnKey": "9760908c-6506-418b-8e98-22b46f360050",
+          "source": "position:gtde-left:starts",
+          "unit": "зап.",
+          "factor": 1,
+          "workMode": "total"
+        }
+      ],
+      "engineLink": {
+        "source": "engine-left",
+        "counters": [
+          "starts"
+        ]
+      }
+    },
+    {
+      "id": "gtde-right",
+      "label": "Правый ГТДЭ",
+      "kind": "unit",
+      "model": "",
+      "usageCounters": [
+        {
+          "name": "Запуски",
+          "columnKey": "c6533dd5-0ca2-4333-98ca-b76033604598",
+          "source": "position:gtde-right:starts",
+          "unit": "зап.",
+          "factor": 1,
+          "workMode": "total"
+        }
+      ],
+      "engineLink": {
+        "source": "engine-right",
+        "counters": [
+          "starts"
+        ]
+      }
+    }
+  ],
+  "repeatGroups": [
+    {
+      "id": "flights",
+      "label": "Вылет",
+      "scope": "board",
+      "noteLabel": "Вид полёта"
+    },
+    {
+      "id": "runs",
+      "label": "Запуск",
+      "scope": "engine",
+      "countField": "starts"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "flight",
+      "label": "Налёт",
+      "type": "duration",
+      "format": "HH:MM",
+      "scope": "board",
+      "role": "flight",
+      "group": "flights"
+    },
+    {
+      "id": "touch",
+      "label": "Касания",
+      "type": "count",
+      "format": "count",
+      "scope": "board",
+      "role": "touch"
+    },
+    {
+      "id": "hooks",
+      "label": "Зацепы",
+      "type": "count",
+      "format": "count",
+      "scope": "board",
+      "role": "arresterHooks"
+    },
+    {
+      "id": "runway",
+      "label": "Посадки на ВПП",
+      "type": "count",
+      "format": "count",
+      "scope": "board",
+      "role": "runway"
+    },
+    {
+      "id": "starts",
+      "scope": "engine",
+      "type": "count",
+      "label": "Запуски"
+    },
+    {
+      "id": "archive-reading-1",
+      "scope": "engine",
+      "label": "Включения ОР за запись",
+      "type": "count"
+    },
+    {
+      "id": "archive-reading-2",
+      "scope": "engine",
+      "label": "Максимал ОР за запись",
+      "type": "duration",
+      "format": "HH:MM:SS"
+    },
+    {
+      "id": "archive-reading-3",
+      "scope": "engine",
+      "label": "Максимал Б + ОР за запись",
+      "type": "duration",
+      "format": "HH:MM:SS"
+    },
+    {
+      "id": "archive-reading-4",
+      "scope": "engine",
+      "label": "Максимал Б + УБ за запись",
+      "type": "duration",
+      "format": "HH:MM:SS"
+    },
+    {
+      "id": "archive-reading-5",
+      "scope": "engine",
+      "label": "Суммарная наработка Б за запись",
+      "type": "duration",
+      "format": "HH:MM"
+    },
+    {
+      "id": "archive-reading-6",
+      "scope": "engine",
+      "label": "Суммарная наработка Б + УБ за запись",
+      "type": "duration",
+      "format": "HH:MM"
+    },
+    {
+      "id": "cycle-b",
+      "label": "Циклы Б",
+      "scope": "engine",
+      "type": "count"
+    },
+    {
+      "id": "cycle-ub",
+      "label": "Циклы УБ",
+      "scope": "engine",
+      "type": "count",
+      "group": "runs",
+      "entryMode": "flag"
+    },
+    {
+      "id": "ground-b",
+      "label": "Земля Б (00:00, если не было)",
+      "scope": "engine",
+      "type": "duration",
+      "format": "HH:MM",
+      "group": "runs"
+    },
+    {
+      "id": "ground-bub",
+      "label": "Земля Б + УБ (00:00, если не было)",
+      "scope": "engine",
+      "type": "duration",
+      "format": "HH:MM",
+      "group": "runs"
+    },
+    {
+      "id": "air-b",
+      "label": "Полёт Б (00:00, если не было)",
+      "scope": "engine",
+      "type": "duration",
+      "format": "HH:MM"
+    },
+    {
+      "id": "air-bub",
+      "label": "Полёт Б + УБ (00:00, если не было)",
+      "scope": "engine",
+      "type": "duration",
+      "format": "HH:MM"
+    }
+  ],
+  "engineCounters": [
+    {
+      "id": "starts",
+      "type": "count",
+      "role": "starts",
+      "label": "Запуски"
+    },
+    {
+      "id": "archive-reading-1",
+      "label": "Включения ОР",
+      "type": "count"
+    },
+    {
+      "id": "archive-reading-2",
+      "label": "Максимал ОР",
+      "type": "duration",
+      "format": "HH:MM:SS"
+    },
+    {
+      "id": "archive-reading-3",
+      "label": "Максимал Б + ОР",
+      "type": "duration",
+      "format": "HH:MM:SS"
+    },
+    {
+      "id": "archive-reading-4",
+      "label": "Максимал Б + УБ",
+      "type": "duration",
+      "format": "HH:MM:SS"
+    },
+    {
+      "id": "cycle-b",
+      "label": "Циклы Б",
+      "type": "count"
+    },
+    {
+      "id": "cycle-ub",
+      "label": "Циклы УБ",
+      "type": "count"
+    },
+    {
+      "id": "ground-b",
+      "label": "Земля Б",
+      "type": "duration",
+      "format": "HH:MM"
+    },
+    {
+      "id": "ground-bub",
+      "label": "Земля Б + УБ",
+      "type": "duration",
+      "format": "HH:MM"
+    },
+    {
+      "id": "air-b",
+      "label": "Полёт Б",
+      "type": "duration",
+      "format": "HH:MM"
+    },
+    {
+      "id": "air-bub",
+      "label": "Полёт Б + УБ",
+      "type": "duration",
+      "format": "HH:MM"
+    },
+    {
+      "id": "period-b",
+      "label": "Суммарная наработка Б",
+      "type": "duration",
+      "format": "HH:MM"
+    },
+    {
+      "id": "period-bub",
+      "label": "Суммарная наработка Б + УБ",
+      "type": "duration",
+      "format": "HH:MM"
+    }
+  ],
+  "rules": [
+    {
+      "operation": "copy",
+      "source": "starts",
+      "target": "starts"
+    },
+    {
+      "operation": "copy",
+      "source": "archive-reading-1",
+      "target": "archive-reading-1"
+    },
+    {
+      "operation": "copy",
+      "source": "archive-reading-2",
+      "target": "archive-reading-2"
+    },
+    {
+      "operation": "copy",
+      "source": "archive-reading-3",
+      "target": "archive-reading-3"
+    },
+    {
+      "operation": "copy",
+      "source": "archive-reading-4",
+      "target": "archive-reading-4"
+    },
+    {
+      "operation": "copy",
+      "source": "cycle-b",
+      "target": "cycle-b"
+    },
+    {
+      "operation": "copy",
+      "source": "cycle-ub",
+      "target": "cycle-ub"
+    },
+    {
+      "operation": "copy",
+      "source": "ground-b",
+      "target": "ground-b"
+    },
+    {
+      "operation": "copy",
+      "source": "ground-bub",
+      "target": "ground-bub"
+    },
+    {
+      "operation": "copy",
+      "source": "air-b",
+      "target": "air-b"
+    },
+    {
+      "operation": "copy",
+      "source": "air-bub",
+      "target": "air-bub"
+    },
+    {
+      "operation": "flight_plus_ground",
+      "target": "period-b",
+      "flight": "air-b",
+      "ground": "ground-b",
+      "stepMinutes": 5,
+      "direction": "nearest",
+      "percent": 20
+    },
+    {
+      "operation": "flight_plus_ground",
+      "target": "period-bub",
+      "flight": "air-bub",
+      "ground": "ground-bub",
+      "stepMinutes": 5,
+      "direction": "nearest",
+      "percent": 20
+    }
+  ],
+  "checks": [],
+  "operationTypes": [
+    {
+      "id": "0",
+      "label": "Лётная смена"
+    },
+    {
+      "id": "1",
+      "label": "Контрольное опробование"
+    },
+    {
+      "id": "2",
+      "label": "Руление"
+    }
+  ],
+  "defaultOperationType": "0",
+  "boardUsage": [
+    {
+      "key": "flight",
+      "label": "Налёт",
+      "enabled": true,
+      "factor": 1
+    },
+    {
+      "key": "runway",
+      "label": "Посадки на ВПП",
+      "enabled": true,
+      "factor": 1
+    },
+    {
+      "key": "carrier",
+      "label": "Корабельные посадки",
+      "enabled": false,
+      "factor": 2
+    },
+    {
+      "key": "touch",
+      "label": "Касания",
+      "enabled": true,
+      "factor": 0.6
+    },
+    {
+      "key": "circuit",
+      "label": "Конвейер",
+      "enabled": false,
+      "factor": 0.6
+    },
+    {
+      "key": "arresterHooks",
+      "label": "Зацепы",
+      "enabled": true,
+      "factor": 1
+    }
+  ],
+  "layout": {
+    "tabs": {
+      "aggregates": [
+        {
+          "keys": [
+            "flightSne",
+            "flightPpr"
+          ],
+          "wide": true,
+          "span": 5.9
+        },
+        {
+          "keys": [
+            "landingSne",
+            "landingPpr"
+          ],
+          "wide": true,
+          "span": 5.9
+        },
+        {
+          "keys": [
+            "slot:airframe"
+          ],
+          "wide": false
+        },
+        {
+          "keys": [
+            "widget:shift"
+          ],
+          "wide": false
+        },
+        {
+          "keys": [
+            "slot:engine-left"
+          ],
+          "wide": false
+        },
+        {
+          "keys": [
+            "slot:engine-right"
+          ],
+          "wide": false
+        },
+        {
+          "keys": [
+            "slot:vka-left"
+          ],
+          "wide": false
+        },
+        {
+          "keys": [
+            "slot:vka-right"
+          ],
+          "wide": false
+        },
+        {
+          "keys": [
+            "slot:gtde-left"
+          ],
+          "wide": false
+        },
+        {
+          "keys": [
+            "slot:gtde-right"
+          ],
+          "wide": false
+        },
+        {
+          "keys": [
+            "widget:resources"
+          ],
+          "wide": false
+        },
+        {
+          "keys": [
+            "widget:add-block:aggregates"
+          ],
+          "wide": false
+        }
+      ]
+    },
+    "navigation": [
+      {
+        "index": 11,
+        "tile": {
+          "keys": [
+            "widget:board-aggregates"
+          ],
+          "wide": false
+        }
+      },
+      {
+        "index": 12,
+        "tile": {
+          "keys": [
+            "widget:board-resources"
+          ],
+          "wide": false
+        }
+      },
+      {
+        "index": 13,
+        "tile": {
+          "keys": [
+            "widget:board-tabs"
+          ],
+          "wide": false
+        }
+      }
+    ]
+  },
+  "previousTemplate": {
+    "schemaVersion": 1,
+    "id": "su-33-forms",
+    "name": "Су-33 · формуляры",
+    "workTitle": "Запись работы",
+    "positions": [
+      {
+        "id": "airframe",
+        "label": "Формуляр самолёта",
+        "kind": "airframe",
+        "model": "",
+        "formLayout": {
+          "tiles": [
+            {
+              "keys": [
+                "form-field:name"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:serialNumber"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:aggregate-counter-index:0"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:aggregate-counter-index:1"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:aggregate-counter-index:2"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:aggregate-counter-index:3"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-metric:2"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-action:save"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:landing-count-touch"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-action:correct-usage"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:assemblies-title"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:assembly-slot:engine-left"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:assembly-slot:engine-right"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:assembly-slot:vka-left"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-action:add-resource"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:assembly-slot:vka-right"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:repairs"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:assembly-slot:gtde-left"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:assembly-slot:gtde-right"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:installation-history-title"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:installation-history-empty"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:events-title"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "event-field:type"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "event-field:date"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "event-field:note"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-action:save-event"
+              ],
+              "wide": false
+            }
+          ],
+          "hidden": [
+            "form-field:caption",
+            "form:resources-title",
+            "form:resources-empty",
+            "form-field:rfNumber",
+            "form:airframe-usage-title"
+          ]
+        },
+        "usageCounters": [
+          {
+            "columnKey": "board-totalFlightMinutes",
+            "boardCounter": "totalFlightMinutes",
+            "name": "Налёт СНЭ",
+            "unit": "мин",
+            "source": "board:flight",
+            "factor": 1,
+            "workMode": "entry"
+          },
+          {
+            "columnKey": "board-actualLandings",
+            "boardCounter": "actualLandings",
+            "name": "Посадки СНЭ",
+            "unit": "пос.",
+            "source": "work:landings",
+            "factor": 1,
+            "workMode": "entry"
+          },
+          {
+            "columnKey": "board-pprFlightMinutes",
+            "boardCounter": "pprFlightMinutes",
+            "name": "Налёт ППР",
+            "unit": "мин",
+            "source": "board:flight",
+            "factor": 1,
+            "workMode": "entry"
+          },
+          {
+            "columnKey": "board-pprLandings",
+            "boardCounter": "pprLandings",
+            "name": "Посадки ППР",
+            "unit": "пос.",
+            "source": "work:landings",
+            "factor": 1,
+            "workMode": "entry"
+          }
+        ]
+      },
+      {
+        "id": "engine-left",
+        "label": "Левый двигатель",
+        "kind": "engine",
+        "model": "",
+        "formLayout": {
+          "tiles": [
+            {
+              "keys": [
+                "form-field:name"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:caption"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:aggregate-settings"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:resources-title"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:resources-empty"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-action:add-resource"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:serialNumber"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:manufactureDate"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:drawingNumber"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:installed"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:repairs"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:sneMinutes"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:pprMinutes"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:starts"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-metric:0"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-metric:1"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-metric:2"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-metric:3"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-metric:4"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-metric:5"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-metric:6"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-metric:7"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-metric:8"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:groundPercent"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:groundStep"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-field:groundDirection"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-action:save"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-action:correct-usage"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:events-title"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form:events-empty"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "event-field:type"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "event-field:date"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "event-field:note"
+              ],
+              "wide": false
+            },
+            {
+              "keys": [
+                "form-action:save-event"
+              ],
+              "wide": false
+            }
+          ],
+          "hidden": [
+            "form-field:sneLandings",
+            "form-field:pprLandings"
+          ]
+        },
+        "usageCounters": [
+          {
+            "name": "Включения ОР",
+            "unit": "шт.",
+            "source": "raw:engine-left:archive-reading-1",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Максимал ОР",
+            "unit": "с",
+            "source": "raw:engine-left:archive-reading-2",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Максимал Б + ОР",
+            "unit": "с",
+            "source": "raw:engine-left:archive-reading-3",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Максимал Б + УБ",
+            "unit": "с",
+            "source": "raw:engine-left:archive-reading-4",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Суммарная наработка Б",
+            "unit": "мин",
+            "source": "position:engine-left:period-b",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Суммарная наработка Б + УБ",
+            "unit": "мин",
+            "source": "position:engine-left:period-bub",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Циклы Б",
+            "unit": "шт.",
+            "workMode": "entry",
+            "source": "position:engine-left:cycle-b",
+            "factor": 1
+          },
+          {
+            "name": "Циклы УБ",
+            "unit": "шт.",
+            "workMode": "entry",
+            "source": "position:engine-left:cycle-ub",
+            "factor": 1
+          },
+          {
+            "name": "Земля Б",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:engine-left:ground-b",
+            "factor": 1
+          },
+          {
+            "name": "Земля Б + УБ",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:engine-left:ground-bub",
+            "factor": 1
+          },
+          {
+            "name": "Полёт Б",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:engine-left:air-b",
+            "factor": 1
+          },
+          {
+            "name": "Полёт Б + УБ",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:engine-left:air-bub",
+            "factor": 1
+          },
+          {
+            "name": "Циклы ОР за запись",
+            "unit": "шт.",
+            "source": "position:engine-left:archive-reading-1",
+            "factor": 1,
+            "workMode": "entry"
+          },
+          {
+            "name": "Для сверки с формуляром · Суммарная наработка Б",
+            "unit": "мин",
+            "workMode": "entry",
+            "factor": 1,
+            "source": "raw:engine-left:archive-reading-5"
+          },
+          {
+            "name": "Для сверки с формуляром · Суммарная наработка Б + УБ",
+            "unit": "мин",
+            "workMode": "entry",
+            "factor": 1,
+            "source": "raw:engine-left:archive-reading-6"
+          }
+        ]
+      },
+      {
+        "id": "engine-right",
+        "label": "Правый двигатель",
+        "kind": "engine",
+        "model": "",
+        "usageCounters": [
+          {
+            "name": "Включения ОР",
+            "unit": "шт.",
+            "source": "raw:engine-right:archive-reading-1",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Максимал ОР",
+            "unit": "с",
+            "source": "raw:engine-right:archive-reading-2",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Максимал Б + ОР",
+            "unit": "с",
+            "source": "raw:engine-right:archive-reading-3",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Максимал Б + УБ",
+            "unit": "с",
+            "source": "raw:engine-right:archive-reading-4",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Суммарная наработка Б",
+            "unit": "мин",
+            "source": "position:engine-right:period-b",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Суммарная наработка Б + УБ",
+            "unit": "мин",
+            "source": "position:engine-right:period-bub",
+            "factor": 1,
+            "workMode": "total"
+          },
+          {
+            "name": "Циклы Б",
+            "unit": "шт.",
+            "workMode": "entry",
+            "source": "position:engine-right:cycle-b",
+            "factor": 1
+          },
+          {
+            "name": "Циклы УБ",
+            "unit": "шт.",
+            "workMode": "entry",
+            "source": "position:engine-right:cycle-ub",
+            "factor": 1
+          },
+          {
+            "name": "Земля Б",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:engine-right:ground-b",
+            "factor": 1
+          },
+          {
+            "name": "Земля Б + УБ",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:engine-right:ground-bub",
+            "factor": 1
+          },
+          {
+            "name": "Полёт Б",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:engine-right:air-b",
+            "factor": 1
+          },
+          {
+            "name": "Полёт Б + УБ",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:engine-right:air-bub",
+            "factor": 1
+          },
+          {
+            "name": "Циклы ОР за запись",
+            "unit": "шт.",
+            "source": "position:engine-right:archive-reading-1",
+            "factor": 1,
+            "workMode": "entry"
+          },
+          {
+            "name": "Для сверки с формуляром · Суммарная наработка Б",
+            "unit": "мин",
+            "workMode": "entry",
+            "factor": 1,
+            "source": "raw:engine-right:archive-reading-5"
+          },
+          {
+            "name": "Для сверки с формуляром · Суммарная наработка Б + УБ",
+            "unit": "мин",
+            "workMode": "entry",
+            "factor": 1,
+            "source": "raw:engine-right:archive-reading-6"
+          }
+        ]
+      },
+      {
+        "id": "vka-left",
+        "label": "Левая ВКА",
+        "kind": "unit",
+        "model": "",
+        "engineLink": {
+          "source": "engine-left",
+          "counters": [
+            "starts",
+            "archive-reading-1",
+            "archive-reading-2",
+            "archive-reading-3",
+            "archive-reading-4",
+            "cycle-b",
+            "cycle-ub",
+            "ground-b",
+            "ground-bub",
+            "air-b",
+            "air-bub",
+            "period-b",
+            "period-bub"
+          ]
+        },
+        "usageCounters": [
+          {
+            "name": "Запуски",
+            "unit": "зап.",
+            "factor": 1,
+            "columnKey": "starts",
+            "source": "position:vka-left:starts",
+            "workMode": "total"
+          },
+          {
+            "name": "Включения ОР",
+            "unit": "шт.",
+            "workMode": "total",
+            "source": "position:vka-left:archive-reading-1",
+            "factor": 1,
+            "columnKey": "archive-reading-1"
+          },
+          {
+            "name": "Максимал ОР",
+            "unit": "с",
+            "workMode": "total",
+            "source": "position:vka-left:archive-reading-2",
+            "factor": 1,
+            "columnKey": "archive-reading-2"
+          },
+          {
+            "name": "Максимал Б + ОР",
+            "unit": "с",
+            "workMode": "total",
+            "source": "position:vka-left:archive-reading-3",
+            "factor": 1,
+            "columnKey": "archive-reading-3"
+          },
+          {
+            "name": "Максимал Б + УБ",
+            "unit": "с",
+            "workMode": "total",
+            "source": "position:vka-left:archive-reading-4",
+            "factor": 1,
+            "columnKey": "archive-reading-4"
+          },
+          {
+            "name": "Суммарная наработка Б",
+            "unit": "мин",
+            "workMode": "total",
+            "source": "position:vka-left:period-b",
+            "factor": 1,
+            "columnKey": "archive-reading-5"
+          },
+          {
+            "name": "Суммарная наработка Б + УБ",
+            "unit": "мин",
+            "workMode": "total",
+            "source": "position:vka-left:period-bub",
+            "factor": 1,
+            "columnKey": "archive-reading-6"
+          },
+          {
+            "name": "Циклы Б",
+            "unit": "шт.",
+            "workMode": "entry",
+            "source": "position:vka-left:cycle-b",
+            "factor": 1,
+            "columnKey": "cycle-b"
+          },
+          {
+            "name": "Циклы УБ",
+            "unit": "шт.",
+            "workMode": "entry",
+            "source": "position:vka-left:cycle-ub",
+            "factor": 1,
+            "columnKey": "cycle-ub"
+          },
+          {
+            "name": "Земля Б",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:vka-left:ground-b",
+            "factor": 1,
+            "columnKey": "ground-b"
+          },
+          {
+            "name": "Земля Б + УБ",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:vka-left:ground-bub",
+            "factor": 1,
+            "columnKey": "ground-bub"
+          },
+          {
+            "name": "Полёт Б",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:vka-left:air-b",
+            "factor": 1,
+            "columnKey": "air-b"
+          },
+          {
+            "name": "Полёт Б + УБ",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:vka-left:air-bub",
+            "factor": 1,
+            "columnKey": "air-bub"
+          }
+        ]
+      },
+      {
+        "id": "vka-right",
+        "label": "Правая ВКА",
+        "kind": "unit",
+        "model": "",
+        "engineLink": {
+          "source": "engine-right",
+          "counters": [
+            "starts",
+            "archive-reading-1",
+            "archive-reading-2",
+            "archive-reading-3",
+            "archive-reading-4",
+            "cycle-b",
+            "cycle-ub",
+            "ground-b",
+            "ground-bub",
+            "air-b",
+            "air-bub",
+            "period-b",
+            "period-bub"
+          ]
+        },
+        "usageCounters": [
+          {
+            "name": "Запуски",
+            "unit": "зап.",
+            "factor": 1,
+            "columnKey": "starts",
+            "source": "position:vka-right:starts",
+            "workMode": "total"
+          },
+          {
+            "name": "Включения ОР",
+            "unit": "шт.",
+            "workMode": "total",
+            "source": "position:vka-right:archive-reading-1",
+            "factor": 1,
+            "columnKey": "archive-reading-1"
+          },
+          {
+            "name": "Максимал ОР",
+            "unit": "с",
+            "workMode": "total",
+            "source": "position:vka-right:archive-reading-2",
+            "factor": 1,
+            "columnKey": "archive-reading-2"
+          },
+          {
+            "name": "Максимал Б + ОР",
+            "unit": "с",
+            "workMode": "total",
+            "source": "position:vka-right:archive-reading-3",
+            "factor": 1,
+            "columnKey": "archive-reading-3"
+          },
+          {
+            "name": "Максимал Б + УБ",
+            "unit": "с",
+            "workMode": "total",
+            "source": "position:vka-right:archive-reading-4",
+            "factor": 1,
+            "columnKey": "archive-reading-4"
+          },
+          {
+            "name": "Суммарная наработка Б",
+            "unit": "мин",
+            "workMode": "total",
+            "source": "position:vka-right:period-b",
+            "factor": 1,
+            "columnKey": "archive-reading-5"
+          },
+          {
+            "name": "Суммарная наработка Б + УБ",
+            "unit": "мин",
+            "workMode": "total",
+            "source": "position:vka-right:period-bub",
+            "factor": 1,
+            "columnKey": "archive-reading-6"
+          },
+          {
+            "name": "Циклы Б",
+            "unit": "шт.",
+            "workMode": "entry",
+            "source": "position:vka-right:cycle-b",
+            "factor": 1,
+            "columnKey": "cycle-b"
+          },
+          {
+            "name": "Циклы УБ",
+            "unit": "шт.",
+            "workMode": "entry",
+            "source": "position:vka-right:cycle-ub",
+            "factor": 1,
+            "columnKey": "cycle-ub"
+          },
+          {
+            "name": "Земля Б",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:vka-right:ground-b",
+            "factor": 1,
+            "columnKey": "ground-b"
+          },
+          {
+            "name": "Земля Б + УБ",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:vka-right:ground-bub",
+            "factor": 1,
+            "columnKey": "ground-bub"
+          },
+          {
+            "name": "Полёт Б",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:vka-right:air-b",
+            "factor": 1,
+            "columnKey": "air-b"
+          },
+          {
+            "name": "Полёт Б + УБ",
+            "unit": "мин",
+            "workMode": "entry",
+            "source": "position:vka-right:air-bub",
+            "factor": 1,
+            "columnKey": "air-bub"
+          }
+        ]
+      },
+      {
+        "id": "gtde-left",
+        "label": "Левый ГТДЭ",
+        "kind": "unit",
+        "model": "",
+        "usageCounters": [
+          {
+            "name": "Запуски",
+            "columnKey": "9760908c-6506-418b-8e98-22b46f360050",
+            "source": "position:gtde-left:starts",
+            "unit": "зап.",
+            "factor": 1,
+            "workMode": "total"
+          }
+        ],
+        "engineLink": {
+          "source": "engine-left",
+          "counters": [
+            "starts"
+          ]
+        }
+      },
+      {
+        "id": "gtde-right",
+        "label": "Правый ГТДЭ",
+        "kind": "unit",
+        "model": "",
+        "usageCounters": [
+          {
+            "name": "Запуски",
+            "columnKey": "c6533dd5-0ca2-4333-98ca-b76033604598",
+            "source": "position:gtde-right:starts",
+            "unit": "зап.",
+            "factor": 1,
+            "workMode": "total"
+          }
+        ],
+        "engineLink": {
+          "source": "engine-right",
+          "counters": [
+            "starts"
+          ]
+        }
+      }
+    ],
+    "repeatGroups": [
+      {
+        "id": "flights",
+        "label": "Вылет",
+        "scope": "board",
+        "noteLabel": "Вид полёта"
+      },
+      {
+        "id": "runs",
+        "label": "Запуск",
+        "scope": "engine",
+        "countField": "starts"
+      }
+    ],
+    "inputs": [
+      {
+        "id": "flight",
+        "label": "Налёт",
+        "type": "duration",
+        "format": "HH:MM",
+        "scope": "board",
+        "role": "flight",
+        "group": "flights"
+      },
+      {
+        "id": "touch",
+        "label": "Касания",
+        "type": "count",
+        "format": "count",
+        "scope": "board",
+        "role": "touch"
+      },
+      {
+        "id": "hooks",
+        "label": "Зацепы",
+        "type": "count",
+        "format": "count",
+        "scope": "board",
+        "role": "arresterHooks"
+      },
+      {
+        "id": "runway",
+        "label": "Посадки на ВПП",
+        "type": "count",
+        "format": "count",
+        "scope": "board",
+        "role": "runway"
+      },
+      {
+        "id": "starts",
+        "scope": "engine",
+        "type": "count",
+        "label": "Запуски"
+      },
+      {
+        "id": "archive-reading-1",
+        "scope": "engine",
+        "label": "Включения ОР за запись",
+        "type": "count"
+      },
+      {
+        "id": "archive-reading-2",
+        "scope": "engine",
+        "label": "Максимал ОР за запись",
+        "type": "duration",
+        "format": "HH:MM:SS"
+      },
+      {
+        "id": "archive-reading-3",
+        "scope": "engine",
+        "label": "Максимал Б + ОР за запись",
+        "type": "duration",
+        "format": "HH:MM:SS"
+      },
+      {
+        "id": "archive-reading-4",
+        "scope": "engine",
+        "label": "Максимал Б + УБ за запись",
+        "type": "duration",
+        "format": "HH:MM:SS"
+      },
+      {
+        "id": "archive-reading-5",
+        "scope": "engine",
+        "label": "Суммарная наработка Б за запись",
+        "type": "duration",
+        "format": "HH:MM"
+      },
+      {
+        "id": "archive-reading-6",
+        "scope": "engine",
+        "label": "Суммарная наработка Б + УБ за запись",
+        "type": "duration",
+        "format": "HH:MM"
+      },
+      {
+        "id": "cycle-b",
+        "label": "Циклы Б",
+        "scope": "engine",
+        "type": "count"
+      },
+      {
+        "id": "cycle-ub",
+        "label": "Циклы УБ",
+        "scope": "engine",
+        "type": "count",
+        "group": "runs",
+        "entryMode": "flag"
+      },
+      {
+        "id": "ground-b",
+        "label": "Земля Б (00:00, если не было)",
+        "scope": "engine",
+        "type": "duration",
+        "format": "HH:MM",
+        "group": "runs"
+      },
+      {
+        "id": "ground-bub",
+        "label": "Земля Б + УБ (00:00, если не было)",
+        "scope": "engine",
+        "type": "duration",
+        "format": "HH:MM",
+        "group": "runs"
+      },
+      {
+        "id": "air-b",
+        "label": "Полёт Б (00:00, если не было)",
+        "scope": "engine",
+        "type": "duration",
+        "format": "HH:MM"
+      },
+      {
+        "id": "air-bub",
+        "label": "Полёт Б + УБ (00:00, если не было)",
+        "scope": "engine",
+        "type": "duration",
+        "format": "HH:MM"
+      }
+    ],
+    "engineCounters": [
+      {
+        "id": "starts",
+        "type": "count",
+        "role": "starts",
+        "label": "Запуски"
+      },
+      {
+        "id": "archive-reading-1",
+        "label": "Включения ОР",
+        "type": "count"
+      },
+      {
+        "id": "archive-reading-2",
+        "label": "Максимал ОР",
+        "type": "duration",
+        "format": "HH:MM:SS"
+      },
+      {
+        "id": "archive-reading-3",
+        "label": "Максимал Б + ОР",
+        "type": "duration",
+        "format": "HH:MM:SS"
+      },
+      {
+        "id": "archive-reading-4",
+        "label": "Максимал Б + УБ",
+        "type": "duration",
+        "format": "HH:MM:SS"
+      },
+      {
+        "id": "cycle-b",
+        "label": "Циклы Б",
+        "type": "count"
+      },
+      {
+        "id": "cycle-ub",
+        "label": "Циклы УБ",
+        "type": "count"
+      },
+      {
+        "id": "ground-b",
+        "label": "Земля Б",
+        "type": "duration",
+        "format": "HH:MM"
+      },
+      {
+        "id": "ground-bub",
+        "label": "Земля Б + УБ",
+        "type": "duration",
+        "format": "HH:MM"
+      },
+      {
+        "id": "air-b",
+        "label": "Полёт Б",
+        "type": "duration",
+        "format": "HH:MM"
+      },
+      {
+        "id": "air-bub",
+        "label": "Полёт Б + УБ",
+        "type": "duration",
+        "format": "HH:MM"
+      },
+      {
+        "id": "period-b",
+        "label": "Суммарная наработка Б",
+        "type": "duration",
+        "format": "HH:MM"
+      },
+      {
+        "id": "period-bub",
+        "label": "Суммарная наработка Б + УБ",
+        "type": "duration",
+        "format": "HH:MM"
+      }
+    ],
+    "rules": [
+      {
+        "operation": "copy",
+        "source": "starts",
+        "target": "starts"
+      },
+      {
+        "operation": "copy",
+        "source": "archive-reading-1",
+        "target": "archive-reading-1"
+      },
+      {
+        "operation": "copy",
+        "source": "archive-reading-2",
+        "target": "archive-reading-2"
+      },
+      {
+        "operation": "copy",
+        "source": "archive-reading-3",
+        "target": "archive-reading-3"
+      },
+      {
+        "operation": "copy",
+        "source": "archive-reading-4",
+        "target": "archive-reading-4"
+      },
+      {
+        "operation": "copy",
+        "source": "cycle-b",
+        "target": "cycle-b"
+      },
+      {
+        "operation": "copy",
+        "source": "cycle-ub",
+        "target": "cycle-ub"
+      },
+      {
+        "operation": "copy",
+        "source": "ground-b",
+        "target": "ground-b"
+      },
+      {
+        "operation": "copy",
+        "source": "ground-bub",
+        "target": "ground-bub"
+      },
+      {
+        "operation": "copy",
+        "source": "air-b",
+        "target": "air-b"
+      },
+      {
+        "operation": "copy",
+        "source": "air-bub",
+        "target": "air-bub"
+      },
+      {
+        "operation": "flight_plus_ground",
+        "target": "period-b",
+        "flight": "air-b",
+        "ground": "ground-b",
+        "stepMinutes": 5,
+        "direction": "nearest",
+        "percent": 20
+      },
+      {
+        "operation": "flight_plus_ground",
+        "target": "period-bub",
+        "flight": "air-bub",
+        "ground": "ground-bub",
+        "stepMinutes": 5,
+        "direction": "nearest",
+        "percent": 20
+      }
+    ],
+    "checks": [],
+    "operationTypes": [
+      {
+        "id": "0",
+        "label": "Лётная смена"
+      },
+      {
+        "id": "1",
+        "label": "Контрольное опробование"
+      },
+      {
+        "id": "2",
+        "label": "Руление"
+      }
+    ],
+    "defaultOperationType": "0",
+    "boardUsage": [
+      {
+        "key": "flight",
+        "label": "Налёт",
+        "enabled": true,
+        "factor": 1
+      },
+      {
+        "key": "runway",
+        "label": "Посадки на ВПП",
+        "enabled": true,
+        "factor": 1
+      },
+      {
+        "key": "carrier",
+        "label": "Корабельные посадки",
+        "enabled": false,
+        "factor": 2
+      },
+      {
+        "key": "touch",
+        "label": "Касания",
+        "enabled": true,
+        "factor": 0.6
+      },
+      {
+        "key": "circuit",
+        "label": "Конвейер",
+        "enabled": false,
+        "factor": 0.6
+      },
+      {
+        "key": "arresterHooks",
+        "label": "Зацепы",
+        "enabled": true,
+        "factor": 1
+      }
+    ],
+    "layout": {
+      "tabs": {
+        "aggregates": [
+          {
+            "keys": [
+              "flightSne",
+              "flightPpr"
+            ],
+            "wide": true,
+            "span": 5.9
+          },
+          {
+            "keys": [
+              "landingSne",
+              "landingPpr"
+            ],
+            "wide": true,
+            "span": 5.9
+          },
+          {
+            "keys": [
+              "slot:airframe"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "widget:shift"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "slot:engine-left"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "slot:engine-right"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "slot:vka-left"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "slot:vka-right"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "slot:gtde-left"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "slot:gtde-right"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "widget:resources"
+            ],
+            "wide": false
+          },
+          {
+            "keys": [
+              "widget:add-block:aggregates"
+            ],
+            "wide": false
+          }
+        ]
+      },
+      "navigation": [
+        {
+          "index": 11,
+          "tile": {
+            "keys": [
+              "widget:board-aggregates"
+            ],
+            "wide": false
+          }
+        },
+        {
+          "index": 12,
+          "tile": {
+            "keys": [
+              "widget:board-resources"
+            ],
+            "wide": false
+          }
+        },
+        {
+          "index": 13,
+          "tile": {
+            "keys": [
+              "widget:board-tabs"
+            ],
+            "wide": false
+          }
+        }
+      ]
+    }
+  }
+}

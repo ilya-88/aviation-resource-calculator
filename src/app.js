@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.39";
+  const APP_VERSION = "0.2.38-exp.40";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -697,10 +697,14 @@
       if (entry.workMode === "entry") continue;
       const block = aircraft.blocks.find(({ id }) => id === entry.blockId);
       const totals = (block.usageTotals ??= {});
-      const previous = totals[entry.counterId] || { sne: 0, ppr: null };
-      const next = { sne: previous.sne + entry.amount, ppr: entry.ppr ? (previous.ppr ?? 0) + entry.amount : previous.ppr };
+      const hasOpeningFile = aircraft.inventoryOnly || aircraft.baselineLoaded;
+      const previous = totals[entry.counterId] || {};
+      const start = value => value ?? (hasOpeningFile ? null : 0);
+      const sne = start(previous.sne), ppr = start(previous.ppr);
+      const next = { sne: sne == null ? null : sne + entry.amount,
+        ppr: entry.ppr && ppr != null ? ppr + entry.amount : previous.ppr ?? null };
       totals[entry.counterId] = next;
-      entry.balances = { sne: [previous.sne, next.sne], ...(entry.ppr && { ppr: [previous.ppr ?? 0, next.ppr] }) };
+      entry.balances = { ...(sne != null && { sne: [sne, next.sne] }), ...(entry.ppr && ppr != null && { ppr: [ppr, next.ppr] }) };
     }
   }
 
@@ -1710,6 +1714,59 @@
     return pack;
   }
 
+  function reconcileOpeningBalances(board, file) {
+    const copy = structuredClone(board);
+    const input = aircraftTemplates.validateStartingAircraft({ kind: "aircraft-start", version: 1, template: boardTemplate(board), aircraft: file }).aircraft;
+    const check = ok => { if (!ok) throw new Error("Состав или история отличаются от исходных. Показания сохранены."); };
+    check(input.blocks.length === copy.blocks.length);
+    let changes = 0;
+    for (const row of input.blocks) {
+      const block = copy.blocks.find(b => b.templateSlotId === row.position);
+      check(block && (block.serialNumber || "") === row.serialNumber);
+      const columns = file.blocks.find(b => b.position === row.position).columns;
+      const rules = block.usageCounters || [];
+      check(Array.isArray(columns) && rules.length === columns.length && rules.every((r,i) =>
+        r.name === columns[i].name && r.unit === columns[i].unit));
+      if (block.events.some(e => e.type === "repair")) continue;
+      const trace = copy.shifts.flatMap(s => s.flow || []).filter(e => e.owner === block.id);
+      const postings = copy.shifts.flatMap(s => s.aggregateAccruals || []).filter(e => e.blockId === block.id);
+      function fromZero(steps, current) {
+        let previous = 0;
+        if (!steps.length) return false;
+        for (const [before, after, delta] of steps) {
+          if (before !== previous || after !== previous + delta) return false;
+          previous = after;
+        }
+        return current === previous;
+      }
+      for (const [field, period] of [["starts","sne"], ["pprStarts","ppr"]]) {
+        if (row.readings[field] != null) continue;
+        const native = trace.filter(e => e.output === "balance:" + block.id + ":" + field);
+        if (!fromZero(native.map(e => [e.previous, e.amount, e.inputs[0]?.value]), block[field])) continue;
+        const rule = startCounter(block, native[0].inputs[0].key);
+        const initial = rule && row.totals.find(t => t.counter === rules.indexOf(rule))?.[period];
+        block[field] = initial != null ? block.usageTotals?.[rule.id]?.[period] ?? null : null;
+        for (const shift of copy.shifts) if (shift.flow) shift.flow = shift.flow.filter(e => !native.includes(e));
+        changes++;
+      }
+      for (const [i,rule] of rules.entries()) {
+        const initial = row.totals.find(t => t.counter === i), total = block.usageTotals?.[rule.id];
+        if (!total) continue;
+        for (const period of ["sne","ppr"]) {
+          if (initial?.[period] != null) continue;
+          const rows = postings.filter(e => e.counterId === rule.id && e.balances?.[period]);
+          if (!fromZero(rows.map(e => [...e.balances[period], e.amount]), total[period])) continue;
+          total[period] = null;
+          for (const e of rows) delete e.balances[period];
+          changes++;
+        }
+      }
+    }
+    if (!changes) throw new Error("Стартовые показания уже внесены");
+    copy.baselineAccountingVersion = 2;
+    return { board, copy, reconcile: true };
+  }
+
   function prepareBaseline(file) {
     checkFileKeys(file, ["kind", "version", "templateId", "boardNumber", "serialNumber", "rfNumber", "readings", "landingCounts", "blocks", "resources", "unconfirmedLimits"]);
     if (file.version !== 1 || !Array.isArray(file.blocks)) throw new Error("Проверь формат стартовых показаний");
@@ -1717,6 +1774,7 @@
       (!file.serialNumber || b.serialNumber === file.serialNumber) && (!file.rfNumber || b.rfNumber === file.rfNumber));
     if (boards.length !== 1) throw new Error("Борт с такими номерами не найден однозначно. Проверь файл состава борта.");
     const [board] = boards;
+    if (board.baselineLoaded && !board.baselineAccountingVersion && board.shifts.length) return reconcileOpeningBalances(board, file);
     if (board.baselineLoaded) throw new Error("Стартовые показания уже внесены");
     const hasBoardReadings = BOARD_COUNTERS.some(key => board[key] != null && (board.inventoryOnly || board[key] !== 0));
     if (board.shifts.length || board.resources.length || hasBoardReadings ||
@@ -1747,7 +1805,7 @@
         typeof r.unit !== "string" || !Number.isFinite(r.limit) || r.limit < 0 || r.remaining !== null)) throw new Error("Проверь лимиты без остатка");
       copy.unconfirmedLimits = structuredClone(file.unconfirmedLimits);
     }
-    Object.assign(copy, data.readings, { initialLandingCounts: data.landingCounts, inventoryOnly: false, baselineLoaded: true });
+    Object.assign(copy, data.readings, { initialLandingCounts: data.landingCounts, inventoryOnly: false, baselineLoaded: true, baselineAccountingVersion: 2 });
     copy.resources = startingResources(copy, data.resources, slots);
     return { board, copy };
   }
@@ -1824,6 +1882,8 @@
       const newPos = next.positions.find(p => p.id === pos.id);
       check(newPos?.kind === pos.kind);
       if (newPos.engineLink) pos.engineLink = newPos.engineLink;
+      if (newPos.journal) pos.journal = structuredClone(newPos.journal);
+      else delete pos.journal;
       if (same(old.usageCounters, newPos.usageCounters)) continue;
       const blocks = updated.blocks.filter(b => b.templateSlotId === pos.id);
       check(blocks.length === 1);
@@ -2892,6 +2952,7 @@
       const work = { date, boardInputs, boardUsage, boardIncomplete: boardResult.incomplete, engines, units: linkedWorkEntries(aircraft, template, engines, date, flow),
         customUsage: readCustomWork(aircraft, data),
         boardFields: template.inputs.filter((field) => field.scope === "board") };
+      flow.push(...groupedReadingFlows(aircraft, work, flow));
       const sources = templateWorkSources(work);
       const aggregateUsage = aggregateAccruals(aircraft, date, sources, data, null, [...engines, ...work.units], boardValues, inactive);
       const engineUsage = templateEngineUsage(aircraft, template, work);
@@ -3275,11 +3336,19 @@
       };
       const beforeStarts = block.starts, beforePprStarts = block.pprStarts;
       const afterRepair = countsTowardPpr(block, date);
-      block.starts = (block.starts || 0) + starts;
-      if (afterRepair) block.pprStarts = (block.pprStarts || 0) + starts;
       const startsInput = input("starts", starts, "зап.");
-      recordBalance(block, "starts", "Запуски СНЭ", beforeStarts, "зап.", startsInput);
-      if (afterRepair) recordBalance(block, "pprStarts", "Запуски ППР", beforePprStarts, "зап.", startsInput);
+      const canonical = startsInput && startCounter(block, startsInput.key);
+      const explicit = aircraft.baselineLoaded || aircraft.inventoryOnly;
+      for (const [field, period, label, old] of [["starts", "sne", "Запуски СНЭ", beforeStarts],
+        ["pprStarts", "ppr", "Запуски ППР", beforePprStarts]]) {
+        if (period === "ppr" && !afterRepair || explicit && !startsInput) continue;
+        const value = (canonical && block.usageTotals?.[canonical.id]?.[period]) ?? old;
+        if (value == null && explicit) continue;
+        block[field] = (value ?? 0) + starts;
+        if (!canonical || !aggregateUsage?.some(row => row.blockId === block.id && row.counterId === canonical.id)) {
+          recordBalance(block, field, label, value, "зап.", startsInput);
+        }
+      }
       if (startsOnly) continue;
       const landings = block.kind === "engine" ? (aircraft.workTemplate ? 0 : actualLandings) : null;
       addBlockUsage(block, minutes, landings, afterRepair, input("engineMinutes", minutes, "мин"), !aircraft.workTemplate && landingInput);
@@ -4167,8 +4236,15 @@
     dialog.showModal();
   }
 
+  function startCounter(block, source) {
+    const matches = (block.usageCounters || []).filter(rule => rule.source === source && rule.factor === 1 && rule.unit === "зап." &&
+      rule.workMode !== "entry" && !rule.workTypeId && !rule.additionalInputs?.length);
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   function templateFormLog(aircraft, block, position, fields) {
     const startsOnly = onlyStarts(fields);
+    const columns = position.journal?.length ? position.journal.map(spec => ({ ...fields.find(f => f.id === spec.field), ...spec })) : fields;
     const totals = {};
     const repairs = new Map();
     const kind = position.kind === "unit" ? "units" : "engines";
@@ -4178,18 +4254,29 @@
     const rows = items.map(({ date, shift, entry }) => {
       const current = repairs.get(entry.repairNumber) || {};
       if (entry.repairNumber != null) repairs.set(entry.repairNumber, current);
-      return `<tr><th scope="row">${formatDate(date)}</th>${fields.map((field) => {
+      return `<tr><th scope="row">${formatDate(date)}</th>${columns.map((field, index) => {
+        if (!field.id) return "<td>—</td>";
         const value = entry.counters[field.id];
         if (value == null) return startsOnly ? "<td>—</td><td>—</td><td>—</td>" : "<td>—</td>";
-        totals[field.id] = (totals[field.id] || 0) + value;
-        if (entry.repairNumber != null) current[field.id] = (current[field.id] || 0) + value;
+        if (!columns.slice(0, index).some(other => other.id === field.id)) {
+          totals[field.id] = (totals[field.id] || 0) + value;
+          if (entry.repairNumber != null) current[field.id] = (current[field.id] || 0) + value;
+        }
+        if (field.withPpr && field.role !== "starts") {
+          const copy = aircraft.workTemplate.rules.find(rule => rule.target === field.id && rule.operation === "copy");
+          const sources = ["position:" + position.id + ":" + field.id, ...(copy ? ["raw:" + position.id + ":" + copy.source] : [])];
+          const posted = (shift.aggregateAccruals || []).filter(r => r.blockId === block.id && sources.includes(r.sourceKey) &&
+            r.balances && r.factor === 1 && !r.inputs && r.unit === "шт.");
+          const ppr = posted.length === 1 ? posted[0].balances.ppr?.[1] : null;
+          return `<td>${value} / ${ppr ?? "—"}</td>`;
+        }
         if (field.role === "starts") {
           const source = `position:${position.id}:${field.id}`;
           const matches = (shift.aggregateAccruals || []).filter(row => row.blockId === block.id &&
             row.sourceKey === source && row.factor === 1 && row.unit === "зап." && row.balances && !row.inputs);
-          const balances = startsOnly && matches.length === 1 ? matches[0].balances : null;
+          const balances = matches.length === 1 ? matches[0].balances : null;
           const native = key => shift.flow?.find(row => row.output === "balance:" + block.id + ":" + key)?.amount;
-          const sne = balances?.sne?.[1] ?? native("starts");
+          const sne = balances ? balances.sne?.[1] : native("starts");
           const ppr = entry.repairNumber == null ? null : balances?.ppr?.[1] ?? native("pprStarts");
           if (startsOnly) return `<td>${value}</td><td>${ppr ?? "—"}</td><td>${sne ?? "—"}</td>`;
           return `<td>${value} / ${(entry.repairNumber == null ? sne : ppr) ?? "—"}</td>`;
@@ -4197,10 +4284,10 @@
         return `<td>${aircraftTemplates.formatValue(field, value)}</td>`;
       }).join("")}</tr>`;
     }).join("");
-    const foot = (title, values) => `<tr><th scope="row">${title}</th>${fields.map((field) =>
-      `<td>${aircraftTemplates.formatValue(field, values[field.id])}</td>`).join("")}</tr>`;
+    const foot = (title, values) => `<tr><th scope="row">${title}</th>${columns.map((field) =>
+      `<td>${field.id && !field.perEntry ? aircraftTemplates.formatValue(field, values[field.id]) : "—"}</td>`).join("")}</tr>`;
     const headers = startsOnly ? ["Дата работы", "Запуски", "Сумма ППР", "Сумма СНЭ"] :
-      ["Дата работы", ...fields.map((field) => field.label)];
+      ["Дата работы", ...columns.map((field) => field.label)];
     const startsRules = startsOnly ? (block.usageCounters || []).filter(rule => rule.source === `position:${position.id}:${fields[0].id}` &&
       rule.factor === 1 && rule.unit === "зап." && rule.workMode !== "entry" && !rule.workTypeId && !rule.additionalInputs?.length) : [];
     const startTotals = startsRules.length === 1 ? block.usageTotals?.[startsRules[0].id] : null;
@@ -4414,6 +4501,10 @@
           <p>Налёт: ${calc.formatDuration(Number(revision.raw.flightHours) * 60 + Number(revision.raw.flightMinutes))}</p>
           ${accrualSummary(revision.accruals || [])}${aggregateAccrualSummary(revision.aggregateAccruals)}</details>`).join("")}
       </section>`, { title: "Запись работы", back: true, settings: false });
+    bindShiftMap(shift);
+  }
+
+  function bindShiftMap(shift) {
     document.getElementById("open-shift-map").addEventListener("click", () => {
       state.mapShiftId = shift.id;
       navigateTo("usage-map");
@@ -4458,7 +4549,66 @@
       </details>`).join("")}
       ${shift.accruals?.length ? accrualSummary(shift.accruals) : ""}
       ${aggregateAccrualSummary(shift.aggregateAccruals)}
+      <button class="secondary-button" id="open-shift-map">Карта начислений</button>
     </section>`, { title: "Запись работы", back: true, settings: false });
+    bindShiftMap(shift);
+  }
+
+  function groupedReadingFlows(aircraft, work, flow) {
+    const template = aircraft.workTemplate;
+    if (!template || !work) return [];
+    const used = new Map(flow.flatMap(row => row.inputs.map(input => [input.key, input])));
+    const result = [];
+    const scopes = [{ slotId: "board", raw: work.boardInputs }, ...work.engines];
+    for (const scope of scopes) {
+      for (const [groupId, rows] of Object.entries(scope.raw?.groups || {})) {
+        const group = template.repeatGroups.find(g => g.id === groupId);
+        if (!group) continue;
+        for (const field of template.inputs.filter(f => f.group === groupId)) {
+          const output = `raw:${scope.slotId}:${field.id}`, total = used.get(output);
+          if (!total || flow.some(row => row.output === output) || !rows.length) continue;
+          let values;
+          try { values = rows.map(row => aircraftTemplates.parseValue(field, row[field.id])); }
+          catch (_) { continue; }
+          if (values.some(v => v == null) || values.reduce((a,b) => a+b, 0) !== total.value) continue;
+          result.push({ owner: scope.blockId, ownerName: scope.blockName, output, name: total.source, amount: total.value, unit: total.unit,
+            inputs: values.map((value, i) => ({ key: output + ":row:" + (i + 1),
+              source: [scope.slotLabel, group.label + " " + (i + 1), field.label].filter(Boolean).join(" · "), value, unit: total.unit })) });
+        }
+      }
+    }
+    return result;
+  }
+
+  function configuredTemplateEdges(aircraft, boardNode) {
+    if (!aircraft.workTemplate) return [];
+    const template = effectiveWorkTemplate(aircraft), date = todayIso(), edges = [];
+    function add(key, output, owner, source, name, installed) {
+      edges.push({ key, output, target: owner?.id || boardNode, source, name, enabled: true, installed, counter: true });
+    }
+    for (const field of template.inputs.filter(f => f.scope === "board" && f.role)) {
+      add("raw:board:" + field.id, "board:" + field.role, null, field.label, field.label, true);
+    }
+    for (const pos of template.positions) {
+      const block = resolveTemplateBlock(aircraft, pos, date);
+      if (!block) continue;
+      for (const field of aircraftTemplates.positionCounters(template, pos)) {
+        const output = `position:${pos.id}:${field.id}`;
+        if (pos.engineLink) {
+          const parent = template.positions.find(p => p.id === pos.engineLink.source);
+          const source = resolveTemplateBlock(aircraft, parent, date);
+          if (source) add(`position:${parent.id}:${field.id}`, output, block, parent.label + " · " + field.label, field.label,
+            blockInstallationOn(block, date) === blockInstallationOn(source, date));
+        } else {
+          const rule = template.rules.find(r => r.target === field.id);
+          for (const key of rule ? rule.operation === "copy" ? [rule.source] : [rule.flight, rule.ground] : []) {
+            const input = template.inputs.find(f => f.id === key);
+            if (input) add(`raw:${pos.id}:${key}`, output, block, pos.label + " · " + input.label, field.label, true);
+          }
+        }
+      }
+    }
+    return edges;
   }
 
   function renderUsageMap() {
@@ -4514,12 +4664,23 @@
         enabled: factor > 0 && ownerSources.some(item => item.key === source), installed: blockInstalledOn(block, todayIso()), counter: true, condition,
       }));
     }));
-    const recordedEdges = (shift?.flow || []).flatMap(row => row.inputs.map(input => ({
+    const storedFlow = shift?.flow || [];
+    const recordedFlow = storedFlow.filter(row => {
+      if (!row.owner || !row.output.startsWith("balance:" + row.owner + ":")) return true;
+      const field = row.output.split(":").at(-1);
+      if (!["starts", "pprStarts"].includes(field)) return true;
+      const source = row.inputs[0]?.key;
+      const same = (shift.aggregateAccruals || []).filter(e => e.blockId === row.owner &&
+        e.sourceKey === source && e.factor === 1 && e.unit === "зап." && e.balances && !e.inputs);
+      return same.length !== 1;
+    });
+    if (shift) recordedFlow.push(...groupedReadingFlows(aircraft, shift.templateWork, storedFlow));
+    const recordedEdges = recordedFlow.flatMap(row => row.inputs.map(input => ({
       key: input.key, source: input.source, output: row.output, target: mapTarget(row.owner), name: row.name,
       input: input.value, sourceUnit: input.unit, amount: row.amount, unit: row.unit, previous: row.previous,
       trace: true, counter: true, enabled: true, installed: true,
     })));
-    const edges = [...resourceEdges, ...aggregateEdges, ...recordedEdges];
+    const edges = [...resourceEdges, ...aggregateEdges, ...(shift ? recordedEdges : configuredTemplateEdges(aircraft, boardNode))];
     const sourceLabels = new Map((shift ? [] : usageSources(aircraft, { kind: "engine" })).map((source) => [source.key, calculationSourceLabel(source)]));
     for (const [key, label] of Object.entries(shift?.sourceLabels || {})) sourceLabels.set(key, label);
     for (const entry of shift?.accruals || []) {
@@ -4531,7 +4692,7 @@
       if (edge.output) sourceLabels.set(edge.output, edge.name);
       if (edge.key.includes(":input:")) sourceLabels.set(edge.key, edge.sourceKey === "manual" || !sourceLabels.has(edge.key) ? edge.name : sourceLabels.get(edge.key));
     }
-    const balances = (shift?.aggregateAccruals || []).flatMap(entry => Object.entries(entry.balances || {}).map(([period, [previous, amount]]) => ({
+    const balances = (shift?.aggregateAccruals || []).flatMap(entry => Object.entries(entry.balances || {}).filter(([, pair]) => pair[0] != null && pair[1] != null).map(([period, [previous, amount]]) => ({
       key: aggregateResourceKey(entry.counterId), source: entry.name, output: "balance:" + entry.counterId + ":" + period,
       name: entry.name + (period === "sne" ? " СНЭ" : " ППР"), target: mapTarget(entry.blockId), unit: entry.unit, sourceUnit: entry.unit,
       previous, amount, input: entry.amount, trace: true, counter: true, enabled: true, installed: true,
@@ -4542,6 +4703,7 @@
       if (edge.output) outputs.set(edge.output, edge);
       if (shift) sourceLabels.set(edge.key, edge.sourceKey === "manual" ? edge.name : edge.source || edge.key);
     }
+    for (const edge of edges) if (edge.source && !sourceLabels.get(edge.key)) sourceLabels.set(edge.key, edge.source);
     for (const edge of outputs.values()) sourceLabels.set(edge.output, edge.name);
     const sourceKeys = [...new Set(edges.map(({ key }) => key))].filter(key => !outputs.has(key));
     const node = (block) => {
@@ -4590,9 +4752,9 @@
         <div class="usage-map-scroll">
           <div class="usage-map-canvas">
             <svg class="map-wires" aria-hidden="true"><defs><marker id="map-arrow" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#728397"/></marker></defs></svg>
-            <div class="map-origin">${node(nodes[0])}</div>
+            <div class="map-origin">${!shift || edges.some(e => e.target === boardNode) ? node(nodes[0]) : ""}</div>
             <div class="map-sources">${sourceKeys.map((key) => `<button class="map-node" data-map-source="${escapeHtml(key)}">${escapeHtml(sourceLabels.get(key) || key)}</button>`).join("")}</div>
-            <div class="map-targets">${nodes.slice(1).map(node).join("")}</div>
+            <div class="map-targets">${nodes.slice(1).filter(item => !shift || edges.some(e => e.target === item.id)).map(node).join("")}</div>
           </div>
         </div>
         <section id="map-details" aria-live="polite"><p>Нажми на показатель или агрегат, чтобы увидеть его связи и множители.</p>
@@ -5469,6 +5631,7 @@
             [input.dataset.property, input.type === "number" ? Number(input.value) : input.value.trim()]));
           if (key === "positions") {
             const { linkSource, linkCounters, ...position } = row;
+            if (draft.positions[index]?.journal) position.journal = structuredClone(draft.positions[index].journal);
             if (linkSource) position.engineLink = { source: linkSource, counters: linkCounters === "all" ? "all" : commaList(linkCounters || "") };
             const { usageCounters, formLayout } = draft.positions[index];
             if (usageCounters) position.usageCounters = [...entry.querySelectorAll("[data-position-counter]")].map((node, i) => ({
@@ -5650,16 +5813,16 @@
           return;
         }
         if (incoming?.kind === "aircraft-baseline") {
-          const { board } = prepareBaseline(incoming);
-          chooseLayoutAction(`Внести стартовые показания в формуляры борта ${escapeHtml(board.boardNumber)}? Запись о смене не создаётся.`,
-            [["apply", "Внести стартовые показания"], ["cancel", "Отмена"]], action => {
+          const { board, reconcile } = prepareBaseline(incoming);
+          chooseLayoutAction(reconcile ? "Сверить старые итоги с исходным файлом? Введённые смены сохранятся." : `Внести стартовые показания в формуляры борта ${escapeHtml(board.boardNumber)}? Запись о смене не создаётся.`,
+            [["apply", reconcile ? "Сверить итоги" : "Внести стартовые показания"], ["cancel", "Отмена"]], action => {
               if (action !== "apply") return;
               try {
                 const { board: current, copy } = prepareBaseline(incoming);
                 const previous = state.aircraft;
                 state.aircraft = previous.map(b => b === current ? copy : b);
                 if (!saveState()) { state.aircraft = previous; throw new Error("Не удалось сохранить показания"); }
-                render(); showToast("Стартовые показания внесены");
+                render(); showToast(reconcile ? "Старые итоги сверены" : "Стартовые показания внесены");
               } catch (e) { status.textContent = e.message; }
             });
           return;
