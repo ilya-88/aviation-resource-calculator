@@ -460,3 +460,21 @@ button.setting-row { cursor: pointer; }
 .formula-editor[hidden], .form-grid [hidden] { display: none !important; }
 .formula-keys { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
 .formula-line { overflow-wrap: anywhere; padding: .5rem; border: 1px solid currentColor; border-radius: .5rem; }
+
+.paper-journal { min-width: 0; margin-bottom: 1rem; }
+.paper-journal h2 { margin: 0 0 .45rem; }
+.paper-tools { display: flex; flex-wrap: wrap; gap: .25rem; align-items: center; margin-bottom: .5rem; }
+.paper-tools :is(select, button) { min-height: 40px; padding: .2rem .6rem; color: var(--ink); background: var(--paper); border: 1px solid #a7b3ba; border-radius: .45rem; font: inherit; }
+.paper-tools [data-zoom="0"] { min-width: 4em; }
+.paper-scroll { width: 100%; overflow: auto; max-height: 60vh; max-height: 60dvh; border: 1px solid #89959b; border-radius: .4rem; background: #faf8ef; }
+.paper-scroll table { width: max-content; border-collapse: separate; border-spacing: 0; color: #25313a; font-size: 14px; font-variant-numeric: tabular-nums; }
+.paper-scroll :is(th, td) { padding: .4em .55em; border-right: 1px solid #b4bbb9; border-bottom: 1px solid #b4bbb9; text-align: right; }
+.paper-scroll td { white-space: nowrap; }
+.paper-scroll thead th { position: sticky; top: 0; z-index: 2; vertical-align: bottom; text-align: center; background: #e9e8dc; }
+.paper-scroll thead th span { display: block; max-width: 13ch; margin: auto; }
+.paper-scroll thead small { display: block; font-weight: 400; border-top: 1px solid #b4bbb9; margin-top: .3em; }
+.paper-scroll tr > th:first-child { position: sticky; left: 0; z-index: 1; background: #f1efe3; white-space: nowrap; text-align: left; }
+.paper-scroll thead tr > th:first-child { top: 0; z-index: 3; }
+.paper-scroll tfoot { background: #e2ede7; font-weight: 650; }
+
+.paper-tools button, [data-jump-ledger] { touch-action: manipulation; }

@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.42";
+  const APP_VERSION = "0.2.38-exp.43";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -4057,7 +4057,7 @@
         <button type="button" class="secondary-button" id="edit-form-layout">Карточки формуляра</button>
         ${block.kind === "airframe" && !layoutEditing && !Object.keys(aircraftTemplates.boardCards).every(key => block.usageCounters?.some(rule => rule.boardCounter === key)) ? '<button type="button" class="small-button" id="replace-board-counters">Пересоздать карточки СНЭ и ППР</button>' : ""}
       </section>
-      ${logFields.length ? templateFormLog(aircraft, block, position, logFields) : ""}
+      ${logFields.length ? '<button type="button" data-form-widget="journal" data-jump-ledger>Строки формуляра</button>' : ""}
       ${aggregateFormLog(aircraft, block)}
       ${(aircraft.unconfirmedLimits || []).filter(row => row.position === block.templateSlotId).map(row =>
         `<p class="field-help">Лимит: ${formatNumber(row.limit)} ${escapeHtml(row.unit)} · остаток не указан</p>`).join("")}
@@ -4104,7 +4104,7 @@
           <button type="submit" class="secondary-button wide">Записать событие</button>
         </fieldset>
       </form>
-    `, { title: block.name, subtitle: "Формуляр объекта", back: true, settings: false });
+    `, { title: block.name, subtitle: [aircraft.type.replace(/\s*·\s*формуляры$/iu, ""), "борт " + aircraft.boardNumber, block.serialNumber && "№ " + block.serialNumber].filter(Boolean).join(" · "), back: true, settings: false });
 
     const replaceCounters = document.getElementById("replace-board-counters");
     if (replaceCounters) replaceCounters.onclick = () => chooseLayoutAction(
@@ -4138,6 +4138,9 @@
       });
     const layout = prepareFormLayout(aircraft, block, layoutEditing);
     if (layoutEditing) return layout;
+    mountPaperLedger(aircraft, block, position, logFields);
+    app.querySelector("[data-jump-ledger]")?.addEventListener("click", () => document.getElementById("work-ledger").scrollIntoView());
+
     for (const button of app.querySelectorAll("[data-column-rule]")) button.onclick = () => {
       focusedFormColumn = button.dataset.columnRule;
       navigateTo("block-usage-rules");
@@ -4458,67 +4461,198 @@
     return matches.length === 1 ? matches[0] : null;
   }
 
-  function templateFormLog(aircraft, block, position, fields) {
-    const startsOnly = onlyStarts(fields);
-    const columns = position.journal?.length ? position.journal.map(spec => ({ ...fields.find(f => f.id === spec.field), ...spec })) : fields;
-    const totals = {};
-    const repairs = new Map();
-    const kind = position.kind === "unit" ? "units" : "engines";
-    const items = aircraft.shifts.filter((entry) => entry.templateWork).sort((a, b) => a.date.localeCompare(b.date))
-      .flatMap((shift) => (shift.templateWork[kind] || []).filter((entry) => entry.blockId === block.id)
-        .map((entry) => ({ date: shift.date, shift, entry })));
-    const rows = items.map(({ date, shift, entry }) => {
-      const current = repairs.get(entry.repairNumber) || {};
-      if (entry.repairNumber != null) repairs.set(entry.repairNumber, current);
-      return `<tr><th scope="row">${formatDate(date)}</th>${columns.map((field, index) => {
-        if (!field.id) return "<td>—</td>";
-        const value = entry.counters[field.id];
-        if (value == null) return startsOnly ? "<td>—</td><td>—</td><td>—</td>" : "<td>—</td>";
-        if (!columns.slice(0, index).some(other => other.id === field.id)) {
-          totals[field.id] = (totals[field.id] || 0) + value;
-          if (entry.repairNumber != null) current[field.id] = (current[field.id] || 0) + value;
+  function paperLedger(aircraft, block, position, fields) {
+    const columns = [], records = [];
+    const number = v => Number.isFinite(v) ? formatNumber(v, 6) : "—";
+    const byDate = aircraft.shifts.slice().sort((a, b) => a.date.localeCompare(b.date));
+    function column(label, format = number, current = null) {
+      columns.push({ label, format, current });
+    }
+    // A cell distinguishes what was posted in this entry from its closing reading.
+    function cell(value, amount = null) { return { value, amount }; }
+    const observed = (shift, key) => shift.flow?.find(r => r.output === "balance:" + key)?.amount;
+    if (block.kind === "airframe") {
+      const time = v => v == null ? "—" : displayedReading(v, "мин");
+      const roleKeys = ["touch", "arresterHooks", "runway", "carrier", "circuit"].filter(k => sourceEnabled(aircraft, k)
+        || byDate.some(s => k === "arresterHooks" ? s.arresterHooks > 0 : s.landingsByType?.[k] > 0));
+      column("Вид полёта / работы", v => v ?? "—");
+      column(usageRule("flight", aircraft).label + " за запись", time);
+      for (const [title, key] of [["Налёт ППР","pprFlightMinutes"], ["Налёт СНЭ","totalFlightMinutes"]]) column(title, time, aircraft[key]);
+      for (const k of roleKeys) column(usageRule(k, aircraft).label);
+      column("Посадки за запись");
+      column("Посадки ППР", number, aircraft.pprLandings);
+      column("Посадки СНЭ", number, aircraft.actualLandings);
+      for (const shift of byDate) {
+        const raw = shift.templateWork?.boardUsage || shift.raw;
+        const flight = shift.templateWork && raw.flight == null ? null : shift.flightMinutes;
+        const counts = roleKeys.map(k => {
+          if (raw && (raw[k] == null || raw[k] === "")) return null;
+          return k === "arresterHooks" ? shift.arresterHooks : shift.landingsByType?.[k];
+        });
+        const landings = raw && !counts.some(n => n != null) ? null : shift.actualLandings;
+        const inputs = shift.templateWork?.boardInputs;
+        const group = shift.templateWork?.boardFields?.find(f => f.role === "flight")?.group;
+        const kinds = (inputs?.groups?.[group] || []).map(r => r._note).filter(Boolean);
+        const hasBoardInput = inputs && (Object.values(inputs.fields || {}).some(v => v !== "" && v != null) ||
+          Object.values(inputs.groups || {}).some(rows => rows.length));
+        if (inputs && flight == null && landings == null && !hasBoardInput && !shift.aggregateAccruals?.some(r => r.blockId === block.id)) continue;
+        const balance = k => observed(shift, k) ?? shift.afterUsage?.board?.[k];
+        records.push({ date: shift.date, shift, cells: [cell(kinds.join(" / ") || shift.operationLabel), cell(flight, flight), cell(balance("pprFlightMinutes")),
+          cell(balance("totalFlightMinutes")), ...counts.map(n => cell(n,n)), cell(landings,landings),
+          cell(balance("pprLandings")), cell(balance("actualLandings"))] });
+      }
+    } else if (fields.length) {
+      const startsOnly = onlyStarts(fields);
+      const specs = position.journal?.length ? position.journal : fields.map(f => ({ field: f.id, label: f.label }));
+      const descriptions = specs.map(spec => {
+        const field = fields.find(f => f.id === spec.field);
+        const keys = field ? ["position:" + position.id + ":" + field.id] : [];
+        const copy = field && aircraft.workTemplate.rules.find(r => r.target === field.id && r.operation === "copy");
+        if (copy) keys.push("raw:" + position.id + ":" + copy.source);
+        const matches = (block.usageCounters || []).filter(rule => keys.includes(rule.source) && rule.workMode !== "entry" &&
+          rule.factor === 1 && !rule.workTypeId && !rule.formula && !rule.additionalInputs?.length);
+        const rule = !spec.perEntry && matches.length === 1 ? matches[0] : null;
+        const period = block.repairs ? "ppr" : "sne";
+        const format = v => v == null || !field ? "—" : typeof v === "string" ? v : aircraftTemplates.formatValue(field, v);
+        const total = block.usageTotals?.[rule?.id];
+        const units = field?.type === "duration" && rule ? aircraftTemplates.unitScale(rule.unit, "с") : 1;
+        const value = n => n == null ? null : n * units;
+        if (startsOnly && field?.role === "starts") {
+          column("Запуски"); column("Сумма ППР", number, block.repairs ? total?.ppr ?? block.pprStarts : null);
+          column("Сумма СНЭ", number, total?.sne ?? block.starts);
+        } else {
+          const native = field?.role === "starts" ? block.repairs ? block.pprStarts : block.starts : null;
+          column(spec.label, format, value(total?.[period]) ?? native);
         }
-        if (field.withPpr && field.role !== "starts") {
-          const copy = aircraft.workTemplate.rules.find(rule => rule.target === field.id && rule.operation === "copy");
-          const sources = ["position:" + position.id + ":" + field.id, ...(copy ? ["raw:" + position.id + ":" + copy.source] : [])];
-          const posted = (shift.aggregateAccruals || []).filter(r => r.blockId === block.id && sources.includes(r.sourceKey) &&
-            r.balances && r.factor === 1 && !r.inputs && r.unit === "шт.");
-          const ppr = posted.length === 1 ? posted[0].balances.ppr?.[1] : null;
-          return `<td>${value} / ${ppr ?? "—"}</td>`;
+        return { spec, field, rule, value };
+      });
+      for (const shift of byDate) {
+        const entries = shift.templateWork?.[position.kind === "unit" ? "units" : "engines"] || [];
+        for (const entry of entries.filter(e => e.blockId === block.id)) {
+          const cells = [];
+          for (const { field, spec, rule, value } of descriptions) {
+            const n = entry.counters?.[field?.id];
+            const balances = rule && shift.aggregateAccruals?.find(r => r.blockId === block.id && r.counterId === rule.id)?.balances;
+            const afterRepair = entry.repairNumber != null;
+            const end = value(balances?.[afterRepair ? "ppr" : "sne"]?.[1]);
+            if (field?.role === "starts") {
+              const ppr = afterRepair ? balances?.ppr?.[1] ?? observed(shift, block.id + ":pprStarts") : null;
+              const sne = balances?.sne?.[1] ?? observed(shift, block.id + ":starts");
+              if (startsOnly) cells.push(cell(n,n), cell(ppr), cell(sne));
+              else cells.push(cell(n == null ? null : number(n) + " / " + number(afterRepair ? ppr : sne), n));
+            } else if (spec.withPpr) {
+              cells.push(cell(n == null ? null : number(n) + " / " + number(balances?.ppr?.[1]), n));
+            } else {
+              const shown = rule && n != null && end == null ? aircraftTemplates.formatValue(field, n) + " за запись" : rule ? end : n;
+              cells.push(cell(shown, n));
+            }
+          }
+          records.push({ date: shift.date, shift, cells, repairNumber: entry.repairNumber });
         }
-        if (field.role === "starts") {
-          const source = `position:${position.id}:${field.id}`;
-          const matches = (shift.aggregateAccruals || []).filter(row => row.blockId === block.id &&
-            row.sourceKey === source && row.factor === 1 && row.unit === "зап." && row.balances && !row.inputs);
-          const balances = matches.length === 1 ? matches[0].balances : null;
-          const native = key => shift.flow?.find(row => row.output === "balance:" + block.id + ":" + key)?.amount;
-          const sne = balances ? balances.sne?.[1] : native("starts");
-          const ppr = entry.repairNumber == null ? null : balances?.ppr?.[1] ?? native("pprStarts");
-          if (startsOnly) return `<td>${value}</td><td>${ppr ?? "—"}</td><td>${sne ?? "—"}</td>`;
-          return `<td>${value} / ${(entry.repairNumber == null ? sne : ppr) ?? "—"}</td>`;
+      }
+    } else {
+      const rules = block.usageCounters || [];
+      for (const r of rules) {
+        const format = v => v == null ? "—" : ["текст","дата"].includes(r.unit) ? formValue(v,r.unit) : displayedReading(v,r.unit);
+        column(r.name, format, r.workMode === "entry" ? null : block.usageTotals?.[r.id]?.[block.repairs ? "ppr" : "sne"]);
+      }
+      if (!rules.length) {
+        column("Наработка за запись", v => displayedReading(v,"мин"));
+        column("Запуски за запись");
+      }
+      for (const shift of byDate) {
+        const charges = (shift.aggregateAccruals || []).filter(r => r.blockId === block.id);
+        const legacy = shift.engineAccruals?.find(e => e.blockId === block.id);
+        if (!charges.length && !(legacy && !rules.length)) continue;
+        const cells = rules.length ? rules.map(r => {
+          const row = charges.find(e => e.counterId === r.id);
+          return cell(row?.textValue ?? row?.amount, r.workMode === "entry" || ["дата","текст"].includes(r.unit) ? null : row?.amount);
+        }) : [cell(legacy?.minutes, legacy?.minutes), cell(legacy?.starts, legacy?.starts)];
+        records.push({ date: shift.date, cells });
+      }
+    }
+    if (block.kind === "airframe" || fields.length) {
+      const extra = (block.usageCounters || []).filter(rule => !rule.boardCounter &&
+        (block.kind === "airframe" || !(position.usageCounters || []).some(spec =>
+          spec.columnKey && spec.columnKey === rule.columnKey || spec.name === rule.name && spec.source === rule.source)));
+      for (const rule of extra) {
+        const text = ["текст","дата"].includes(rule.unit);
+        const format = v => v == null ? "—" : text ? formValue(v,rule.unit) : displayedReading(v,rule.unit);
+        column(rule.name, format, rule.workMode === "entry" ? null : block.usageTotals?.[rule.id]?.[block.repairs ? "ppr" : "sne"]);
+        for (const record of records) {
+          const row = record.shift.aggregateAccruals?.find(r => r.blockId === block.id && r.counterId === rule.id);
+          record.cells.push(cell(row?.textValue ?? row?.amount, !text && rule.workMode !== "entry" ? row?.amount : null));
         }
-        return `<td>${aircraftTemplates.formatValue(field, value)}</td>`;
-      }).join("")}</tr>`;
-    }).join("");
-    const foot = (title, values) => `<tr><th scope="row">${title}</th>${columns.map((field) =>
-      `<td>${field.id && !field.perEntry ? aircraftTemplates.formatValue(field, values[field.id]) : "—"}</td>`).join("")}</tr>`;
-    const headers = startsOnly ? ["Дата работы", "Запуски", "Сумма ППР", "Сумма СНЭ"] :
-      ["Дата работы", ...columns.map((field) => field.label)];
-    const startsRules = startsOnly ? (block.usageCounters || []).filter(rule => rule.source === `position:${position.id}:${fields[0].id}` &&
-      rule.factor === 1 && rule.unit === "зап." && rule.workMode !== "entry" && !rule.workTypeId && !rule.additionalInputs?.length) : [];
-    const startTotals = startsRules.length === 1 ? block.usageTotals?.[startsRules[0].id] : null;
-    const summary = startsOnly ? `<tr><th scope="row">Текущие показания</th><td>—</td>
-      <td>${block.repairs ? startTotals?.ppr ?? block.pprStarts ?? 0 : "—"}</td><td>${startTotals?.sne ?? block.starts ?? (aircraft.inventoryOnly || aircraft.baselineLoaded ? "—" : 0)}</td></tr>` :
-      `${foot("СНЭ по журналу", totals)}${block.repairs ? foot("ППР по журналу", repairs.get(block.repairs) || {}) : ""}`;
-    const engineSource = position.engineLink && aircraft.workTemplate.positions.find((item) => item.id === position.engineLink.source);
-    return `<section class="section-stack" data-form-widget="journal"><h2 data-tile-caption>${position.kind === "engine" ? "Записи формуляра двигателя" : "Записи формуляра агрегата"}</h2>
-      <p>${engineSource ? `Источник наработки — ${escapeHtml(engineSource.label.toLowerCase())}` :
-        `${escapeHtml(position.label)} · ${escapeHtml(position.model)}`}</p>
-      <div class="template-table-wrap" tabindex="0"><table class="aircraft-counters template-table">
-        <thead><tr>${headers.map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join("")}</tr></thead>
-        <tbody>${rows || `<tr><td colspan="${headers.length}">Записей пока нет.</td></tr>`}</tbody>
-        <tfoot>${summary}</tfoot>
-      </table></div></section>`;
+      }
+    }
+    return { columns, records };
+  }
+
+  function mountPaperLedger(aircraft, block, position, fields) {
+    const { columns, records } = paperLedger(aircraft, block, position, fields);
+    const section = document.createElement("section");
+    section.className = "paper-journal";
+    section.id = "work-ledger";
+    section.innerHTML = `<h2>Учёт работы</h2><div class="paper-tools">
+      <label>Период <select aria-label="Период журнала"><option value="">Все записи</option></select></label>
+      <button type="button" data-zoom="-1" aria-label="Уменьшить">−</button>
+      <button type="button" data-zoom="0" aria-label="Стандартный масштаб">100%</button>
+      <button type="button" data-zoom="1" aria-label="Увеличить">+</button>
+      <button type="button" data-totals>Итоги</button></div>
+      <div class="paper-scroll" tabindex="0" aria-label="Таблица учёта работы">
+      <table><thead></thead><tbody></tbody><tfoot></tfoot></table></div>`;
+    app.querySelector("main").prepend(section);
+    const viewport = section.querySelector(".paper-scroll"), table = viewport.querySelector("table");
+    const select = section.querySelector("select");
+    const months = [...new Set(records.map(r => r.date?.slice(0,7)).filter(Boolean))].sort().reverse();
+    for (const m of months) select.add(new Option(m.slice(5) + "." + m.slice(0,4), m));
+    const labels = ["Дата работы", ...columns.map(c => c.label)];
+    table.tHead.innerHTML = "<tr>" + labels.map((label,i) => `<th scope="col"><span>${escapeHtml(label)}</span><small>${i+1}</small></th>`).join("") + "</tr>";
+    function draw() {
+      const rows = records.filter(r => !select.value || r.date.startsWith(select.value));
+      const sums = columns.map(() => null), sinceRepair = columns.map(() => null);
+      const values = cells => cells.map((v,i) => `<td>${escapeHtml(columns[i].format(v))}</td>`).join("");
+      table.tBodies[0].innerHTML = rows.map(r => {
+        r.cells.forEach((c,i) => {
+          if (!Number.isFinite(c.amount)) return;
+          sums[i] = (sums[i] ?? 0) + c.amount;
+          if (r.repairNumber != null && r.repairNumber === block.repairs) sinceRepair[i] = (sinceRepair[i] ?? 0) + c.amount;
+        });
+        return `<tr><th scope="row">${formatDate(r.date)}</th>${values(r.cells.map(c => c.value))}</tr>`;
+      }).join("") || `<tr><td colspan="${labels.length}">Записей пока нет</td></tr>`;
+      table.tFoot.innerHTML = `<tr><th scope="row">Итого за период</th>${values(sums)}</tr>
+        ${sinceRepair.some(v => v != null) ? `<tr><th scope="row">ППР за период</th>${values(sinceRepair)}</tr>` : ""}
+        <tr><th scope="row">На ${formatDate(todayIso())}</th>${values(columns.map(c => c.current))}</tr>`;
+      viewport.scrollTop = 0;
+    }
+    select.onchange = draw;
+    draw();
+    section.querySelector("[data-totals]").onclick = () => { viewport.scrollTop = viewport.scrollHeight; };
+    let scale = 1;
+    const reset = section.querySelector('[data-zoom="0"]');
+    function zoom(next, x = viewport.clientWidth / 2, y = viewport.clientHeight / 2) {
+      const updated = Math.min(3, Math.max(0.35, next));
+      const factor = updated / scale, left = (viewport.scrollLeft + x) * factor - x, top = (viewport.scrollTop + y) * factor - y;
+      table.style.zoom = updated;
+      viewport.scrollLeft = left; viewport.scrollTop = top; scale = updated;
+      reset.textContent = Math.round(scale * 100) + "%";
+    }
+    section.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => {
+      const step = Number(b.dataset.zoom);
+      zoom(step ? scale * Math.pow(1.25, step) : 1);
+    });
+    let pinch;
+    const distance = ([a,b]) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    viewport.addEventListener("touchstart", e => {
+      if (e.touches.length === 2) { e.preventDefault(); pinch = { distance: distance(e.touches), scale }; }
+    }, {passive:false});
+    viewport.addEventListener("touchmove", e => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      const [a,b] = e.touches, r = viewport.getBoundingClientRect();
+      if (pinch.distance > 0) zoom(pinch.scale * distance(e.touches) / pinch.distance, (a.clientX+b.clientX)/2-r.left, (a.clientY+b.clientY)/2-r.top);
+    }, {passive:false});
+    for (const name of ["touchend","touchcancel"]) viewport.addEventListener(name, () => { pinch = null; });
   }
 
   function displayedReading(value, unit) {
@@ -4866,7 +5000,7 @@
           const columns = fields.filter(input => input.group === field.group);
           return raw.groups[field.group].map((row, i) => {
             const parts = columns.filter(col => row[col.id] != null && row[col.id] !== "")
-              .map(col => escapeHtml(col.label) + " " + escapeHtml(String(row[col.id])));
+              .map(col => escapeHtml(col.role === "flight" ? aircraftTemplates.normalizeFlightLabel(col.label) : col.label) + " " + escapeHtml(String(row[col.id])));
             if (row._note) parts.push(escapeHtml(group?.noteLabel || "Примечание") + " " + escapeHtml(row._note));
             return `<dt>${escapeHtml(group?.label || field.group)} ${i + 1}</dt><dd>${parts.join(" · ")}</dd>`;
           }).join("");

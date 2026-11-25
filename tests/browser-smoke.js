@@ -177,15 +177,15 @@ async function main() {
       });
       const maximas = Object.entries(pair[0].counters).filter(([key]) => key.startsWith('maximum')).map(([,value]) => value);
       openEngine('engine-left');
-      const logColumns = () => [...document.querySelectorAll('.template-table thead th')].map(header => header.textContent);
+      const logColumns = () => [...document.querySelectorAll('#work-ledger thead th span')].map(header => header.textContent);
       const orderedHeadings = [
         'Дата работы', 'Запуски', 'Земля · Б', 'Земля · Б + УБ', 'Полёт · Б', 'Полёт · Б + УБ', 'Максимал · ОР',
         'Максимал · ОР + Б', 'Максимал · Б + УБ', 'Итог · Б', 'Итог · Б + УБ', 'Работа на заказ',
       ].join('|');
-      const logValues = () => [...document.querySelectorAll('.template-table tbody tr:first-child td')].map(cell => cell.textContent).join('|');
+      const logValues = () => [...document.querySelectorAll('#work-ledger tbody tr:first-child td')].map(cell => cell.textContent).join('|');
       const leftLog = logColumns().join('|') === orderedHeadings &&
         logValues() === '1 / 1|00:13|00:23|00:40|00:50|00:00:03|00:00:08|00:00:12|00:43|00:55|—';
-      const logBeforeSettings = document.querySelector('.template-table').compareDocumentPosition(document.querySelector('#block-form [name=name]')) === Node.DOCUMENT_POSITION_FOLLOWING;
+      const logBeforeSettings = document.querySelector('#work-ledger table').compareDocumentPosition(document.querySelector('#block-form [name=name]')) === Node.DOCUMENT_POSITION_FOLLOWING;
       const repair = document.querySelector('#block-event-form');
       repair.elements.type.value = 'repair';
       repair.requestSubmit();
@@ -218,12 +218,12 @@ async function main() {
       const pendingRecord = record(true);
       const pending = board().shifts.at(-1).templateWork.engines[1];
       openEngine('engine-left');
-      const totals = [...document.querySelectorAll('.template-table tfoot tr')].map(row => row.textContent);
+      const totals = [...document.querySelectorAll('#work-ledger tfoot tr')].map(row => row.textContent);
       const repairs = totals[0].includes('01:50') && totals[1].includes('ППР') && totals[1].includes('00:55');
       back();
       openEngine('gtde-1');
-      const gtdePpr = [...document.querySelectorAll('.template-table tbody tr')].map(row =>
-        [...row.querySelectorAll('td')].map(cell => cell.textContent).join('|')).join('/') === '1|1|—/1|2|1' &&
+      const gtdePpr = [...document.querySelectorAll('#work-ledger tbody tr')].map(row =>
+        [...row.querySelectorAll('td')].map(cell => cell.textContent).join('|')).join('/') === '1|—|1/1|1|2' &&
         engine('gtde-1').pprStarts === 1 && engine('gtde-2').pprStarts == null;
       back();
       click('[data-aircraft-tab="works"]');
@@ -254,6 +254,8 @@ async function main() {
         const row = document.querySelector('[data-rule-id]:last-child');
         const input = key => row.querySelector('[data-rule="' + key + '"]');
         input('name').value = name;
+        input('workMode').value = 'total';
+        input('workMode').dispatchEvent(new Event('change'));
         input('source').value = source;
         input('source').dispatchEvent(new Event('change'));
         input('factor').value = factor;
@@ -326,7 +328,7 @@ async function main() {
         form.querySelector('[data-aggregate-manual-block] input').value = '10';
         form.dispatchEvent(new Event('input'));
         const preview = document.querySelector('#template-preview').textContent;
-        const previewed = preview.includes('Наработка агрегатов (3)') && preview.includes('Итого 5 пос.') && preview.includes('Расход 2,5 шт.');
+        const previewed = preview.includes('Наработка агрегатов (3)') && preview.includes('Сумма: 5 пос.') && preview.includes('Расход 2,5 шт.');
         form.requestSubmit();
         return previewed;
       }
@@ -371,9 +373,9 @@ async function main() {
       const noDuplicateRules = copyForm.querySelectorAll('[data-rule-id]').length === 3;
       copyForm.requestSubmit();
       const duplicate = () => board().blocks.find(block => block.name === 'Второй ГАК (копия настроек)');
-      const ruleConfig = (block) => block.usageCounters.map(({ id, ...rule }) => rule);
+      const ruleConfig = (block) => block.usageCounters.map(({ id, columnKey, ...rule }) => rule);
       const copiedRules = noDuplicateRules && JSON.stringify(ruleConfig(duplicate())) === JSON.stringify(ruleConfig(aggregate())) &&
-        duplicate().usageCounters.every((rule, index) => rule.id !== aggregate().usageCounters[index].id &&
+        duplicate().usageCounters.every((rule, index) => rule.id !== aggregate().usageCounters[index].id && rule.columnKey !== aggregate().usageCounters[index].columnKey &&
           duplicate().usageTotals[rule.id].sne === 0);
       click('[data-block-id="' + duplicate().id + '"]');
       click('[data-action="add-resource"]');
@@ -469,7 +471,7 @@ async function main() {
       back();
       click('[data-aircraft-tab="works"]');
       click('[data-shift-id]');
-      const history = [...document.querySelectorAll('dt')].some(node => node.textContent === 'Налёт') &&
+      const history = [...document.querySelectorAll('dt, dd')].some(node => node.textContent === 'Налёт' || node.textContent.startsWith('Налёт ')) &&
         !document.querySelector('main').textContent.includes('Налёт по вылету');
       back();
       click('[data-aircraft-tab="aggregates"]');
@@ -651,7 +653,7 @@ async function main() {
       const exportedUsage = exported.boardUsage.find(source => source.key === custom.key).factor === 0.8 &&
         exportedRules[0].factor === 2 && exportedRules[1].source === 'position:motor-4:starts' &&
         exportedRules[0].additionalInputs[0].source === 'manual' &&
-        !payload.json.includes('PRIVATE-SERIAL-401') && !payload.json.includes(originalRule.id) &&
+        !payload.json.includes('PRIVATE-SERIAL-401') && !Object.hasOwn(exportedRules[0], 'id') && exportedRules[0].columnKey === originalRule.columnKey &&
         !Object.hasOwn(exportedRules[0], 'sne');
       back();
       back();
@@ -703,8 +705,8 @@ async function main() {
       importedWork.querySelector('[data-template-scope="motor-4"] [data-template-field="starts"]').value = '1';
       importedWork.dispatchEvent(new Event('input'));
       const preview = document.querySelector('#template-preview').textContent;
-      const importedAccrual = preview.includes('Клапан') && preview.includes('3 × 2 = 6 шт.') && preview.includes('Итого 6,5 шт.') &&
-        preview.includes('Запуски мотора') && preview.includes('1 × 1 = 1 зап.');
+      const importedAccrual = preview.includes('Клапан') && preview.includes('× 2 → 6 шт.') && preview.includes('Сумма: 6,5 шт.') &&
+        preview.includes('Запуски мотора') && preview.includes('× 1 → 1 зап.');
       back();
       return { blankSaved, fourTotals, report, exportOk, remapped, exportedUsage, exportedFormLayout, copiedImport, importedUsage, importedFormLayout, importedAccrual };
     })()`);
@@ -844,8 +846,8 @@ async function main() {
       for (const block of board.blocks) {
         click('[data-block-id="' + block.id + '"]');
         check('Формуляр · ' + block.name);
-        separateTiles('#block-form [name=name]', '#block-form [name=caption]');
-        const table = document.querySelector('.template-table-wrap');
+        if (block.caption) separateTiles('#block-form [name=name]', '#block-form [name=caption]');
+        const table = document.querySelector('.paper-scroll');
         if (table) {
           const date = table.querySelector('thead th');
           const left = date.getBoundingClientRect().left;
@@ -987,7 +989,7 @@ async function main() {
       }
       visit('airframe');
       const name = 'form-field:name';
-      const caption = 'form-field:caption';
+      const serialNumber = 'form-field:serialNumber';
       const assembly = 'form:assembly:' + bySlot('vka-1').id;
       const identifiers = ['form-field:serialNumber', 'form-field:rfNumber'];
       let removableIdentifiers = true;
@@ -997,8 +999,8 @@ async function main() {
         back();
       }
       const indexBefore = Number(get(keySelector(assembly)).dataset.counterIndex);
-      const pendingText = 'Описание, введённое до перестановки';
-      get('#block-form [name=caption]').value = pendingText;
+      const pendingText = 'TEST-401-A';
+      get('#block-form [name=serialNumber]').value = pendingText;
       await hold(assembly);
       click('[data-gesture=move]');
       const card = get(active);
@@ -1029,21 +1031,21 @@ async function main() {
       get('dialog[open] input').value = 'ВКА слева';
       await choose('save');
       click('#layout-save');
-      const preservedInput = get('#block-form [name=caption]').value === pendingText;
+      const preservedInput = get('#block-form [name=serialNumber]').value === pendingText;
       const savedTile = bySlot('airframe').formLayout.tiles.find(tile => tile.keys.includes(assembly));
       const saved = moved && resized && live && restyled && savedTile.span < 6 && savedTile.font > 1 &&
         savedTile.labels[assembly] === 'ВКА слева' && get(keySelector(assembly)).textContent.includes('ВКА слева');
       if (!saved) throw new Error(JSON.stringify({ moved, resized, live, restyled, savedTile }));
-      await hold(caption);
-      click(selector(caption, 'hide'));
+      await hold(serialNumber);
+      click(selector(serialNumber, 'hide'));
       click('#layout-save');
-      const hidden = !document.querySelector(keySelector(caption)) && bySlot('airframe').formLayout.hidden.includes(caption)
-        && get('#block-form [name=caption]').value === pendingText && get('#block-form [name=caption]').closest('label').hidden;
+      const hidden = !document.querySelector(keySelector(serialNumber)) && bySlot('airframe').formLayout.hidden.includes(serialNumber)
+        && get('#block-form [name=serialNumber]').value === pendingText && get('#block-form [name=serialNumber]').closest('label').hidden;
       click('#edit-form-layout');
       click('#layout-restore');
-      await choose(caption);
+      await choose(serialNumber);
       click('#layout-save');
-      const restored = Boolean(document.querySelector(keySelector(caption))) &&
+      const restored = Boolean(document.querySelector(keySelector(serialNumber))) &&
         bySlot('airframe').formLayout.hidden.length === 0;
       click('[data-dismantle-block="' + bySlot('vka-1').id + '"]');
       await choose('cancel');
@@ -1071,11 +1073,11 @@ async function main() {
       newForm.requestSubmit();
       const added = read().blocks.find(block => block.name === 'Дополнительный формуляр');
       click('[data-block-id="' + added.id + '"]');
-      await hold(caption);
-      click(selector(caption, 'hide'));
+      await hold(serialNumber);
+      click(selector(serialNumber, 'hide'));
       click('#layout-save');
-      const manualForm = read().blocks.find(block => block.id === added.id).formLayout.hidden.includes(caption) &&
-        !document.querySelector(keySelector(caption)) && bySlot('airframe').formLayout.hidden.length === 0;
+      const manualForm = read().blocks.find(block => block.id === added.id).formLayout.hidden.includes(serialNumber) &&
+        !document.querySelector(keySelector(serialNumber)) && bySlot('airframe').formLayout.hidden.length === 0;
       back();
       return { removableIdentifiers, saved, preservedInput, hidden, restored, cancelled, dismantled, independent, manualForm };
     })()`);
@@ -1599,6 +1601,7 @@ async function main() {
       document.querySelector('[data-view="shift"]').click();
       const inputs = document.querySelector('#shift-form');
       inputs.elements.flightHours.value = '1';
+      inputs.elements.leftUseBoard.checked = inputs.elements.rightUseBoard.checked = true;
       inputs.elements.leftGround.value = '13';
       inputs.elements.rightGround.value = '13';
       inputs.elements.leftGround.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1980,6 +1983,7 @@ async function main() {
       form.elements.runway.value = '1';
       form.elements.leftMaximum.value = '21';
       form.elements.leftAfterburner.value = '7';
+      form.elements.leftUseBoard.checked = form.elements.extraEngine0UseBoard.checked = true;
       form.elements.extraEngine0Ground.value = '13';
       form.elements.extraEngine0Afterburner.value = '9';
       form.requestSubmit();
@@ -2056,6 +2060,10 @@ async function main() {
       window.handleAndroidBack();
       window.handleAndroidBack();
       click('[data-view="usage-map"]');
+      if (document.querySelector('#map-config')) click('#map-config');
+      const mapWork = document.querySelector('#map-work');
+      mapWork.value = '';
+      mapWork.dispatchEvent(new Event('change'));
       const block = read().blocks.find(item => item.name === 'ГАК');
       click('[data-map-select="' + block.id + '"]');
       const map = document.querySelector('#map-details').textContent.includes('× 2');
@@ -2063,7 +2071,7 @@ async function main() {
       const pump = read().blocks.find(item => item.name === 'ВКА');
       click('[data-map-select="' + pump.id + '"]');
       const unlinkedWithCounters = document.querySelector('[data-map-target="' + pump.id + '"]').classList.contains('map-node--unlinked') &&
-        document.querySelector('#map-details').textContent.includes('Счётчик формуляра') &&
+        !pump.usageCounters?.length && document.querySelector('#map-details').textContent.includes('Связей нет') &&
         !document.querySelector('#map-details').textContent.includes('Списание ресурса');
       window.handleAndroidBack();
       click('[data-aircraft-tab="aggregates"]');
@@ -2083,6 +2091,8 @@ async function main() {
       window.handleAndroidBack();
       click('[data-view="block-usage-rules"]');
       click('[data-aggregate-rule-add]');
+      document.querySelector('[data-rule="workMode"]').value = 'total';
+      document.querySelector('[data-rule="workMode"]').dispatchEvent(new Event('change'));
       document.querySelector('[data-rule="name"]').value = 'Проверки гидронасоса';
       document.querySelector('[data-rule="factor"]').value = '0.5';
       document.querySelector('[data-rule="sne"]').value = '5';
@@ -2245,10 +2255,11 @@ async function main() {
       click('[data-view="shift"]');
       const shift = document.querySelector('#shift-form');
       shift.elements.flightHours.value = '1';
+      shift.elements.rightUseBoard.checked = true;
       shift.elements.leftStarts.value = '3';
       shift.elements.leftGround.value = '13';
       shift.elements.leftGround.dispatchEvent(new Event('input', { bubbles: true }));
-      const preview = document.querySelector('#left-calculation').textContent.includes('не установлен') &&
+      const preview = document.querySelector('#left-calculation').textContent.includes('Нет показаний двигателя') &&
         document.querySelector('#shift-summary').textContent.includes('Левый: —');
       submit('#shift-form');
       const saved = read().shifts.at(-1);
@@ -2511,7 +2522,7 @@ async function main() {
             } else {
               const screen = attrs.blockId ? '#block-form' : attrs.resourceId || attrs.action === 'add-resource' ? '#resource-form' :
                 attrs.shiftId ? '#open-shift-map' : attrs.action === 'add-block' ? '#creation-form' :
-                { shift: '#shift-form', resources: '#resource-list', reports: '#report-form' }[attrs.view];
+                { shift: '#shift-form', resources: '#resource-list', reports: '#report-form', 'dated-readings': '#date-range' }[attrs.view];
               if (!screen || !visible(screen)) fail(key, 'действие не открыло нужный экран');
               window.handleAndroidBack();
             }
