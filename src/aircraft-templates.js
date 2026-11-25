@@ -442,7 +442,11 @@
     const counters = {};
     const steps = {};
     for (const rule of template.rules) {
-      if (rule.operation === "copy") { counters[rule.target] = values[rule.source]; continue; }
+      if (rule.operation === "copy") {
+        counters[rule.target] = values[rule.source];
+        if (counters[rule.target] != null) flightLink?.onResult?.(rule.target, counters[rule.target], [rule.source], values, inheritedFlight);
+        continue;
+      }
       if (incomplete.includes(rule.ground) || incomplete.includes(rule.flight)) { counters[rule.target] = null; continue; }
       let flight = values[rule.flight];
       let ground = values[rule.ground];
@@ -456,6 +460,7 @@
       const rounded = round(ground / step) * step;
       const credit = Math.round(rounded * rule.percent / 100);
       counters[rule.target] = flight + credit;
+      flightLink?.onResult?.(rule.target, counters[rule.target], [rule.flight, rule.ground].filter(key => values[key] != null), values, inheritedFlight);
       steps[rule.target] = { ground, rounded, credit, flight, percent: rule.percent, stepMinutes: rule.stepMinutes };
     }
     return { values, counters, steps, ...(incomplete.length && { incomplete }), ...(inheritedFlight && { inheritedFlight: true }) };

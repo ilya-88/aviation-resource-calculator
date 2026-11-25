@@ -396,7 +396,12 @@ button.setting-row { cursor: pointer; }
   justify-items: start;
 }
 
+.map-fields { display: grid; gap: 5px; }
+.map-node:has(.map-fields) { flex-direction: column; align-items: stretch; }
+.map-fields:empty { display: none; }
+
 .map-wires {
+  z-index: 1;
   position: absolute;
   inset: 0;
   width: 100%;
