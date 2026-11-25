@@ -371,6 +371,57 @@
       ...(boardUsage && { boardUsage }), ...(layout && { layout }) };
   }
 
+  function validateWorkReadings(packet, template) {
+    const object = value => value && typeof value === "object" && !Array.isArray(value);
+    const checkKeys = (value, allowed) => {
+      requireValue(object(value), "Ожидается объект с показаниями");
+      for (const key of Object.keys(value)) requireValue(allowed.includes(key), "Неизвестное поле файла: " + key);
+    };
+    checkKeys(packet, ["kind", "version", "recordId", "templateId", "boardNumber", "serialNumber", "date", "operationType", "board", "positions"]);
+    requireValue(packet.kind === "work-readings" && packet.version === 1, "Неизвестная версия файла показаний");
+    for (const key of ["recordId", "templateId", "boardNumber", "operationType"]) {
+      requireValue(typeof packet[key] === "string" && packet[key].trim() && packet[key].length <= 160, "Проверь поле " + key);
+    }
+    requireValue(packet.serialNumber == null || typeof packet.serialNumber === "string", "Проверь заводской номер");
+    requireValue(template.id === packet.templateId, "Другой тип самолёта");
+    const timestamp = Date.parse(packet.date);
+    requireValue(typeof packet.date === "string" && /^\d{4}-\d\d-\d\d$/.test(packet.date) && Number.isFinite(timestamp) &&
+      new Date(timestamp).toISOString().slice(0, 10) === packet.date, "Проверь дату работы");
+    let readings = 0;
+    function validateScope(data, scope) {
+      checkKeys(data, ["fields", "groups"]);
+      const inputs = template.inputs.filter(field => field.scope === scope);
+      function validateFields(values, group) {
+        const fields = inputs.filter(field => (field.group || null) === (group?.id || null));
+        checkKeys(values, [...fields.map(field => field.id), ...(group?.noteLabel ? ["_note"] : [])]);
+        for (const [key, value] of Object.entries(values)) {
+          if (key === "_note") {
+            requireValue(typeof value === "string" && value.length <= 160, "Проверь текст строки");
+            continue;
+          }
+          requireValue(value == null || ["string", "number"].includes(typeof value), "Некорректное показание: " + key);
+          if (parseValue(fields.find(field => field.id === key), value) != null) readings++;
+        }
+      }
+      if (data.fields !== undefined) validateFields(data.fields, null);
+      if (data.groups !== undefined) {
+        const groups = template.repeatGroups.filter(group => group.scope === scope);
+        checkKeys(data.groups, groups.map(group => group.id));
+        for (const [key, rows] of Object.entries(data.groups)) {
+          requireValue(Array.isArray(rows), "Ожидаются строки: " + key);
+          const group = groups.find(item => item.id === key);
+          for (const row of rows) validateFields(row, group);
+        }
+      }
+    }
+    if (packet.board !== undefined) validateScope(packet.board, "board");
+    if (packet.positions !== undefined) {
+      checkKeys(packet.positions, template.positions.filter(item => item.kind === "engine").map(item => item.id));
+      for (const data of Object.values(packet.positions)) validateScope(data, "engine");
+    }
+    requireValue(readings > 0, "В файле нет показаний");
+  }
+
   function parseValue(field, raw) {
     const value = String(raw ?? "").trim();
     if (!value) return null;
@@ -548,6 +599,6 @@
       serialNumber: text(data.serialNumber), rfNumber: text(data.rfNumber), readings: board, landingCounts, blocks, resources } };
   }
 
-  return { boardCards, validateTemplate, validateStartingAircraft, calculate, engineFlightInput, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits, unitScale, dimension, rawSourceList,
+  return { boardCards, validateTemplate, validateStartingAircraft, validateWorkReadings, calculate, engineFlightInput, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits, unitScale, dimension, rawSourceList,
     isFormKey, normalizeFlightLabel, normalizeTemplateFlightLabel };
 });

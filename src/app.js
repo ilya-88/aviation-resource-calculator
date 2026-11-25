@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.37";
+  const APP_VERSION = "0.2.38-exp.38";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1122,13 +1122,13 @@
     return state.aircraft.find((item) => item.id === state.selectedAircraftId) || state.aircraft[0];
   }
 
-  function navigateTo(view) {
+  function navigateTo(view, readings) {
     if (state.view !== view) {
       viewStack.push(state.view);
       if (view === "usage-settings") state.lastUsageType = null;
     }
     state.view = view;
-    render();
+    render(readings);
   }
 
   let leaveUsageSettings;
@@ -1169,7 +1169,7 @@
     return status === "danger" ? "Критично" : status === "warning" ? "Внимание" : "Норма";
   }
 
-  function render() {
+  function render(readings) {
     if (state.view === "add-aircraft" || state.view === "add-block") {
       renderCreationForm();
       bindCommonActions();
@@ -1187,7 +1187,7 @@
     else if (state.view === "shift-entry") renderShiftEntry();
     else if (state.view === "resource-editor") renderResourceEditor();
     else if (state.view === "resources") renderResources();
-    else if (state.view === "shift") renderShift();
+    else if (state.view === "shift") renderShift(false, readings);
     else if (state.view === "correct-shift") renderShift(true);
     else if (state.view === "reports") renderReports();
     else if (state.view === "settings") renderSettings();
@@ -2528,9 +2528,9 @@
     draw();
   }
 
-  function renderShift(editing = false) {
+  function renderShift(editing = false, readings) {
     const aircraft = selectedAircraft();
-    if (aircraft.workTemplate && !editing) { renderTemplateWork(aircraft); return; }
+    if (aircraft.workTemplate && !editing) { renderTemplateWork(aircraft, readings); return; }
     const correction = editing ? aircraft.shifts.find((shift) => shift.id === state.selectedShiftId) : null;
     if (editing && !canCorrectShift(aircraft, correction)) {
       showToast("Показания после этой записи уже изменились");
@@ -2674,7 +2674,7 @@
     });
   }
 
-  function renderTemplateWork(aircraft) {
+  function effectiveWorkTemplate(aircraft) {
     const stored = aircraft.workTemplate;
     const inputs = stored.inputs.filter((field) => !field.role || sourceEnabled(aircraft, field.role))
       .map((field) => field.role ? { ...field, label: usageRule(field.role, aircraft).label } : field);
@@ -2683,12 +2683,17 @@
         inputs.push({ id: `board-extra-${role}`, scope: "board", type: "count", format: "count", role, label: usageRule(role, aircraft).label });
       }
     }
-    const template = { ...stored, inputs, repeatGroups: stored.repeatGroups.filter((group) => inputs.some((field) => field.group === group.id)) };
+    return { ...stored, inputs, repeatGroups: stored.repeatGroups.filter((group) => inputs.some((field) => field.group === group.id)) };
+  }
+
+  function renderTemplateWork(aircraft, readings) {
+    const template = effectiveWorkTemplate(aircraft);
     const positions = template.positions.filter((position) => position.kind === "engine");
     const flightField = aircraftTemplates.engineFlightInput(template);
     app.innerHTML = shell(`
       <h1>${escapeHtml(template.workTitle)}</h1>
       <form id="template-work-form" class="shift-form">
+        ${readings ? `<p class="field-help">Показания загружены для борта ${escapeHtml(aircraft.boardNumber)}. Проверь значения и нажми «Сохранить работу».</p>` : ""}
         <div id="operation-picker"></div>
         <label>Дата работы<input name="date" type="date" required value="${todayIso()}"></label>
         ${templateScopeMarkup(template, "board")}
@@ -2702,7 +2707,7 @@
     const form = document.getElementById("template-work-form");
     const preview = document.getElementById("template-preview");
     const scopes = new Map([...form.querySelectorAll("[data-template-scope]")].map((element) => [element.dataset.templateScope, element]));
-    bindOperationPicker(aircraft);
+    bindOperationPicker(aircraft, readings?.operationType);
     bindAggregateManualInputs(form, aircraft);
     function addRow(group) {
       const inputs = template.inputs.filter((field) => field.group === group.dataset.templateGroup);
@@ -2719,7 +2724,24 @@
       const spec = template.repeatGroups.find(item => item.id === group.dataset.templateGroup);
       group.querySelectorAll("[data-row-title]").forEach((title, i) => { title.textContent = spec.label + " " + (i + 1); });
     }
-    form.querySelectorAll("[data-template-group]").forEach(addRow);
+    function fillFields(element, values = {}) {
+      for (const input of element.querySelectorAll("[data-template-field]")) {
+        input.value = values[input.dataset.templateField] ?? "";
+      }
+    }
+    if (readings) form.elements.date.value = readings.date;
+    for (const [slot, element] of scopes) {
+      const data = slot === "board" ? readings?.board : readings?.positions?.[slot];
+      if (data?.fields) fillFields(element.querySelector(".template-inputs"), data.fields);
+      for (const group of element.querySelectorAll("[data-template-group]")) {
+        const rows = data?.groups?.[group.dataset.templateGroup];
+        if (!rows?.length) { addRow(group); continue; }
+        for (const row of rows) {
+          addRow(group);
+          fillFields(group.querySelector("[data-template-row]:last-child"), row);
+        }
+      }
+    }
     const inputValues = (element) => Object.fromEntries([...element.querySelectorAll(":scope > label > [data-template-field]")]
       .map((input) => [input.dataset.templateField, input.value.trim()]));
     function readScope(element) {
@@ -2829,7 +2851,10 @@
         showToast("Введи данные работы");
         return;
       }
-      saveTemplateWork(aircraft, calculated, new FormData(form).get("operationType"));
+      if (readings && aircraft.shifts.some(entry => entry.importRecordId === readings.recordId)) {
+        showToast("Эти показания уже сохранены"); return;
+      }
+      saveTemplateWork(aircraft, calculated, new FormData(form).get("operationType"), readings?.recordId);
     });
     update();
   }
@@ -2881,7 +2906,7 @@
     return engineUsage;
   }
 
-  function saveTemplateWork(aircraft, { work, engineUsage, aggregateUsage, accruals, flow }, operationType) {
+  function saveTemplateWork(aircraft, { work, engineUsage, aggregateUsage, accruals, flow }, operationType, importRecordId) {
     const flight = (work.boardUsage.flight || 0) / 60;
     const landings = Object.fromEntries(OPTIONAL_USAGE_TYPES.filter((key) => key !== "arresterHooks")
       .map((key) => [key, work.boardUsage[key] || 0]));
@@ -2896,7 +2921,7 @@
     const previous = aircraft.shifts.at(-1);
     if (previous) { delete previous.beforeUsage; delete previous.afterUsage; }
     aircraft.shifts.push({
-      id: id(), date: work.date, flightMinutes: flight, operationType, operationLabel: operation?.label, templateWork: work, flow,
+      id: id(), ...(importRecordId && { importRecordId }), date: work.date, flightMinutes: flight, operationType, operationLabel: operation?.label, templateWork: work, flow,
       actualLandings, equivalentLandings: equivalent, arresterHooks, landingsByType: landings, accruals, aggregateAccruals: aggregateUsage,
     });
     if (!saveState()) { Object.assign(aircraft, backup); showToast("Не удалось сохранить работу"); return; }
@@ -5474,7 +5499,7 @@
 
   function aircraftImportControls() {
     return `<div class="aircraft-import">
-      <button type="button" class="secondary-button" id="import-aircraft-template">Импортировать борт или шаблон</button>
+      <button type="button" class="secondary-button" id="import-aircraft-template">Импортировать борт, тип или показания</button>
       <input id="aircraft-template-file" type="file" accept=".json,application/json" hidden>
       <p id="template-import-status" class="field-help" role="status"></p>
     </div>`;
@@ -5525,6 +5550,23 @@
       let template;
       try {
         const incoming = JSON.parse(text);
+        if (incoming?.kind === "work-readings") {
+          const boards = state.aircraft.filter(board => board.workTemplate?.id === incoming.templateId &&
+            board.boardNumber === incoming.boardNumber && (!incoming.serialNumber || board.serialNumber === incoming.serialNumber));
+          if (!boards.length) throw new Error("Борт из файла не найден. Сначала добавь его в приложение.");
+          if (boards.length > 1) throw new Error("Найдено несколько бортов. Укажи заводской номер в файле показаний.");
+          const [board] = boards;
+          aircraftTemplates.validateWorkReadings(incoming, effectiveWorkTemplate(board));
+          if (!(board.operationTypes || DEFAULT_OPERATION_TYPES).some(type => type.id === incoming.operationType)) {
+            throw new Error("Вид работы из файла отсутствует у этого борта");
+          }
+          if (board.shifts.some(entry => entry.importRecordId === incoming.recordId)) {
+            throw new Error("Эти показания уже сохранены");
+          }
+          state.selectedAircraftId = board.id;
+          navigateTo("shift", incoming);
+          return;
+        }
         if (incoming?.kind === "aircraft-start") {
           const pack = aircraftTemplates.validateStartingAircraft(incoming);
           const info = pack.aircraft;

@@ -288,3 +288,20 @@ test("Текст за работу допускает ручной ввод и �
     inputs: [{ source: "counter:1", factor: 1 }] });
   assert.throws(validate, /не могут расходовать ресурс/);
 });
+
+test("импорт показаний проверяет типы, дату и соответствие граф выбранному шаблону", () => {
+  const template = templates.validateTemplate({ schemaVersion: 1, id: "archive", name: "Архив",
+    positions: [{ id: "body", kind: "airframe", label: "Формуляр" }],
+    repeatGroups: [{ id: "flights", label: "Вылет", scope: "board", noteLabel: "Вид полёта" }],
+    inputs: [{ id: "duration", label: "Налёт", type: "duration", format: "HH:MM", scope: "board", role: "flight", group: "flights" },
+      { id: "count", label: "Количество", type: "count", scope: "board" }] });
+  const base = { kind: "work-readings", version: 1, recordId: "entry-1", templateId: "archive",
+    boardNumber: "89", operationType: "0", date: "2026-10-27" };
+  const check = data => templates.validateWorkReadings({ ...base, ...data }, template);
+  assert.doesNotThrow(() => check({ board: { fields: { count: 0 }, groups: { flights: [{ duration: "00:17", _note: "Первый" }] } } }));
+  assert.throws(() => check({ board: { fields: { count: null } } }), /нет показаний/);
+  assert.throws(() => check({ board: { fields: { duration: "00:17" } } }), /duration/);
+  assert.throws(() => check({ board: { groups: { flights: [{ duration: "00:80" }] } } }), /формат/);
+  assert.throws(() => check({ positions: { other: {} } }), /other/);
+  assert.throws(() => check({ date: "2026-02-30" }), /дату/);
+});

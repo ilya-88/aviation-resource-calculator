@@ -1,0 +1,61 @@
+{
+  "kind": "work-readings",
+  "version": 1,
+  "recordId": "test-89-20261027-01",
+  "templateId": "su-33-forms",
+  "boardNumber": "89",
+  "serialNumber": "49051004189",
+  "date": "2026-10-27",
+  "operationType": "0",
+  "board": {
+    "groups": {
+      "flights": [
+        {
+          "flight": "00:12",
+          "_note": "Учебный 1"
+        },
+        {
+          "flight": "00:18",
+          "_note": "Учебный 2"
+        }
+      ]
+    },
+    "fields": {
+      "runway": 1,
+      "touch": 0,
+      "hooks": 0
+    }
+  },
+  "positions": {
+    "engine-left": {
+      "fields": {
+        "starts": 2
+      },
+      "groups": {
+        "runs": [
+          {
+            "ground-bub": "00:04",
+            "cycle-ub": 1
+          },
+          {
+            "ground-bub": "00:06",
+            "cycle-ub": 1
+          }
+        ]
+      }
+    },
+    "engine-right": {
+      "fields": {
+        "starts": 1
+      },
+      "groups": {
+        "runs": [
+          {
+            "ground-bub": "00:05",
+            "cycle-ub": 1
+          }
+        ]
+      }
+    }
+  }
+}
