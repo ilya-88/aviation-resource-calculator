@@ -96,11 +96,15 @@ def check(page):
             assert actual == expected, (owner, name, actual, expected)
     reopen_board()
     page.locator("[data-action=settings]").click()
-    with page.expect_download() as download:
-        page.locator("#export-starting-aircraft").click()
-    payload = download.value.path().read_bytes()
-    exported = json.loads(payload)
-    for position in exported["template"]["positions"]:
+    def export(button):
+        with page.expect_download() as download:
+            page.locator("#" + button).click()
+        return download.value.path().read_bytes()
+    type_file = export("export-board-template")
+    inventory = export("export-starting-aircraft")
+    baseline = export("export-baseline")
+    assert "readings" not in json.loads(inventory) and "template" not in json.loads(baseline)
+    for position in json.loads(type_file)["positions"]:
         definitions = {row["name"]: row for row in position["usageCounters"]}
         for name, unit, source, _, _ in FIELDS:
             row = definitions[name]
@@ -109,8 +113,17 @@ def check(page):
     fresh.goto((ROOT / "index.html").as_uri())
     fresh.locator("[data-action=settings]").click()
     fresh.get_by_text("Типы самолётов", exact=True).first.click()
-    fresh.locator("#aircraft-template-file").set_input_files({"name": "roundtrip.json", "mimeType": "application/json", "buffer": payload})
-    fresh.get_by_role("button", name="Импортировать борт", exact=True).click()
+    def upload(payload, button):
+        fresh.locator("#aircraft-template-file").set_input_files({"name": "roundtrip.json", "mimeType": "application/json", "buffer": payload})
+        fresh.get_by_role("button", name=button, exact=True).click()
+    upload(type_file, "Импортировать")
+    fresh.get_by_text("Шаблон импортирован", exact=True).wait_for()
+    upload(inventory, "Добавить состав борта")
+    fresh.locator("[data-action=settings]").click()
+    upload(baseline, "Внести стартовые показания")
+    fresh.get_by_text("Стартовые показания внесены", exact=True).wait_for()
+    fresh.reload()
+    fresh.locator("[data-aircraft-id]").filter(has_text="Т-29").click()
     fresh.get_by_role("button", name="Внести работу").click()
     fresh.locator('[name=operationType][value="2"]').check()
     fresh.locator("[data-aggregate-manual] summary").click()

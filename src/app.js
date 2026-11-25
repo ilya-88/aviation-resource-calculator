@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.38";
+  const APP_VERSION = "0.2.38-exp.39";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1023,9 +1023,9 @@
     normalized.aircraft = normalized.aircraft.map(upgradeAircraftTemplate).map((aircraft) => ({
       ...aircraft,
       notifications: normalized.globalNotifications ? aircraft.notifications !== false : false,
-      actualLandings: Number(aircraft.actualLandings) || 0,
-      equivalentLandings: Number(aircraft.equivalentLandings) || 0,
-      arresterHooks: Number(aircraft.arresterHooks) || 0,
+      actualLandings: aircraft.actualLandings === null ? null : Number(aircraft.actualLandings) || 0,
+      equivalentLandings: aircraft.equivalentLandings === null ? null : Number(aircraft.equivalentLandings) || 0,
+      arresterHooks: aircraft.arresterHooks === null ? null : Number(aircraft.arresterHooks) || 0,
       shifts: Array.isArray(aircraft.shifts) ? aircraft.shifts : [],
       blocks: Array.isArray(aircraft.blocks) ? aircraft.blocks.map((block) => normalizeBlock({
         ...block,
@@ -1235,8 +1235,8 @@
             <span class="aircraft-card__title">${escapeHtml(aircraft.type.replace(/\s*·\s*формуляры$/iu, ""))} · борт ${escapeHtml(aircraft.boardNumber)}</span>
             <span class="aircraft-card__meta">Зав. № ${escapeHtml(aircraft.serialNumber)}</span>
             <span class="aircraft-card__metrics">
-              <span><b>${calc.formatDuration(aircraft.totalFlightMinutes)}</b> ${escapeHtml(usageRule("flight", aircraft).label)}</span>
-              <span><b>${aircraft.actualLandings}</b> посадок</span>
+              <span><b>${aircraft.totalFlightMinutes == null ? "—" : calc.formatDuration(aircraft.totalFlightMinutes)}</b> ${escapeHtml(usageRule("flight", aircraft).label)}</span>
+              <span><b>${aircraft.actualLandings ?? "—"}</b> посадок</span>
             </span>
           </span>
           <span class="aircraft-card__status status-${urgent ? "warning" : "ok"}">${urgent ? `${urgent} требуют внимания` : "Ресурс в норме"}</span>
@@ -1629,7 +1629,7 @@
     return Object.fromEntries(keys.filter((key) => item[key] != null).map((key) => [key, item[key]]));
   }
 
-  function exportStartingAircraft(board) {
+  function exportStartingAircraft(board, inventoryOnly = false) {
     const slots = new Map();
     const template = boardTemplate(board, slots);
     if (slots.size !== board.blocks.length || board.blocks.some((block) => !blockInstalledOn(block, todayIso()))) {
@@ -1643,6 +1643,8 @@
       totals: (block.usageCounters || []).map((rule, counter) => ({ counter,
         ...presentReadings(block.usageTotals?.[rule.id] || {}, ["sne", "ppr"]) })),
     }));
+    if (inventoryOnly) return { ...identityFile(board, "aircraft-inventory"),
+      blocks: blocks.map(({ position, serialNumber, manufactureDate }) => ({ position, serialNumber, manufactureDate })) };
     const resources = board.resources.map((resource) => {
       const owner = resourceOwner(board, resource) || (!resource.objectId && resource.object === "Самолёт"
         ? board.blocks.find((b) => b.kind === "airframe") : null);
@@ -1664,7 +1666,93 @@
           .map((key) => [key, landingCount(board, key)])) } });
   }
 
-  function importStartingAircraft({ template, aircraft: data }) {
+  function startingResources(board, resources, slots) {
+    return resources.map(({ position, inputs, ...resource }) => {
+      const owner = slots.get(position);
+      const allowed = new Set(resourceSources(board, owner).map((source) => source.key));
+      const consumption = Object.fromEntries(inputs.map(({ source, factor }) => {
+        const key = source.startsWith("counter:") ? aggregateResourceKey(owner.usageCounters[Number(source.slice(8))].id) : source;
+        if (!allowed.has(key)) throw new Error(`Неизвестный источник расхода у «${resource.name}»`);
+        return [key, factor];
+      }));
+      return normalizeResource({ ...resource, id: id(), objectId: owner.id, object: owner.name, consumption });
+    });
+  }
+
+  function identityFile(board, kind) {
+    return { kind, version: 1, templateId: board.workTemplate.id, boardNumber: board.boardNumber,
+      serialNumber: board.serialNumber, rfNumber: board.rfNumber || "" };
+  }
+
+  function baselineFile(board) {
+    const { aircraft, template } = exportStartingAircraft(board);
+    return { ...identityFile(board, "aircraft-baseline"), readings: aircraft.readings, landingCounts: aircraft.landingCounts,
+      blocks: aircraft.blocks.map(({ manufactureDate, ...row }) => ({ ...row,
+        columns: (template.positions.find(p => p.id === row.position).usageCounters || []).map(({ name, unit }) => ({ name, unit })) })),
+      resources: aircraft.resources, ...(board.unconfirmedLimits?.length && { unconfirmedLimits: board.unconfirmedLimits }) };
+  }
+
+  function checkFileKeys(obj, keys) {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) throw new Error("Ожидается объект JSON");
+    for (const key of Object.keys(obj)) if (!keys.includes(key)) throw new Error("Неизвестное поле файла: " + key);
+  }
+
+  function readAircraftInventory(file) {
+    checkFileKeys(file, ["kind", "version", "templateId", "boardNumber", "serialNumber", "rfNumber", "blocks"]);
+    const template = state.templateCatalog.find(type => type.id === file.templateId);
+    if (!template) throw new Error("Сначала импортируй тип самолёта");
+    if (file.version !== 1 || !Array.isArray(file.blocks) || !file.blocks.length) throw new Error("Проверь состав борта");
+    for (const row of file.blocks) checkFileKeys(row, ["position", "serialNumber", "manufactureDate"]);
+    const pack = aircraftTemplates.validateStartingAircraft({ kind: "aircraft-start", version: 1, template, aircraft: file });
+    if (!pack.aircraft.blocks.some(row => template.positions.some(p => p.id === row.position && p.kind === "airframe"))) {
+      throw new Error("В составе отсутствует формуляр самолёта");
+    }
+    return pack;
+  }
+
+  function prepareBaseline(file) {
+    checkFileKeys(file, ["kind", "version", "templateId", "boardNumber", "serialNumber", "rfNumber", "readings", "landingCounts", "blocks", "resources", "unconfirmedLimits"]);
+    if (file.version !== 1 || !Array.isArray(file.blocks)) throw new Error("Проверь формат стартовых показаний");
+    const boards = state.aircraft.filter(b => b.workTemplate?.id === file.templateId && b.boardNumber === file.boardNumber &&
+      (!file.serialNumber || b.serialNumber === file.serialNumber) && (!file.rfNumber || b.rfNumber === file.rfNumber));
+    if (boards.length !== 1) throw new Error("Борт с такими номерами не найден однозначно. Проверь файл состава борта.");
+    const [board] = boards;
+    if (board.baselineLoaded) throw new Error("Стартовые показания уже внесены");
+    const hasBoardReadings = BOARD_COUNTERS.some(key => board[key] != null && (board.inventoryOnly || board[key] !== 0));
+    if (board.shifts.length || board.resources.length || hasBoardReadings ||
+        Object.keys(board.initialLandingCounts || {}).length || board.blocks.some(b => b.repairs || b.events.length ||
+          BLOCK_COUNTERS.some(key => b[key] != null) || Object.keys(b.usageTotals || {}).length)) {
+      throw new Error("У борта уже есть записи или показания. Они сохранены.");
+    }
+    const template = boardTemplate(board);
+    const data = aircraftTemplates.validateStartingAircraft({ kind: "aircraft-start", version: 1, template, aircraft: file }).aircraft;
+    const copy = structuredClone(board);
+    const slots = new Map(copy.blocks.map(b => [b.templateSlotId, b]));
+    if (data.blocks.length !== slots.size) throw new Error("Состав формуляров отличается от файла показаний");
+    for (const [index, row] of data.blocks.entries()) {
+      const raw = file.blocks[index];
+      checkFileKeys(raw, ["position", "serialNumber", "repairs", "lastRepairDate", "readings", "totals", "columns"]);
+      const block = slots.get(row.position);
+      if (!block || (block.serialNumber || "") !== row.serialNumber) throw new Error("Не совпадает экземпляр: " + row.position);
+      const rules = block.usageCounters || [];
+      if (!Array.isArray(raw.columns) || raw.columns.length !== rules.length || raw.columns.some((c,i) =>
+          c?.name !== rules[i].name || c.unit !== rules[i].unit)) throw new Error("Проверь состав граф: " + block.name);
+      Object.assign(block, row.readings, { repairs: row.repairs });
+      if (row.lastRepairDate) block.historicalRepairs = { [row.repairs]: { date: row.lastRepairDate, beforeRepair: {} } };
+      for (const { counter, ...totals } of row.totals) block.usageTotals[rules[counter].id] = totals;
+    }
+    if (data.resources.some(r => !slots.has(r.position))) throw new Error("Не найден экземпляр для ресурса");
+    if (file.unconfirmedLimits !== undefined) {
+      if (!Array.isArray(file.unconfirmedLimits) || file.unconfirmedLimits.some(r => !slots.has(r?.position) ||
+        typeof r.unit !== "string" || !Number.isFinite(r.limit) || r.limit < 0 || r.remaining !== null)) throw new Error("Проверь лимиты без остатка");
+      copy.unconfirmedLimits = structuredClone(file.unconfirmedLimits);
+    }
+    Object.assign(copy, data.readings, { initialLandingCounts: data.landingCounts, inventoryOnly: false, baselineLoaded: true });
+    copy.resources = startingResources(copy, data.resources, slots);
+    return { board, copy };
+  }
+
+  function importStartingAircraft({ template, aircraft: data }, inventoryOnly = false) {
     const fold = (value) => (value || "").trim().toLowerCase();
     if (state.aircraft.some((other) => (fold(other.type) === fold(template.name) && fold(other.boardNumber) === fold(data.boardNumber)) ||
         (data.serialNumber && data.serialNumber !== "Не указан" && fold(other.serialNumber) === fold(data.serialNumber)))) {
@@ -1691,16 +1779,13 @@
         if (row.lastRepairDate) block.historicalRepairs = { [row.repairs]: { date: row.lastRepairDate, beforeRepair: {} } };
         for (const { counter, sne, ppr } of row.totals) block.usageTotals[block.usageCounters[counter].id] = { sne: sne ?? 0, ppr: ppr ?? null };
       }
-      board.resources = data.resources.map(({ position, inputs, ...resource }) => {
-        const owner = slots.get(position);
-        const allowed = new Set(resourceSources(board, owner).map((source) => source.key));
-        const consumption = Object.fromEntries(inputs.map(({ source, factor }) => {
-          const key = source.startsWith("counter:") ? aggregateResourceKey(owner.usageCounters[Number(source.slice(8))].id) : source;
-          if (!allowed.has(key)) throw new Error(`Неизвестный источник расхода у «${resource.name}»`);
-          return [key, factor];
-        }));
-        return normalizeResource({ ...resource, id: id(), objectId: owner.id, object: owner.name, consumption });
-      });
+      board.resources = startingResources(board, data.resources, slots);
+      if (inventoryOnly) {
+        board.inventoryOnly = true;
+        for (const key of BOARD_COUNTERS) board[key] = null;
+        const installed = new Set(data.blocks.map(row => row.position));
+        board.blocks = board.blocks.filter(block => installed.has(block.templateSlotId));
+      }
       if (!finishAircraftCreation(board)) throw new Error("Не удалось сохранить борт");
     } catch (error) {
       Object.assign(state, previous);
@@ -1804,7 +1889,7 @@
   }
 
   function flightCounterValue(minutes) {
-    return minutes ? calc.formatDuration(minutes) : "0";
+    return minutes == null ? "—" : minutes ? calc.formatDuration(minutes) : "0";
   }
 
   const formIdentifierFields = new Map([
@@ -1825,7 +1910,7 @@
     const values = {
       flightSne: [name + " СНЭ", flightCounterValue(aircraft.totalFlightMinutes)],
       flightPpr: [name + " ППР", aircraft.pprFlightMinutes == null ? "—" : flightCounterValue(aircraft.pprFlightMinutes)],
-      landingSne: ["Посадки СНЭ", aircraft.actualLandings],
+      landingSne: ["Посадки СНЭ", aircraft.actualLandings ?? "—"],
       landingPpr: ["Посадки ППР", aircraft.pprLandings ?? "—"],
     };
     return `<section class="counter-tiles" aria-label="Наработка борта">${layout.map((tile, index) => `
@@ -3264,7 +3349,7 @@
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>Настройки самолёта</h1></div></section>
       <button class="setting-row" data-view="board-usage"><strong>Показатели работы этого борта</strong>${icon("chevron")}</button>
       ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-board-template"><span><strong>Экспортировать шаблон борта</strong><small>Позиции, показатели, правила расчёта и раскладка карточек</small></span></button>' : ""}
-      ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-starting-aircraft"><span><strong>Экспортировать борт с показаниями</strong><small>Текущие показания и остатки станут стартовыми. История работ не переносится.</small></span></button>' : ""}
+      ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-starting-aircraft"><span><strong>Экспортировать состав борта</strong><small>Номера и установленные агрегаты.</small></span></button><button type="button" class="setting-row" id="export-baseline"><span><strong>Экспортировать стартовые показания</strong><small>Наработка формуляров, ремонты и остатки ресурсов.</small></span></button>' : ""}
       ${aircraftImportControls()}
       <section class="settings-list">
         <label class="setting-row"><span><strong>Уведомления этого самолёта</strong><small>${state.globalNotifications ? "Работы и ресурсы выбранного борта" : "Общие уведомления приложения выключены"}</small></span><input id="aircraft-notifications" type="checkbox" ${aircraft.notifications ? "checked" : ""} ${!state.globalNotifications ? "disabled" : ""}></label>
@@ -3291,13 +3376,15 @@
 
     bindTemplateImport();
     document.getElementById("export-board-template")?.addEventListener("click", () => exportTemplate(boardTemplate(aircraft)));
-    document.getElementById("export-starting-aircraft")?.addEventListener("click", () => {
-      try {
-        const file = exportStartingAircraft(aircraft);
-        const suffix = aircraft.boardNumber.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 39);
-        downloadAircraftFile(file, suffix ? `aircraft-${suffix}.json` : "aircraft.json");
-      } catch (error) { showToast(error.message); }
-    });
+    for (const [button, inventory] of [["export-starting-aircraft", true], ["export-baseline", false]]) {
+      document.getElementById(button)?.addEventListener("click", () => {
+        try {
+          const file = inventory ? exportStartingAircraft(aircraft, true) : baselineFile(aircraft);
+          const suffix = aircraft.boardNumber.replace(/[^a-zA-Z0-9-]+/g, "-").slice(0, 39);
+          downloadAircraftFile(file, `aircraft-${suffix}-${inventory ? "inventory" : "baseline"}.json`);
+        } catch (error) { showToast(error.message); }
+      });
+    }
     document.getElementById("aircraft-notifications").addEventListener("change", (event) => {
       if (!setBoardNotifications(aircraft, event.target.checked)) { render(); return; }
       showToast(`Уведомления борта ${aircraft.boardNumber} ${aircraft.notifications ? "включены" : "выключены"}`);
@@ -3554,8 +3641,8 @@
           <strong>${last ? escapeHtml(formValue(last.value, rule.unit)) : "—"}</strong><small>${escapeHtml(rule.sourceLabel || "Из записи о работе")}</small>${condition}${formulaButton}</article>`;
       }
       return `<article class="metric" data-form-widget="aggregate-counter:${escapeHtml(rule.id)}">
-        <span data-tile-caption>${escapeHtml(rule.name)}</span><strong>СНЭ ${formatNumber(totals?.sne || 0, 6)} ${escapeHtml(rule.unit)}</strong>
-        ${block.repairs ? `<small>ППР ${formatNumber(totals?.ppr ?? 0, 6)} ${escapeHtml(rule.unit)}</small>` : ""}${condition}${formulaButton}
+        <span data-tile-caption>${escapeHtml(rule.name)}</span><strong>СНЭ ${totals?.sne == null && (aircraft.inventoryOnly || aircraft.baselineLoaded) ? "—" : formatNumber(totals?.sne || 0, 6)} ${escapeHtml(rule.unit)}</strong>
+        ${block.repairs ? `<small>ППР ${totals?.ppr == null && (aircraft.inventoryOnly || aircraft.baselineLoaded) ? "—" : formatNumber(totals?.ppr ?? 0, 6)} ${escapeHtml(rule.unit)}</small>` : ""}${condition}${formulaButton}
       </article>`;
     }).join("");
     const entries = aircraft.shifts.slice().reverse().flatMap((shift) => (shift.aggregateAccruals || [])
@@ -3630,11 +3717,11 @@
       <section class="metric-grid" aria-label="Наработка планера">
         <div class="metric"><span>${escapeHtml(usageRule("flight", aircraft).label)} СНЭ</span><strong>${flightCounterValue(aircraft.totalFlightMinutes)}</strong></div>
         <label>${escapeHtml(usageRule("flight", aircraft).label)} ППР<input name="pprFlightMinutes" type="text" pattern="[0-9]{1,9}:[0-5][0-9](:[0-5][0-9])?" title="Часы:минуты или часы:минуты:секунды" value="${aircraft.pprFlightMinutes == null ? "" : calc.formatDuration(aircraft.pprFlightMinutes)}" placeholder="${repaired ? "0:00" : "—"}" ${repaired ? "" : "disabled"}></label>
-        <div class="metric"><span>Посадки СНЭ</span><strong>${aircraft.actualLandings}</strong></div>
+        <div class="metric"><span>Посадки СНЭ</span><strong>${aircraft.actualLandings ?? "—"}</strong></div>
         <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}" placeholder="${repaired ? "0" : "—"}" ${repaired ? "" : "disabled"}></label>
-        <div class="metric landing-count-metric"><span data-tile-caption>Зацепы</span><strong>${aircraft.arresterHooks}</strong></div>
+        <div class="metric landing-count-metric"><span data-tile-caption>Зацепы</span><strong>${aircraft.arresterHooks ?? "—"}</strong></div>
         ${[...landingCountKeys].map((key) =>
-          `<div class="metric${key === "touch" ? " landing-count-metric" : ""}" data-form-widget="landing-count-${escapeHtml(key)}"><span data-tile-caption>${escapeHtml(usageRule(key, aircraft).label)}</span><strong>${landingCount(aircraft, key)}</strong></div>`).join("")}
+          `<div class="metric${key === "touch" ? " landing-count-metric" : ""}" data-form-widget="landing-count-${escapeHtml(key)}"><span data-tile-caption>${escapeHtml(usageRule(key, aircraft).label)}</span><strong>${aircraft.inventoryOnly && !aircraft.shifts.length ? "—" : landingCount(aircraft, key)}</strong></div>`).join("")}
       </section>` : "";
     const installations = block.kind === "airframe" ? `
       <section id="form-installations" class="section-stack settings-section-heading">
@@ -3687,6 +3774,8 @@
       </section>
       ${logFields.length ? templateFormLog(aircraft, block, position, logFields) : ""}
       ${aggregateFormLog(aircraft, block)}
+      ${(aircraft.unconfirmedLimits || []).filter(row => row.position === block.templateSlotId).map(row =>
+        `<p class="field-help">Лимит: ${formatNumber(row.limit)} ${escapeHtml(row.unit)} · остаток не указан</p>`).join("")}
       <section class="section-stack" aria-labelledby="block-resources-title">
         <h2 id="block-resources-title" data-form-widget="resources-title">Ресурсы и работы</h2>
         ${relatedResources.length ? `<div class="resource-list">${resourceRows(relatedResources, { editable: true })}</div>` : '<p data-form-widget="resources-empty">Ресурсы пока не добавлены.</p>'}
@@ -4116,7 +4205,7 @@
       rule.factor === 1 && rule.unit === "зап." && rule.workMode !== "entry" && !rule.workTypeId && !rule.additionalInputs?.length) : [];
     const startTotals = startsRules.length === 1 ? block.usageTotals?.[startsRules[0].id] : null;
     const summary = startsOnly ? `<tr><th scope="row">Текущие показания</th><td>—</td>
-      <td>${block.repairs ? startTotals?.ppr ?? block.pprStarts ?? 0 : "—"}</td><td>${startTotals?.sne ?? block.starts ?? 0}</td></tr>` :
+      <td>${block.repairs ? startTotals?.ppr ?? block.pprStarts ?? 0 : "—"}</td><td>${startTotals?.sne ?? block.starts ?? (aircraft.inventoryOnly || aircraft.baselineLoaded ? "—" : 0)}</td></tr>` :
       `${foot("СНЭ по журналу", totals)}${block.repairs ? foot("ППР по журналу", repairs.get(block.repairs) || {}) : ""}`;
     const engineSource = position.engineLink && aircraft.workTemplate.positions.find((item) => item.id === position.engineLink.source);
     return `<section class="section-stack" data-form-widget="journal"><h2 data-tile-caption>${position.kind === "engine" ? "Записи формуляра двигателя" : "Записи формуляра агрегата"}</h2>
@@ -5546,10 +5635,35 @@
     }
     function showFile(text, error) {
       if (!status.isConnected || app.querySelector("dialog[open]")) return;
-      if (error) { status.textContent = error; return; }
+      status.textContent = error || "";
+      if (error) return;
       let template;
       try {
         const incoming = JSON.parse(text);
+        if (incoming?.kind === "aircraft-inventory") {
+          const pack = readAircraftInventory(incoming);
+          chooseLayoutAction(`Добавить состав борта ${escapeHtml(pack.aircraft.boardNumber)}? Формуляров: ${pack.aircraft.blocks.length}. Наработка будет пустой.`,
+            [["import", "Добавить состав борта"], ["cancel", "Отмена"]], action => {
+              if (action !== "import") return;
+              try { importStartingAircraft(pack, true); } catch (e) { status.textContent = e.message; }
+            });
+          return;
+        }
+        if (incoming?.kind === "aircraft-baseline") {
+          const { board } = prepareBaseline(incoming);
+          chooseLayoutAction(`Внести стартовые показания в формуляры борта ${escapeHtml(board.boardNumber)}? Запись о смене не создаётся.`,
+            [["apply", "Внести стартовые показания"], ["cancel", "Отмена"]], action => {
+              if (action !== "apply") return;
+              try {
+                const { board: current, copy } = prepareBaseline(incoming);
+                const previous = state.aircraft;
+                state.aircraft = previous.map(b => b === current ? copy : b);
+                if (!saveState()) { state.aircraft = previous; throw new Error("Не удалось сохранить показания"); }
+                render(); showToast("Стартовые показания внесены");
+              } catch (e) { status.textContent = e.message; }
+            });
+          return;
+        }
         if (incoming?.kind === "work-readings") {
           const boards = state.aircraft.filter(board => board.workTemplate?.id === incoming.templateId &&
             board.boardNumber === incoming.boardNumber && (!incoming.serialNumber || board.serialNumber === incoming.serialNumber));

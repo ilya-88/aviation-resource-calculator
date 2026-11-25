@@ -1,0 +1,42 @@
+{
+  "kind": "aircraft-inventory",
+  "version": 1,
+  "templateId": "su-33-forms",
+  "boardNumber": "89",
+  "serialNumber": "49051004189",
+  "rfNumber": "33738",
+  "blocks": [
+    {
+      "position": "airframe",
+      "serialNumber": "49051004189"
+    },
+    {
+      "position": "engine-left",
+      "serialNumber": "30109931703045",
+      "manufactureDate": "2017-10-27"
+    },
+    {
+      "position": "engine-right",
+      "serialNumber": "30109931703046"
+    },
+    {
+      "position": "vka-left",
+      "serialNumber": "У173066А",
+      "manufactureDate": "2017-10-30"
+    },
+    {
+      "position": "vka-right",
+      "serialNumber": "У173065А",
+      "manufactureDate": "2017-10-30"
+    },
+    {
+      "position": "gtde-left",
+      "serialNumber": "4203251710080"
+    },
+    {
+      "position": "gtde-right",
+      "serialNumber": "4203251710079",
+      "manufactureDate": "2017-10-23"
+    }
+  ]
+}

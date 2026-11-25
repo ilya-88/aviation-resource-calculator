@@ -1,0 +1,482 @@
+{
+  "kind": "aircraft-baseline",
+  "version": 1,
+  "templateId": "su-33-forms",
+  "boardNumber": "89",
+  "serialNumber": "49051004189",
+  "rfNumber": "33738",
+  "readings": {
+    "totalFlightMinutes": 58052,
+    "pprFlightMinutes": 25109,
+    "actualLandings": 1251,
+    "pprLandings": 271,
+    "arresterHooks": 161
+  },
+  "landingCounts": {
+    "touch": 375
+  },
+  "blocks": [
+    {
+      "position": "airframe",
+      "serialNumber": "49051004189",
+      "repairs": 1,
+      "lastRepairDate": "2010-03-31",
+      "columns": [
+        {
+          "name": "Налёт СНЭ",
+          "unit": "мин"
+        },
+        {
+          "name": "Посадки СНЭ",
+          "unit": "пос."
+        },
+        {
+          "name": "Налёт ППР",
+          "unit": "мин"
+        },
+        {
+          "name": "Посадки ППР",
+          "unit": "пос."
+        }
+      ]
+    },
+    {
+      "position": "engine-left",
+      "serialNumber": "30109931703045",
+      "repairs": 1,
+      "readings": {
+        "pprStarts": 188
+      },
+      "totals": [
+        {
+          "counter": 0,
+          "ppr": 12
+        },
+        {
+          "counter": 1,
+          "ppr": 115
+        },
+        {
+          "counter": 2,
+          "ppr": 6708
+        },
+        {
+          "counter": 3,
+          "ppr": 50905
+        },
+        {
+          "counter": 4,
+          "ppr": 523
+        },
+        {
+          "counter": 5,
+          "ppr": 8411
+        }
+      ],
+      "columns": [
+        {
+          "name": "Включения ОР",
+          "unit": "шт."
+        },
+        {
+          "name": "Максимал ОР",
+          "unit": "с"
+        },
+        {
+          "name": "Максимал Б + ОР",
+          "unit": "с"
+        },
+        {
+          "name": "Максимал Б + УБ",
+          "unit": "с"
+        },
+        {
+          "name": "Суммарная наработка Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Суммарная наработка Б + УБ",
+          "unit": "мин"
+        },
+        {
+          "name": "Циклы Б",
+          "unit": "шт."
+        },
+        {
+          "name": "Циклы УБ",
+          "unit": "шт."
+        },
+        {
+          "name": "Земля Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Земля Б + УБ",
+          "unit": "мин"
+        },
+        {
+          "name": "Полёт Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Полёт Б + УБ",
+          "unit": "мин"
+        },
+        {
+          "name": "Циклы ОР за запись",
+          "unit": "шт."
+        },
+        {
+          "name": "Для сверки с формуляром · Суммарная наработка Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Для сверки с формуляром · Суммарная наработка Б + УБ",
+          "unit": "мин"
+        }
+      ]
+    },
+    {
+      "position": "engine-right",
+      "serialNumber": "30109931703046",
+      "repairs": 1,
+      "readings": {
+        "pprStarts": 190
+      },
+      "totals": [
+        {
+          "counter": 0,
+          "ppr": 13
+        },
+        {
+          "counter": 1,
+          "ppr": 120
+        },
+        {
+          "counter": 2,
+          "ppr": 7211
+        },
+        {
+          "counter": 3,
+          "ppr": 51646
+        },
+        {
+          "counter": 4,
+          "ppr": 524
+        },
+        {
+          "counter": 5,
+          "ppr": 8415
+        }
+      ],
+      "columns": [
+        {
+          "name": "Включения ОР",
+          "unit": "шт."
+        },
+        {
+          "name": "Максимал ОР",
+          "unit": "с"
+        },
+        {
+          "name": "Максимал Б + ОР",
+          "unit": "с"
+        },
+        {
+          "name": "Максимал Б + УБ",
+          "unit": "с"
+        },
+        {
+          "name": "Суммарная наработка Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Суммарная наработка Б + УБ",
+          "unit": "мин"
+        },
+        {
+          "name": "Циклы Б",
+          "unit": "шт."
+        },
+        {
+          "name": "Циклы УБ",
+          "unit": "шт."
+        },
+        {
+          "name": "Земля Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Земля Б + УБ",
+          "unit": "мин"
+        },
+        {
+          "name": "Полёт Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Полёт Б + УБ",
+          "unit": "мин"
+        },
+        {
+          "name": "Циклы ОР за запись",
+          "unit": "шт."
+        },
+        {
+          "name": "Для сверки с формуляром · Суммарная наработка Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Для сверки с формуляром · Суммарная наработка Б + УБ",
+          "unit": "мин"
+        }
+      ]
+    },
+    {
+      "position": "vka-left",
+      "serialNumber": "У173066А",
+      "repairs": 0,
+      "columns": [
+        {
+          "name": "Запуски",
+          "unit": "зап."
+        },
+        {
+          "name": "Включения ОР",
+          "unit": "шт."
+        },
+        {
+          "name": "Максимал ОР",
+          "unit": "с"
+        },
+        {
+          "name": "Максимал Б + ОР",
+          "unit": "с"
+        },
+        {
+          "name": "Максимал Б + УБ",
+          "unit": "с"
+        },
+        {
+          "name": "Суммарная наработка Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Суммарная наработка Б + УБ",
+          "unit": "мин"
+        },
+        {
+          "name": "Циклы Б",
+          "unit": "шт."
+        },
+        {
+          "name": "Циклы УБ",
+          "unit": "шт."
+        },
+        {
+          "name": "Земля Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Земля Б + УБ",
+          "unit": "мин"
+        },
+        {
+          "name": "Полёт Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Полёт Б + УБ",
+          "unit": "мин"
+        }
+      ]
+    },
+    {
+      "position": "vka-right",
+      "serialNumber": "У173065А",
+      "repairs": 0,
+      "columns": [
+        {
+          "name": "Запуски",
+          "unit": "зап."
+        },
+        {
+          "name": "Включения ОР",
+          "unit": "шт."
+        },
+        {
+          "name": "Максимал ОР",
+          "unit": "с"
+        },
+        {
+          "name": "Максимал Б + ОР",
+          "unit": "с"
+        },
+        {
+          "name": "Максимал Б + УБ",
+          "unit": "с"
+        },
+        {
+          "name": "Суммарная наработка Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Суммарная наработка Б + УБ",
+          "unit": "мин"
+        },
+        {
+          "name": "Циклы Б",
+          "unit": "шт."
+        },
+        {
+          "name": "Циклы УБ",
+          "unit": "шт."
+        },
+        {
+          "name": "Земля Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Земля Б + УБ",
+          "unit": "мин"
+        },
+        {
+          "name": "Полёт Б",
+          "unit": "мин"
+        },
+        {
+          "name": "Полёт Б + УБ",
+          "unit": "мин"
+        }
+      ]
+    },
+    {
+      "position": "gtde-left",
+      "serialNumber": "4203251710080",
+      "repairs": 0,
+      "totals": [
+        {
+          "counter": 0,
+          "sne": 188
+        }
+      ],
+      "columns": [
+        {
+          "name": "Запуски",
+          "unit": "зап."
+        }
+      ]
+    },
+    {
+      "position": "gtde-right",
+      "serialNumber": "4203251710079",
+      "repairs": 0,
+      "totals": [
+        {
+          "counter": 0,
+          "sne": 190
+        }
+      ],
+      "columns": [
+        {
+          "name": "Запуски",
+          "unit": "зап."
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "position": "engine-left",
+      "name": "Календарный срок · 9 лет",
+      "unit": "дн.",
+      "limit": 3287,
+      "remaining": 0,
+      "produced": "2017-10-27",
+      "expiryDate": "2026-10-27",
+      "inputs": []
+    },
+    {
+      "position": "vka-left",
+      "name": "Календарный срок · 9 лет",
+      "unit": "дн.",
+      "limit": 3287,
+      "remaining": 0,
+      "produced": "2017-10-30",
+      "expiryDate": "2026-10-30",
+      "inputs": []
+    },
+    {
+      "position": "vka-right",
+      "name": "Календарный срок · 9 лет",
+      "unit": "дн.",
+      "limit": 3287,
+      "remaining": 0,
+      "produced": "2017-10-30",
+      "expiryDate": "2026-10-30",
+      "inputs": []
+    },
+    {
+      "position": "gtde-right",
+      "name": "Календарный срок · 10 лет",
+      "unit": "дн.",
+      "limit": 3652,
+      "remaining": 332,
+      "produced": "2017-10-23",
+      "expiryDate": "2027-10-23",
+      "inputs": []
+    },
+    {
+      "position": "gtde-left",
+      "name": "Назначенный ресурс по запускам",
+      "unit": "зап.",
+      "limit": 1750,
+      "remaining": 1562,
+      "inputs": [
+        {
+          "source": "counter:0",
+          "factor": 1
+        }
+      ]
+    },
+    {
+      "position": "gtde-right",
+      "name": "Назначенный ресурс по запускам",
+      "unit": "зап.",
+      "limit": 1750,
+      "remaining": 1560,
+      "inputs": [
+        {
+          "source": "counter:0",
+          "factor": 1
+        }
+      ]
+    }
+  ],
+  "unconfirmedLimits": [
+    {
+      "position": "engine-left",
+      "unit": "ч",
+      "limit": 300,
+      "remaining": null
+    },
+    {
+      "position": "vka-left",
+      "unit": "ч",
+      "limit": 300,
+      "remaining": null
+    },
+    {
+      "position": "vka-right",
+      "unit": "ч",
+      "limit": 300,
+      "remaining": null
+    },
+    {
+      "position": "gtde-left",
+      "unit": "лет",
+      "limit": 10,
+      "remaining": null
+    }
+  ]
+}
