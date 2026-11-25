@@ -151,6 +151,8 @@ h2 { font-size: 18px; }
 .aircraft-card__visual { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--blue); background: var(--blue-soft); font-size: 21px; }
 .aircraft-card__body { display: grid; gap: 3px; min-width: 0; }
 .aircraft-card__title { font-size: 16px; font-weight: 700; }
+.aircraft-import { margin-block-end: 6px; }
+.aircraft-import [role="status"]:empty { margin: 0; }
 .aircraft-card__meta, .aircraft-card__metrics { color: var(--ink-soft); font-size: 13px; }
 .aircraft-card__metrics { display: flex; flex-wrap: wrap; gap: 3px 8px; }
 .aircraft-card__metrics b { color: var(--ink); }

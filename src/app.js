@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.33";
+  const APP_VERSION = "0.2.38-exp.34";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1258,11 +1258,13 @@
         </div>
         <button class="primary-button" data-action="add-aircraft">${icon("plus")} Добавить самолёт</button>
       </section>
+      ${aircraftImportControls()}
       <section class="section-stack aircraft-list" aria-label="Список самолётов">
         ${aircraftCards || `<div class="empty-state"><h2>Самолётов пока нет</h2><p>Добавьте первый борт, чтобы начать учёт.</p></div>`}
       </section>
       ${nearestNote}
     `, { title: "Самолёты", subtitle: "Авиаресурс" });
+    bindTemplateImport();
   }
 
   function componentSerialLine(block) {
@@ -3081,6 +3083,7 @@
       <button class="setting-row" data-view="board-usage"><strong>Показатели работы этого борта</strong>${icon("chevron")}</button>
       ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-board-template"><span><strong>Экспортировать шаблон борта</strong><small>Позиции, показатели, правила расчёта и раскладка карточек</small></span></button>' : ""}
       ${aircraft.workTemplate ? '<button type="button" class="setting-row" id="export-starting-aircraft"><span><strong>Экспортировать борт с показаниями</strong><small>Текущие показания и остатки станут стартовыми. История работ не переносится.</small></span></button>' : ""}
+      ${aircraftImportControls()}
       <section class="settings-list">
         <label class="setting-row"><span><strong>Уведомления этого самолёта</strong><small>${state.globalNotifications ? "Работы и ресурсы выбранного борта" : "Общие уведомления приложения выключены"}</small></span><input id="aircraft-notifications" type="checkbox" ${aircraft.notifications ? "checked" : ""} ${!state.globalNotifications ? "disabled" : ""}></label>
       </section>
@@ -3104,6 +3107,7 @@
       <button class="add-block-button" data-action="add-block">${icon("plus")} Добавить блок</button>
     `, { title: "Настройки самолёта", subtitle: `${aircraft.type} · борт ${aircraft.boardNumber}`, back: true, settings: false });
 
+    bindTemplateImport();
     document.getElementById("export-board-template")?.addEventListener("click", () => exportTemplate(boardTemplate(aircraft)));
     document.getElementById("export-starting-aircraft")?.addEventListener("click", () => {
       try {
@@ -4791,11 +4795,9 @@
           <button type="submit" class="primary-button">Добавить тип</button>
         </form>
         <div class="type-trash-actions">
-          <button type="button" class="secondary-button" id="import-aircraft-template">Импортировать шаблон или борт</button>
+          ${aircraftImportControls()}
           <button type="button" class="secondary-button" id="create-aircraft-template">Создать шаблон</button>
         </div>
-        <input id="aircraft-template-file" type="file" accept=".json,application/json" hidden>
-        <p id="template-import-status" class="field-help" role="status"></p>
         <section class="settings-list" aria-label="Доступные типы">
           ${types.map((name, index) => `<div class="setting-row type-catalog-card"><span><strong>${escapeHtml(name)}</strong>
             ${state.templateCatalog.some((template) => template.name === name) ? `<span class="type-trash-actions">
@@ -5237,6 +5239,14 @@
     };
   }
 
+  function aircraftImportControls() {
+    return `<div class="aircraft-import">
+      <button type="button" class="secondary-button" id="import-aircraft-template">Импортировать борт или шаблон</button>
+      <input id="aircraft-template-file" type="file" accept=".json,application/json" hidden>
+      <p id="template-import-status" class="field-help" role="status"></p>
+    </div>`;
+  }
+
   function bindTemplateImport() {
     const file = document.getElementById("aircraft-template-file");
     const status = document.getElementById("template-import-status");
@@ -5277,7 +5287,7 @@
       dialog.showModal();
     }
     function showFile(text, error) {
-      if (!status.isConnected || state.view !== "aircraft-types" || app.querySelector("dialog[open]")) return;
+      if (!status.isConnected || app.querySelector("dialog[open]")) return;
       if (error) { status.textContent = error; return; }
       let template;
       try {
