@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.32";
+  const APP_VERSION = "0.2.38-exp.33";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -250,7 +250,7 @@
         key: "local:" + field.fieldKey, unit: field.unit, label: `Запись о работе · ${owner.name} · ${field.name}`,
       });
     }
-    sources.push({ key: "work:date", label: "Дата записи о работе", unit: "дата" },
+    sources.push({ key: "work:landings", label: "Сумма посадок за работу", unit: "пос." }, { key: "work:date", label: "Дата записи о работе", unit: "дата" },
       { key: "work:type", label: "Название вида работы", unit: "текст" });
     if (aircraft.workTemplate) sources.push(...aircraftTemplates.rawSourceList(aircraft.workTemplate)
       .filter(item => !aircraft.workTemplate.inputs.some(f => item.key === `raw:board:${f.id}` && f.role && !sourceEnabled(aircraft, f.role))));
@@ -295,17 +295,19 @@
         source: part.querySelector("[data-additional-source]").value,
         factor: part.querySelector("[data-additional-factor]").valueAsNumber,
       }));
+      if (row.dataset.boardCounter) standard.boardCounter = row.dataset.boardCounter;
       if (standard.source === "formula") return { ...standard, factor: 1, formula: editors.get(row).expression };
       return { ...standard, ...(additionalInputs.length && { additionalInputs }) };
     }
     function unitLocked(ruleId) {
       const totals = block?.usageTotals?.[ruleId];
-      return recorded.has(ruleId) || Boolean(totals?.sne || totals?.ppr);
+      return !savedRules.get(ruleId)?.boardCounter && (recorded.has(ruleId) || Boolean(totals?.sne || totals?.ppr));
     }
     function add(rule = { id: id(), name: "", source: "manual", unit: "шт.", factor: 1, workMode: "entry" }) {
       const row = document.createElement("fieldset");
       row.className = "form-grid";
       row.dataset.ruleId = rule.id;
+      if (rule.boardCounter) row.dataset.boardCounter = rule.boardCounter;
       row.dataset.columnKey = formulas.columnKey(rule);
       if (rule.workMode) row.dataset.fieldKey = rule.fieldKey || id();
       sourceLabels.set(rule.id, new Map(aggregateRuleInputs(rule).map(({ source, sourceLabel }) => [source, sourceLabel])));
@@ -346,7 +348,7 @@
         const isText = unit.value === "текст";
         const mode = row.querySelector("[data-rule=workMode]");
         if (mode) {
-          mode.disabled = isText || unit.value === "дата";
+          mode.disabled = Boolean(rule.boardCounter) || isText || unit.value === "дата";
           if (mode.disabled) mode.value = "entry";
           for (const option of picker.options) {
             const source = sources.find(item => item.key === option.value);
@@ -414,7 +416,7 @@
       };
       row.querySelector('[data-rule="source"]').addEventListener("change", (event) => {
         const source = sources.find(({ key }) => key === event.target.value);
-        if (source?.unit && !unit.disabled && (!rule.name || rule.workMode)) unit.value = source.unit;
+        if (!rule.boardCounter && source?.unit && !unit.disabled && (!rule.name || rule.workMode)) unit.value = source.unit;
         updateExample();
       });
       factor.addEventListener("input", updateExample);
@@ -468,6 +470,7 @@
           if (clone.formula) for (const token of clone.formula.tokens) {
             if (remap.has(token?.ref)) token.ref = "cell:" + remap.get(token.ref);
           }
+          delete clone.boardCounter;
           add({ ...clone, id: id(), columnKey: remap.get(formulas.refKey(rule)) });
           present.add(key);
           copied += 1;
@@ -490,6 +493,10 @@
         return { source: input.source, factor: input.factor, sourceLabel: label || "Исходный показатель" };
       }
       const previous = savedRules.get(row.dataset.ruleId);
+      if (values.boardCounter) {
+        aircraftTemplates.unitScale(values.unit, aircraftTemplates.boardCards[values.boardCounter].unit);
+        if (values.workMode !== "entry") throw new Error("Для счётчика укажи начисление за работу");
+      }
       if (values.source === "formula") {
         if (previous && unitLocked(row.dataset.ruleId) && (values.unit !== previous.unit || values.workMode !== previous.workMode))
           throw new Error("У накопленных данных нельзя менять единицу и назначение");
@@ -508,9 +515,8 @@
           if (!src) throw new Error(`«${values.name}»: источник недоступен`);
           if (src.unit) aircraftTemplates.unitScale(src.unit, values.unit);
         }
-        if (previous && unitLocked(row.dataset.ruleId) && (values.workMode !== previous.workMode ||
-          aggregateRuleIdentity({ ...values, name: previous.name, workTypeId: previous.workTypeId }) !== aggregateRuleIdentity(previous)))
-          throw new Error("По графе уже есть записи. Для нового источника или правила создай отдельную графу.");
+        if (previous && unitLocked(row.dataset.ruleId) && values.workMode !== previous.workMode)
+          throw new Error("Для изменения способа накопления создай отдельную графу");
       }
       if (unitLocked(row.dataset.ruleId) && previous?.unit !== values.unit) throw new Error("Единица накопленной наработки закреплена за показателем");
       return { id: row.dataset.ruleId, columnKey: row.dataset.columnKey, ...values, ...(values.workMode && values.source === "manual" && { fieldKey: row.dataset.fieldKey }), sourceLabel: named(inputs[0]).sourceLabel,
@@ -603,6 +609,8 @@
   function aggregateAccruals(aircraft, date, sources, workData, engineUsage, templateEngines, boardValues = {}, inactive = new Set()) {
     const values = new Map(Object.entries(sources).map(([key, value]) => [`board:${key}`, value]));
     const units = new Map(aggregateUsageSources(aircraft).map(item => [item.key, item.unit]));
+    const landingReadings = OPTIONAL_USAGE_TYPES.filter(key => key !== "arresterHooks" && Object.hasOwn(sources, key));
+    if (landingReadings.length) values.set("work:landings", landingReadings.reduce((sum, key) => sum + sources[key], 0));
     values.set("work:date", calendarDay(date));
     values.set("work:type", (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find(item => item.id === workData.get("operationType"))?.label);
     for (const [key, value] of Object.entries(boardValues)) values.set(`raw:board:${key}`, value);
@@ -630,7 +638,7 @@
       const ordered = hasFormulas ? formulas.order(block.usageCounters, catalog) : block.usageCounters;
       const results = new Map();
       return ordered.flatMap((rule) => {
-        if (!matchesWork(rule, workData.get("operationType"))) return [];
+        if (!matchesWork(rule, workData.get("operationType")) || (rule.boardCounter?.startsWith("ppr") && !countsTowardPpr(block, date))) return [];
         if (rule.unit === "текст") {
           const manual = rule.source === "manual" ? rule : localFields.get(rule.source);
           const textValue = manual ? manualWorkValue(manual, workData) : values.get(rule.source);
@@ -651,7 +659,7 @@
           try { result = formulas.calculate(rule.formula, rule.unit, catalog, read); }
           catch (error) { throw new Error(rule.name + ": " + error.message); }
           if (result.amount == null) return [];
-          if (rule.workMode === "total" && result.amount < 0) throw new Error(rule.name + ": отрицательное начисление");
+          if ((rule.boardCounter || rule.workMode === "total") && result.amount < 0) throw new Error(rule.name + ": отрицательное начисление");
           results.set(formulas.refKey(rule), result.amount);
           return [{ blockId: block.id, blockName: block.name, serialNumber: block.serialNumber, counterId: rule.id,
             unit: rule.unit, name: rule.name, ...result, workMode: rule.workMode,
@@ -1530,8 +1538,8 @@
         position.label = block.name;
         position.model = block.model;
         if (block.usageCounters) {
-          position.usageCounters = block.usageCounters.map(({ name, source, unit, factor, additionalInputs, workMode, fieldKey, columnKey, id, formula, workTypeId }) => ({
-            name, source, unit, factor, ...(workTypeId && { workTypeId }), columnKey: columnKey || id, ...(formula && { formula }), ...(workMode && { workMode }), ...(fieldKey && { fieldKey }),
+          position.usageCounters = block.usageCounters.map(({ name, source, unit, factor, additionalInputs, workMode, fieldKey, columnKey, id, formula, workTypeId, boardCounter }) => ({
+            name, source, unit, factor, ...(boardCounter && { boardCounter }), ...(workTypeId && { workTypeId }), columnKey: columnKey || id, ...(formula && { formula }), ...(workMode && { workMode }), ...(fieldKey && { fieldKey }),
             ...(additionalInputs?.length && { additionalInputs: additionalInputs.map(({ source, factor }) => ({ source, factor })) }),
           }));
         }
@@ -2765,7 +2773,7 @@
     const coefficients = Object.fromEntries(Object.keys(landings).map((key) => [key, usageRule(key, aircraft).factor]));
     const equivalent = calc.calculateEquivalentLandings(landings, coefficients);
     const backup = structuredClone(aircraft);
-    applyWorkUsage(aircraft, { flight, actualLandings, equivalent, arresterHooks, date: work.date, engineUsage, accruals, accrueUnits: false });
+    applyWorkUsage(aircraft, { flight, actualLandings, equivalent, arresterHooks, date: work.date, engineUsage, accruals, aggregateUsage, accrueUnits: false });
     applyAggregateAccruals(aircraft, aggregateUsage);
     const operation = (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find((item) => item.id === operationType);
     const previous = aircraft.shifts.at(-1);
@@ -2909,7 +2917,7 @@
       const equivalent = calc.calculateEquivalentLandings(landings, coefficients);
       const arresterHooks = Number(data.get("arresterHooks"));
 
-      applyWorkUsage(aircraft, { flight, actualLandings, equivalent, arresterHooks, date, engineUsage, accruals });
+      applyWorkUsage(aircraft, { flight, actualLandings, equivalent, arresterHooks, date, engineUsage, accruals, aggregateUsage });
       applyAggregateAccruals(aircraft, aggregateUsage);
       const operation = (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find((item) => item.id === data.get("operationType"));
       const entry = {
@@ -2972,15 +2980,21 @@
     update();
   }
 
-  function applyWorkUsage(aircraft, { flight, actualLandings, equivalent, arresterHooks, date, engineUsage, accruals, accrueUnits = true }) {
-    aircraft.totalFlightMinutes += flight;
-    aircraft.actualLandings += actualLandings;
+  function applyWorkUsage(aircraft, { flight, actualLandings, equivalent, arresterHooks, date, engineUsage, accruals, aggregateUsage, accrueUnits = true }) {
+    const airframe = aircraft.blocks.find(block => block.kind === "airframe");
+    const amounts = new Map((aggregateUsage || []).filter(entry => entry.blockId === airframe?.id).map(entry => [entry.counterId, entry.amount]));
+    const increments = { totalFlightMinutes: flight, actualLandings, pprFlightMinutes: flight, pprLandings: actualLandings };
+    for (const rule of airframe?.usageCounters || []) {
+      if (rule.boardCounter) increments[rule.boardCounter] = (amounts.get(rule.id) ?? 0) *
+        aircraftTemplates.unitScale(rule.unit, aircraftTemplates.boardCards[rule.boardCounter].unit);
+    }
+    aircraft.totalFlightMinutes += increments.totalFlightMinutes;
+    aircraft.actualLandings += increments.actualLandings;
     aircraft.equivalentLandings = Math.round((aircraft.equivalentLandings + equivalent) * 1e6) / 1e6;
     aircraft.arresterHooks += arresterHooks;
-    const airframe = aircraft.blocks.find((block) => block.kind === "airframe");
     if (countsTowardPpr(airframe, date) || (!airframe && (aircraft.pprFlightMinutes != null || aircraft.pprLandings != null))) {
-      aircraft.pprFlightMinutes = (aircraft.pprFlightMinutes || 0) + flight;
-      aircraft.pprLandings = (aircraft.pprLandings || 0) + actualLandings;
+      aircraft.pprFlightMinutes = (aircraft.pprFlightMinutes || 0) + increments.pprFlightMinutes;
+      aircraft.pprLandings = (aircraft.pprLandings || 0) + increments.pprLandings;
     }
     for (const [block, { minutes, starts, maximumSeconds: maximum, afterburnerSeconds: afterburner, modes, startsOnly }] of engineUsage) {
       const afterRepair = countsTowardPpr(block, date);
@@ -3339,7 +3353,13 @@
       const totals = block.usageTotals?.[rule.id];
       const workType = rule.workTypeId && (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find(item => item.id === rule.workTypeId);
       const condition = workType ? `<small>Из работ: ${escapeHtml(workType.label)}</small>` : "";
-      const formulaButton = rule.workMode ? `<button type="button" class="small-button" data-column-rule="${escapeHtml(rule.id)}">Связи графы</button>` : "";
+      const formulaButton = `<button type="button" class="small-button" data-column-rule="${escapeHtml(rule.id)}">Связи графы</button>`;
+      if (rule.boardCounter) {
+        const value = aircraft[rule.boardCounter];
+        const formatted = value == null ? "—" : aircraftTemplates.boardCards[rule.boardCounter].unit === "мин" ? flightCounterValue(value) : formatNumber(value, 6);
+        return `<article class="metric" data-form-widget="aggregate-counter:${escapeHtml(rule.id)}"><span data-tile-caption>${escapeHtml(rule.name)}</span>
+          <strong>${escapeHtml(formatted)}</strong>${condition}${formulaButton}</article>`;
+      }
       if (rule.workMode === "entry") {
         const last = aircraft.shifts.flatMap(shift => (shift.aggregateAccruals || [])
           .filter(entry => entry.blockId === block.id && entry.counterId === rule.id).map(entry => ({ date: shift.date, value: entry.textValue ?? entry.amount })))
@@ -3417,6 +3437,8 @@
       item.events.filter((entry) => entry.type === "install" || entry.type === "dismantle")
         .map((entry) => ({ ...entry, name: item.name })))
       .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const landingCountKeys = new Set(Object.keys(aircraft.initialLandingCounts || {}));
+    if (aircraft.workTemplate?.inputs.some(field => field.role === "touch") && sourceEnabled(aircraft, "touch")) landingCountKeys.add("touch");
     const airframeFields = block.kind === "airframe" ? `
       <h2 data-form-widget="airframe-usage-title" aria-label="Наработка планера">Наработка планера</h2>
       <section class="metric-grid" aria-label="Наработка планера">
@@ -3424,9 +3446,9 @@
         <label>${escapeHtml(usageRule("flight", aircraft).label)} ППР<input name="pprFlightMinutes" type="text" pattern="[0-9]{1,9}:[0-5][0-9](:[0-5][0-9])?" title="Часы:минуты или часы:минуты:секунды" value="${aircraft.pprFlightMinutes == null ? "" : calc.formatDuration(aircraft.pprFlightMinutes)}" placeholder="${repaired ? "0:00" : "—"}" ${repaired ? "" : "disabled"}></label>
         <div class="metric"><span>Посадки СНЭ</span><strong>${aircraft.actualLandings}</strong></div>
         <label>Посадки ППР<input name="pprLandings" type="number" min="0" step="1" value="${aircraft.pprLandings ?? ""}" placeholder="${repaired ? "0" : "—"}" ${repaired ? "" : "disabled"}></label>
-        <div class="metric"><span>Зацепы</span><strong>${aircraft.arresterHooks}</strong></div>
-        ${Object.keys(aircraft.initialLandingCounts || {}).map((key) =>
-          `<div class="metric" data-form-widget="landing-count-${escapeHtml(key)}"><span>${escapeHtml(usageRule(key, aircraft).label)}</span><strong>${landingCount(aircraft, key)}</strong></div>`).join("")}
+        <div class="metric landing-count-metric"><span data-tile-caption>Зацепы</span><strong>${aircraft.arresterHooks}</strong></div>
+        ${[...landingCountKeys].map((key) =>
+          `<div class="metric${key === "touch" ? " landing-count-metric" : ""}" data-form-widget="landing-count-${escapeHtml(key)}"><span data-tile-caption>${escapeHtml(usageRule(key, aircraft).label)}</span><strong>${landingCount(aircraft, key)}</strong></div>`).join("")}
       </section>` : "";
     const installations = block.kind === "airframe" ? `
       <section id="form-installations" class="section-stack settings-section-heading">
@@ -3475,6 +3497,7 @@
       <section class="page-heading compact"><div><p class="eyebrow">${escapeHtml(aircraft.type)} · борт ${escapeHtml(aircraft.boardNumber)}</p><h1>${escapeHtml(block.name)}</h1></div>
         <button type="button" class="secondary-button" id="add-form-column">+ Графа</button>
         <button type="button" class="secondary-button" id="edit-form-layout">Карточки формуляра</button>
+        ${block.kind === "airframe" && !layoutEditing && !Object.keys(aircraftTemplates.boardCards).every(key => block.usageCounters?.some(rule => rule.boardCounter === key)) ? '<button type="button" class="small-button" id="replace-board-counters">Пересоздать карточки СНЭ и ППР</button>' : ""}
       </section>
       ${logFields.length ? templateFormLog(aircraft, block, position, logFields) : ""}
       ${aggregateFormLog(aircraft, block)}
@@ -3523,6 +3546,36 @@
       </form>
     `, { title: block.name, subtitle: "Формуляр объекта", back: true, settings: false });
 
+    const replaceCounters = document.getElementById("replace-board-counters");
+    if (replaceCounters) replaceCounters.onclick = () => chooseLayoutAction(
+      "Заменить стандартные карточки налёта и посадок СНЭ и ППР на настраиваемые? Показания и записи работ сохранятся. Высота карточек «Зацепы» и «Касания» будет по содержимому.",
+      [["replace", "Заменить карточки"], ["cancel", "Отмена"]], action => {
+        if (action !== "replace") return;
+        const previous = { rules: block.usageCounters, layout: block.formLayout };
+        const rules = [...(previous.rules || [])];
+        const keys = new Map();
+        for (const [target, spec] of Object.entries(aircraftTemplates.boardCards)) {
+          let rule = rules.find(item => item.boardCounter === target);
+          if (!rule) {
+            rule = { id: id(), columnKey: id(), name: spec.name, boardCounter: target, source: spec.source, factor: 1, unit: spec.unit,
+              sourceLabel: aggregateUsageSources(aircraft, true).find(item => item.key === spec.source)?.label, workMode: "entry" };
+            rules.push(rule);
+          }
+          keys.set(spec.key, "form:aggregate-counter:" + rule.id);
+        }
+        block.usageCounters = rules;
+        block.formLayout = remapFormLayout(previous.layout || { tiles: layout.layout, hidden: layout.hidden }, key => keys.get(key) || key);
+        for (const tile of block.formLayout.tiles) {
+          if (tile.keys.every(key => key === "form-metric:2" || key === "form:landing-count-touch")) delete tile.height;
+        }
+        if (!saveState()) {
+          block.usageCounters = previous.rules;
+          block.formLayout = previous.layout;
+          showToast("Не удалось сохранить карточки");
+          return;
+        }
+        render();
+      });
     const layout = prepareFormLayout(aircraft, block, layoutEditing);
     if (layoutEditing) return layout;
     for (const button of app.querySelectorAll("[data-column-rule]")) button.onclick = () => {
@@ -3564,8 +3617,8 @@
       }
       if (block.kind === "airframe" && repaired) {
         const pprDuration = data.get("pprFlightMinutes");
-        aircraft.pprFlightMinutes = pprDuration ? calc.parseClockDuration(pprDuration) / 60 : null;
-        aircraft.pprLandings = data.get("pprLandings") === "" ? null : Number(data.get("pprLandings"));
+        if (data.has("pprFlightMinutes")) aircraft.pprFlightMinutes = pprDuration ? calc.parseClockDuration(pprDuration) / 60 : null;
+        if (data.has("pprLandings")) aircraft.pprLandings = data.get("pprLandings") === "" ? null : Number(data.get("pprLandings"));
       } else if (legacyUsage) {
         block.sneMinutes = Number(data.get("sneMinutes"));
         block.sneLandings = Number(data.get("sneLandings"));
@@ -3703,6 +3756,9 @@
       if (input) hiddenFields.set(key, node);
     }
 
+    for (const rule of block.usageCounters || []) {
+      if (rule.boardCounter) catalog.delete(aircraftTemplates.boardCards[rule.boardCounter].key);
+    }
     const saved = block.formLayout;
     const hidden = (saved?.hidden || []).filter((key) => catalog.has(key));
     const defaultOrder = ["form:journal", "form-field:name", "form-field:caption", ...catalog.keys()];
@@ -4127,61 +4183,33 @@
         installed: !owner || blockInstalledOn(owner, todayIso()), installedDate: resource.installed,
       }));
     });
-    const landingKeys = OPTIONAL_USAGE_TYPES.filter((key) => key !== "arresterHooks");
-    const makeCounterEdge = (target, key, name, installed, condition) =>
-      ({ target, key, name, installed, condition, factor: 1, counter: true, enabled: sourceEnabled(aircraft, key) });
-    const pprCondition = "ППР начисляется после ремонта";
-    const counterEdges = shift ? [] : [
-      makeCounterEdge(boardNode, "flight", "Налёт СНЭ / ППР", true, pprCondition),
-      ...landingKeys.map((key) => makeCounterEdge(boardNode, key, "Посадки СНЭ / ППР", true, pprCondition)),
-      makeCounterEdge(boardNode, "arresterHooks", "Зацепы в формуляре", true),
-      ...blocks.flatMap((block) => {
-        const installed = blockInstalledOn(block, todayIso());
-        const position = templatePositionFor(aircraft, block);
-        if (position?.engineLink) {
-          const source = aircraft.workTemplate.positions.find((item) => item.id === position.engineLink.source);
-          const condition = `${source.label}. Начисление при совместной установке. ${pprCondition}.`;
-          const engine = resolveTemplateBlock(aircraft, source, todayIso());
-          const unit = resolveTemplateBlock(aircraft, position, todayIso());
-          return localWorkSources(aircraft, block).map((key) => makeCounterEdge(block.id, key,
-            `${ENGINE_SOURCES[key]} · СНЭ / ППР`,
-            unit === block && Boolean(engine) && blockInstallationOn(unit, todayIso()) === blockInstallationOn(engine, todayIso()), condition));
-        }
-        if (block.kind === "unit" && (aircraft.workTemplate || Array.isArray(block.usageCounters))) return [];
-        if (position?.kind === "engine") return [
-          ...localWorkSources(aircraft, block).map((key) => makeCounterEdge(block.id, key,
-            `${ENGINE_SOURCES[key]} · СНЭ / ППР`, installed, `Данные из формы работы. ${pprCondition}.`)),
-          ...landingKeys.map((key) => makeCounterEdge(block.id, key, "Посадки СНЭ / ППР", installed, pprCondition)),
-        ];
-        const minutes = block.kind === "engine" ? "engineMinutes" : "flight";
-        const condition = block.kind === "engine"
-          ? `Налёт двигателя берётся из записи работы, по умолчанию из налёта борта. Доля и округление земли задаются в формуляре двигателя. ${pprCondition}.`
-          : pprCondition;
-        const keys = block.kind === "engine" ? Object.keys(ENGINE_SOURCES).filter((key) => key !== "engineMinutes") : [];
-        return [
-          makeCounterEdge(block.id, minutes, "Наработка СНЭ / ППР", installed, condition),
-          ...landingKeys.map((key) => makeCounterEdge(block.id, key, "Посадки СНЭ / ППР", installed, pprCondition)),
-          ...keys.map((key) => makeCounterEdge(block.id, key, `${ENGINE_SOURCES[key]} · СНЭ / ППР`, installed, pprCondition)),
-        ];
-      }),
-    ];
+    const mapTarget = blockId => !blockId || blockId === first?.id ? boardNode : blockId;
     const aggregateSources = new Map(aggregateUsageSources(aircraft).map(({ key, label }) => [key, label]));
-    const mapSourceKey = (blockId, key) => key?.startsWith("cell:") || key?.startsWith("local:") ? blockId + ":" + key : key;
+    const columnIds = new Map();
+    for (const block of aircraft.blocks) for (const rule of block.usageCounters || []) {
+      columnIds.set(block.id + ":" + formulas.refKey(rule), aggregateResourceKey(rule.id));
+      if (rule.fieldKey && rule.source === "manual") columnIds.set(block.id + ":local:" + rule.fieldKey, block.id + ":input:" + rule.id);
+    }
+    const mapSourceKey = (blockId, key, counterId) => key === "manual" ? blockId + ":input:" + counterId :
+      columnIds.get(blockId + ":" + key) || (key?.startsWith("cell:") || key?.startsWith("local:") ? blockId + ":" + key : key);
     const aggregateEdges = shift ? (shift.aggregateAccruals || []).flatMap((entry) => (entry.inputs || [entry]).map((part) => ({
-      ...part, key: mapSourceKey(entry.blockId, part.sourceKey), expression: entry.expression, name: entry.name, target: entry.blockId, counter: true, enabled: true, installed: true,
-    }))) : blocks.flatMap((block) => (block.usageCounters || []).flatMap((rule) => {
+      ...part, unit: entry.unit, posted: entry, key: mapSourceKey(entry.blockId, part.sourceKey, entry.counterId), output: aggregateResourceKey(entry.counterId), expression: entry.expression, name: entry.name, target: mapTarget(entry.blockId), counter: true, enabled: true, installed: true,
+    }))) : aircraft.blocks.flatMap((block) => (block.usageCounters || []).flatMap((rule) => {
+      const ownerSources = aggregateUsageSources(aircraft, false, block);
+      const type = (aircraft.operationTypes || DEFAULT_OPERATION_TYPES).find(item => item.id === rule.workTypeId);
+      const condition = [type?.label, rule.boardCounter?.startsWith("ppr") ? "После ремонта" : ""].filter(Boolean).join(" · ");
       if (rule.formula) {
         const catalog = formulas.catalog(block.usageCounters, aggregateUsageSources(aircraft, true, block));
         const refs = new Set(rule.formula.tokens.filter(token => token?.ref).map(token => token.ref));
-        return [...refs].map(ref => ({ key: mapSourceKey(block.id, ref), source: catalog.get(ref)?.label || ref, target: block.id,
-          name: rule.name, expression: formulas.describe(rule.formula, catalog), enabled: true, installed: blockInstalledOn(block, todayIso()), counter: true }));
+        return [...refs].map(ref => ({ key: mapSourceKey(block.id, ref), source: catalog.get(ref)?.label || ref, target: mapTarget(block.id), condition,
+          name: rule.name, output: aggregateResourceKey(rule.id), expression: formulas.describe(rule.formula, catalog), enabled: true, installed: blockInstalledOn(block, todayIso()), counter: true }));
       }
       return aggregateRuleInputs(rule).map(({ source, sourceLabel, factor }) => ({
-        key: source, source: sourceLabel, target: block.id, name: rule.name, factor, unit: rule.unit,
-        enabled: factor > 0 && aggregateSources.has(source), installed: blockInstalledOn(block, todayIso()), counter: true, condition: pprCondition,
+        key: mapSourceKey(block.id, source, rule.id), output: aggregateResourceKey(rule.id), source: ownerSources.find(item => item.key === source)?.label || sourceLabel, target: mapTarget(block.id), name: rule.name, factor, unit: rule.unit,
+        enabled: factor > 0 && ownerSources.some(item => item.key === source), installed: blockInstalledOn(block, todayIso()), counter: true, condition,
       }));
     }));
-    const edges = [...resourceEdges, ...counterEdges, ...aggregateEdges];
+    const edges = [...resourceEdges, ...aggregateEdges];
     const sourceLabels = new Map(usageSources(aircraft, { kind: "engine" }).map((source) => [source.key, calculationSourceLabel(source)]));
     for (const [key, label] of Object.entries(shift?.sourceLabels || {})) sourceLabels.set(key, label);
     for (const entry of shift?.accruals || []) {
@@ -4189,8 +4217,11 @@
     }
     for (const { key, sourceLabel } of resourceEdges) if (sourceLabel && !sourceLabels.has(key)) sourceLabels.set(key, sourceLabel);
     for (const edge of aggregateEdges) sourceLabels.set(edge.key, shift ? edge.source : aggregateSources.get(edge.key) || edge.source);
-    const sourceKeys = [...new Set([...(shift ? [] : usageSources(aircraft).filter(({ key }) => sourceEnabled(aircraft, key)).map(({ key }) => key)),
-      ...edges.map(({ key }) => key)])];
+    for (const edge of aggregateEdges) {
+      if (edge.output) sourceLabels.set(edge.output, edge.name);
+      if (edge.key.includes(":input:")) sourceLabels.set(edge.key, edge.sourceKey === "manual" || !sourceLabels.has(edge.key) ? edge.name : sourceLabels.get(edge.key));
+    }
+    const sourceKeys = [...new Set(edges.map(({ key }) => key))];
     const node = (block) => {
       const connected = [...resourceEdges, ...aggregateEdges].some(({ target, enabled, installed, installedDate }) =>
         target === block.id && enabled && installed && (!installedDate || installedDate <= todayIso()));
@@ -4207,15 +4238,17 @@
     const nodes = [{ id: boardNode, name: `${aircraft.type} · борт ${aircraft.boardNumber}`, formId: first?.id, serialNumber: aircraft.serialNumber },
       ...blocks.map((block) => ({ ...block, formId: block.id }))];
     for (const entry of shift?.accruals || []) {
-      if (entry.blockId && !nodes.some((item) => item.id === entry.blockId)) nodes.push({ id: entry.blockId, name: entry.object });
+      if (entry.blockId && entry.blockId !== first?.id && !nodes.some((item) => item.id === entry.blockId)) nodes.push({ id: entry.blockId, name: entry.object });
     }
     for (const entry of shift?.aggregateAccruals || []) {
-      if (!nodes.some((item) => item.id === entry.blockId)) nodes.push({ id: entry.blockId, name: entry.blockName });
+      if (entry.blockId !== first?.id && !nodes.some((item) => item.id === entry.blockId)) nodes.push({ id: entry.blockId, name: entry.blockName });
     }
     app.innerHTML = shell(`
       <section class="section-stack">
         <h1>${shift ? "Карта начислений" : "Карта наработки"}</h1>
         ${shift ? `<p>${formatDate(shift.date)} · ${escapeHtml(shift.operationLabel || "Лётная смена")}</p>` : ""}
+        <label>Показать связи<select id="map-work"><option value="">Настроенные графы и ресурсы</option>${aircraft.shifts.slice().reverse().map(entry =>
+          `<option value="${escapeHtml(entry.id)}"${entry.id === shift?.id ? " selected" : ""}>${formatDate(entry.date)} · ${escapeHtml(entry.operationLabel || "Запись работы")}</option>`).join("")}</select></label>
         <label class="map-zoom">Масштаб<input id="map-scale" type="range" min="45" max="150" value="100" step="5"></label>
         <div class="usage-map-scroll">
           <div class="usage-map-canvas">
@@ -4228,6 +4261,7 @@
         <section id="map-details" aria-live="polite"><p>Нажми на показатель или агрегат, чтобы увидеть его связи и множители.</p>
         ${shift ? "" : `<p>Зелёный ореол — настроенный учёт наработки или расход ресурса. Пунктир показывает связи со счётчиками или отключённые линии.</p>`}</section>
       </section>`, { title: "Карта наработки", back: true, settings: false });
+    document.getElementById("map-work").onchange = event => { state.mapShiftId = event.target.value || null; renderUsageMap(); };
     const canvas = document.querySelector(".usage-map-canvas");
     const zoom = document.getElementById("map-scale");
     const details = document.getElementById("map-details");
@@ -4244,22 +4278,25 @@
     const draw = () => {
       wires.querySelectorAll("line").forEach((line) => line.remove());
       const connect = (from, to, muted, emphasized, counter = false) => {
-        const [x1, y1] = position(from, true);
-        const [x2, y2] = position(to, false);
+        const forwards = from.getBoundingClientRect().left < to.getBoundingClientRect().left;
+        const [x1, y1] = position(from, forwards);
+        const [x2, y2] = position(to, !forwards);
         const wire = document.createElementNS("http://www.w3.org/2000/svg", "line");
         for (const [key, value] of Object.entries({ x1, y1, x2, y2 })) wire.setAttribute(key, value);
         wire.setAttribute("class", `map-wire ${counter ? "map-wire--counter" : ""} ${muted ? "map-wire--muted" : ""} ${emphasized ? "map-wire--selected" : ""}`);
         wire.setAttribute("marker-end", "url(#map-arrow)");
         wires.append(wire);
       };
-      for (const [key, item] of sources) {
-        if (key === "manual" || key.startsWith("aggregate:")) continue;
-        const enabled = aggregateSources.has(key) || sourceEnabled(aircraft, key);
-        connect(targets.get(boardNode), item, !shift && !enabled, active === key);
-      }
       const drawn = new Set();
+      for (const edge of aggregateEdges) {
+        const from = sources.get(edge.key), to = sources.get(edge.output);
+        const pair = JSON.stringify([edge.key, edge.output]);
+        if (!from || !to || from === to || drawn.has(pair)) continue;
+        drawn.add(pair);
+        connect(from, to, !edge.enabled || !edge.installed, active === edge.key || active === edge.output, true);
+      }
       for (const edge of edges) {
-        if (edge.target === boardNode || !targets.has(edge.target) || !sources.has(edge.key)) continue;
+        if (!targets.has(edge.target) || !sources.has(edge.key)) continue;
         const pair = JSON.stringify([edge.key, edge.target]);
         if (drawn.has(pair)) continue;
         drawn.add(pair);
@@ -4272,11 +4309,11 @@
       canvas.querySelectorAll(".map-node").forEach((element) => {
         element.classList.toggle("map-node--selected", (element.dataset.mapTarget ?? element.dataset.mapSource) === key);
       });
-      const matching = edges.filter((edge) => isSource ? edge.key === key : edge.target === key);
+      const matching = edges.filter((edge) => isSource ? edge.key === key || edge.output === key : edge.target === key);
       const heading = isSource ? sourceLabels.get(key) || key : nodes.find((item) => item.id === key)?.name;
       details.innerHTML = `<h2>${escapeHtml(heading || "")}</h2>${matching.length ? `<ul class="accrual-items">${matching.map((edge) => `<li>
         <strong>${escapeHtml(sourceLabels.get(edge.key) || edge.key)}${edge.expression || edge.unit === "текст" ? "" : " × " + formatNumber(edge.factor)} → ${escapeHtml(nodes.find((item) => item.id === edge.target)?.name || "")} · ${escapeHtml(edge.name)}</strong>
-        <small>${edge.unit === "текст" ? escapeHtml(edge.textValue ?? "Текстовая запись") : edge.expression ? escapeHtml(edge.expression) : shift ? `${formatNumber(edge.input, 6)} × ${formatNumber(edge.factor, 6)} = ${formatNumber(edge.amount, 6)}` :
+        <small>${edge.posted ? aggregateAccrualCalculation(edge.posted) : edge.unit === "текст" ? "Текстовая запись" : edge.expression ? escapeHtml(edge.expression) + (edge.condition ? " · " + escapeHtml(edge.condition) : "") : shift ? `${formatNumber(edge.input, 6)} × ${formatNumber(edge.factor, 6)} = ${formatNumber(edge.amount, 6)}` :
           `${edge.counter ? "Счётчик формуляра" : "Списание ресурса"} · ${!edge.enabled ? "Источник отключён" :
             !edge.installed ? "Агрегат демонтирован" : edge.target === boardNode ? "Начисляется на борт" : "Агрегат должен быть установлен на дату работы"}
             ${edge.installedDate ? ` · с ${formatDate(edge.installedDate)}` : ""}
@@ -4993,6 +5030,7 @@
           const choices = new Map(sources);
           if (rule.workMode) {
             if (rule.formula) choices.set("formula", "Формула из граф");
+            choices.set("work:landings", "Сумма посадок за работу");
             choices.set("work:date", "Дата записи о работе");
             choices.set("work:type", "Название вида работы");
             for (const field of aircraftTemplates.rawSourceList(draft)) choices.set(field.key, field.label);

@@ -5,6 +5,12 @@
 })(globalThis, function (formulas) {
   "use strict";
 
+  const boardCards = {
+    totalFlightMinutes: { name: "Налёт СНЭ", key: "form-metric:0", unit: "мин", source: "board:flight" },
+    actualLandings: { name: "Посадки СНЭ", key: "form-metric:1", unit: "пос.", source: "work:landings" },
+    pprFlightMinutes: { name: "Налёт ППР", key: "form-field:pprFlightMinutes", unit: "мин", source: "board:flight" },
+    pprLandings: { name: "Посадки ППР", key: "form-field:pprLandings", unit: "пос.", source: "work:landings" },
+  };
   const landingRoles = ["runway", "carrier", "touch", "circuit", "arresterHooks"];
   const boardRoles = ["flight", ...landingRoles];
   const aggregateUnits = ["шт.", "ч", "мин", "с", "пос.", "зап.", "сраб."];
@@ -292,10 +298,15 @@
       position.usageCounters = list(position.usageCounters, position.id, (row) => {
         const name = label(row.name, position.id);
         const workFilter = row.workTypeId ? { workTypeId: row.workTypeId } : {};
+        if (row.boardCounter != null) {
+          requireValue(position.kind === "airframe" && Object.hasOwn(boardCards, row.boardCounter) &&
+            row.workMode === "entry" && dimension(row.unit) === dimension(boardCards[row.boardCounter].unit), "Несовместимый счётчик формуляра самолёта");
+          workFilter.boardCounter = row.boardCounter;
+        }
         if (row.workTypeId) requireValue((operationTypes || [{id:"0"}, {id:"1"}, {id:"2"}]).some(item => item.id === row.workTypeId), "Вид работы графы отсутствует в шаблоне");
         function parseInput({ source, factor }) {
           requireValue(source === "manual" || (typeof source === "string" && source.startsWith("board:") && boardKeys.has(source.slice(6))) ||
-            engineKeys.has(source) || (row.workMode && (rawKeys.has(source) || (typeof source === "string" && source.startsWith("local:") && localFields.has(source.slice(6)) && source !== "local:" + row.fieldKey) || ["work:date", "work:type"].includes(source))), `Не найден источник показателя «${name}» в формуляре «${position.label}»`);
+            engineKeys.has(source) || (row.workMode && (rawKeys.has(source) || (typeof source === "string" && source.startsWith("local:") && localFields.has(source.slice(6)) && source !== "local:" + row.fieldKey) || ["work:date", "work:type", "work:landings"].includes(source))), `Не найден источник показателя «${name}» в формуляре «${position.label}»`);
           requireValue(Number.isFinite(factor) && factor >= 0 && factor <= 1000000, `Проверь коэффициент показателя «${name}»`);
           return { source, factor };
         }
@@ -320,15 +331,16 @@
             const field = key.startsWith("position:") ? counters.find(item => item.id === key.split(":")[2]) : null;
             const engineUnit = field ? (field.type === "count" ? "шт." : field.format === "HH:MM" ? "ч" : "с") : null;
             const unit = boardUnit || engineUnit || (key.startsWith("local:") && localFields.get(key.slice(6))) || rawSources.find(item => item.key === key)?.unit ||
-              (key === "work:date" ? "дата" : key === "work:type" ? "текст" : null);
+              (key === "work:date" ? "дата" : key === "work:type" ? "текст" : key === "work:landings" ? "пос." : null);
             if (unit) unitScale(unit, row.unit);
           }
           requireValue(!["дата", "текст"].includes(row.unit) || (!additionalInputs.length && primary.factor === 1), "Для даты или текста выбери один источник без коэффициента");
         }
         return { name, ...workFilter, ...(row.columnKey && { columnKey: row.columnKey }), ...(row.workMode && { workMode: row.workMode }), ...(row.fieldKey && { fieldKey: row.fieldKey }), source: primary.source, unit: row.unit, factor: primary.factor, ...(additionalInputs.length && { additionalInputs }) };
       });
+      unique(position.usageCounters.filter(row => row.boardCounter), "boardCounter", "счётчики формуляра самолёта");
       if (position.usageCounters.some(row => row.columnKey || row.source === "formula")) {
-        const external = [...rawSources, { key: "work:date", unit: "дата" },
+        const external = [...rawSources, { key: "work:date", unit: "дата" }, { key: "work:landings", unit: "пос." },
           ...[...boardKeys].map(key => ({ key: "board:" + key, unit: key === "flight" || boardUsage?.find(row => row.key === key)?.kind === "time" ? "ч" : "шт." })),
           ...[...engineKeys].map(key => { const field = counters.find(row => row.id === key.split(":")[2]);
             return { key, unit: field.type === "count" ? "шт." : field.format === "HH:MM" ? "ч" : "с" }; }),
@@ -525,6 +537,6 @@
       serialNumber: text(data.serialNumber), rfNumber: text(data.rfNumber), readings: board, landingCounts, blocks, resources } };
   }
 
-  return { validateTemplate, validateStartingAircraft, calculate, engineFlightInput, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits, unitScale, dimension, rawSourceList,
+  return { boardCards, validateTemplate, validateStartingAircraft, calculate, engineFlightInput, formatValue, positionCounters, upgradeLegacySu33, layoutKeys, aggregateUnits, unitScale, dimension, rawSourceList,
     isFormKey, normalizeFlightLabel, normalizeTemplateFlightLabel };
 });
