@@ -25,9 +25,9 @@ LATER = [
 ]
 # Invented readings on 24 November for the copy only. Units match the archived columns.
 VKA_OPENINGS = {
-    "vka-left": {"Максимал ОР":60, "Максимал Б + ОР":3600, "Максимал Б + УБ":7200,
+    "vka-left": {"Запуски":100, "Включения ОР":9, "Максимал ОР":60, "Максимал Б + ОР":3600, "Максимал Б + УБ":7200,
                  "Суммарная наработка Б":180, "Суммарная наработка Б + УБ":240},
-    "vka-right": {"Максимал ОР":120, "Максимал Б + ОР":10800, "Максимал Б + УБ":14400,
+    "vka-right": {"Запуски":200, "Включения ОР":19, "Максимал ОР":120, "Максимал Б + ОР":10800, "Максимал Б + УБ":14400,
                   "Суммарная наработка Б":300, "Суммарная наработка Б + УБ":360},
 }
 
@@ -130,6 +130,7 @@ def ledger(page,b):
     return rows
 
 def verify(rows, board):
+    dash="—"
     inv=read("aircraft-89-inventory.json")
     assert {(b["templateSlotId"],b["serialNumber"]) for b in board["blocks"]} == {(b["position"],b["serialNumber"]) for b in inv["blocks"]}
     assert (board["totalFlightMinutes"],board["pprFlightMinutes"],board["actualLandings"],board["pprLandings"]) == (58102,25159,1254,274)
@@ -149,9 +150,9 @@ def verify(rows, board):
                     continue
                 assert row[1]==f"{starts}/—"
                 if kind=="engine":
-                    assert row[2:6]==[f"{orc}/—",str(b),str(ub),str(orc)]
+                    assert row[2:6]==[f"{orc or dash}/—",str(b),str(ub),str(orc)]
                 else:
-                    assert row[2:5]==[str(b),str(ub),f"{orc}/—"]
+                    assert row[2:5]==[str(b),str(ub),f"{orc or dash}/—"], (day, side, row[2:5])
                 index=10 if kind=="engine" else 9
                 assert row[index]==clock(ors)+" за запись" and row[index+1:]==["—"]*(len(row)-index-1)
     for shift, definition in zip(board["shifts"][:4],SHIFTS,strict=True):
@@ -229,6 +230,9 @@ def check_new_rows(page,board):
             for i,entry in enumerate(LATER):
                 vals=entry["sides"][0 if side=="left" else 1]
                 cells=rows.nth(i).locator("td")
+                start_open = source["readings"]["pprStarts"] if is_engine else base["Запуски"]
+                assert cells.nth(0).text_content()==f"1/{start_open+i+1}"
+                assert cells.nth(1 if is_engine else 3).text_content()==f"1/{base['Включения ОР']+i+1}"
                 offset=5 if is_engine else 4
                 assert cells.all_text_contents()[offset:offset+4]==list(map(minutes,vals[:4]))
                 for j,amount in enumerate((*vals[4:],*day_totals[side][i])):
@@ -262,8 +266,9 @@ def main():
         rows=ledger(page,b)
         verify(rows,b)
         if "--bundle" in sys.argv:
+            b["trainingReadingsRevision"]=1
             b["trainingReadingNotes"]={slot:
-                "На 24.11.2026 для проверки заданы учебные показания ВКА. Б + ОР " +
+                "На 24.11.2026 для проверки заданы учебные показания ВКА. Запуски " + str(v["Запуски"]) + ", включения ОР " + str(v["Включения ОР"]) + ". Б + ОР " +
                 clock(v["Максимал Б + ОР"]) + ", Б + УБ " + clock(v["Максимал Б + УБ"]) +
                 ". Суммарная наработка Б " + minutes(v["Суммарная наработка Б"]) + ", Б + УБ " +
                 minutes(v["Суммарная наработка Б + УБ"]) + "."
@@ -308,6 +313,24 @@ def main():
         checked.locator("#open-training-board").click()
         copied_rows=ledger(checked,copy)
         assert copied_rows["airframe"][-1][-1].replace("\xa0","").replace(" ","")=="1255"
+        checked.locator("[data-view=shift]").first.click()
+        checked.locator("[name=date]").fill("2026-11-26")
+        for side in ("left", "right"):
+            unit=checked.locator(f"[data-template-scope=engine-{side}]")
+            unit.locator("[data-template-field=starts]").fill("1")
+            unit.locator("[data-template-field=archive-reading-1]").fill("" if side=="left" else "0")
+        checked.get_by_role("button", name="Сохранить работу", exact=True).click()
+        checked.locator("[data-view=shift]").first.wait_for()
+        checked.reload()
+        checked.locator("#open-training-board").click()
+        kept=ledger(checked,copy)
+        for slot, starts, count, column in [
+            ("engine-left",191,14,2), ("engine-right",193,15,2),
+            ("vka-left",103,11,4), ("vka-right",203,21,4),
+        ]:
+            last=kept[slot][-1]
+            assert (last[0], last[1], last[column])==("26.11.2026", f"1/{starts}", f"—/{count}"), (slot,last)
+        assert saved(checked)["aircraft"]==original
         print("PASS: six shifts; two post-baseline postings in seven ledgers; four separate accumulated totals; two-line dates at 320, 360, 412 pixels, zoom and horizontal scrolling; restart and edit")
         browser.close()
 

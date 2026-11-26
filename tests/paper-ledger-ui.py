@@ -34,6 +34,10 @@ def test_ledger():
                 assert cycles.get_attribute("colspan") == ("3" if key == "engine" else "2")
                 if key == "engine":
                     assert [rows.nth(i).locator("td").first.text_content() for i in range(3)] == ["1/62","2/64","3/67"]
+                    assert rows.first.locator("td").all_text_contents()[:2] == ["1/62", "—/12"]
+                else:
+                    fields = rows.first.locator("td").all_text_contents()
+                    assert (fields[0],fields[3]) == ("2/102","—/9")
                 month, book, visible = ("2020-08", "27", "27") if key == "engine" else ("2018-08", "20", "9")
                 sheet.locator("select").select_option(month)
                 assert sheet.locator(".paper-subtotal td").first.inner_text() == book

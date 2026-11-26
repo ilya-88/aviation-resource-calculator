@@ -5,7 +5,7 @@
   const app = document.getElementById("app");
   const STORAGE_KEY = "aviation-resource-prototype-v1";
   const DIAGNOSTIC_KEY = "aviation-resource-diagnostics-v1";
-  const APP_VERSION = "0.2.38-exp.47";
+  const APP_VERSION = "0.2.38-exp.48";
   let diagnostics = [];
   try {
     const saved = JSON.parse(localStorage.getItem(DIAGNOSTIC_KEY) || "[]");
@@ -1244,6 +1244,41 @@
       <main class="content">${content}</main>`;
   }
 
+  // Older saved copies have the dated demonstration readings but omit two counters.
+  function completeTrainingReadings(board) {
+    const date = "2026-11-24";
+    const example = trainingBoard.aircraft[0];
+    if (board.trainingReadingsRevision >= 1 || board.serialNumber !== example.serialNumber ||
+        !board.trainingReadingNotes || !board.readingsByDate?.[date]) return false;
+    const observations = Object.values(board.readingsByDate);
+    const additions = {};
+    for (const block of board.blocks) {
+      const slot = block.templateSlotId;
+      if (!board.trainingReadingNotes?.[slot]) continue;
+      const original = example.blocks.find(b => b.templateSlotId === slot && b.serialNumber === block.serialNumber);
+      if (!original) continue;
+      for (const column of ["starts", "archive-reading-1"]) {
+        const source = original.usageCounters.find(r => r.columnKey === column);
+        const rule = source && block.usageCounters.find(r => r.columnKey === column && r.source === source.source &&
+          r.factor === source.factor && r.unit === source.unit && r.workMode === "total" &&
+          !r.workTypeId && !r.formula && !r.additionalInputs?.length);
+        if (!rule || block.usageTotals?.[rule.id]?.sne != null) continue;
+        const key = "column:" + rule.id + ":sne";
+        const native = block.id + ":starts";
+        if (observations.some(o => Object.hasOwn(o, key)) || (column === "starts" &&
+            (block.starts != null || observations.some(o => Object.hasOwn(o, native))))) continue;
+        const n = example.readingsByDate[date]["column:" + source.id + ":sne"];
+        if (Number.isFinite(n)) {
+          additions[key] = n;
+          board.trainingReadingNotes[slot] += " " + source.name + " на 24.11.2026: " + n + ".";
+        }
+      }
+    }
+    if (Object.keys(additions).length) storeObservation(board, date, additions);
+    board.trainingReadingsRevision = 1;
+    return true;
+  }
+
   function openTrainingBoard(key) {
     const workspace = state[key] || trainingBoard;
     trainingStorageKey = key;
@@ -1254,7 +1289,11 @@
     }
     primaryWorkspace = state;
     state = copy;
-    state.selectedAircraftId = state.aircraft.find(board => board.boardNumber === "89").id;
+    const board = state.aircraft.find(b => b.boardNumber === "89");
+    state.selectedAircraftId = board.id;
+    if (key === "training89Nov25" && primaryWorkspace[key] && completeTrainingReadings(board) && !saveState()) {
+      showToast("Не удалось сохранить дополненные учебные показания");
+    }
     state.aircraftTab = "aggregates";
     viewStack.length = 0;
     navigateTo("aircraft");
@@ -4594,23 +4633,38 @@
         }
         return { spec, field, rule, value, format };
       });
+      // Read the counters as of this row, including earlier entries on the same day.
+      const countKeys = [block.id + ":starts", block.id + ":pprStarts"];
+      for (const { field, rule } of descriptions) {
+        if (rule && field?.type === "count") countKeys.push("column:" + rule.id + ":sne", "column:" + rule.id + ":ppr");
+      }
+      const countsByShift = new Map();
+      if (byDate.length) datedReadings.at(aircraft, byDate.at(-1).date, false, (shift, values) => {
+        const group = position.kind === "unit" ? "units" : "engines";
+        if (shift.templateWork?.[group]?.some(entry => entry.blockId === block.id)) {
+          countsByShift.set(shift, new Map(countKeys.map(key => [key, values.get(key)])));
+        }
+      });
       for (const shift of byDate) {
         const entries = shift.templateWork?.[position.kind === "unit" ? "units" : "engines"] || [];
         for (const entry of entries.filter(e => e.blockId === block.id)) {
           const cells = [];
+          const counts = countsByShift.get(shift);
           for (const { field, spec, rule, value, format } of descriptions) {
             const n = entry.counters?.[field?.id];
             const balances = rule && shift.aggregateAccruals?.find(r => r.blockId === block.id && r.counterId === rule.id)?.balances;
             const afterRepair = entry.repairNumber != null;
             const end = value(balances?.[afterRepair ? "ppr" : "sne"]?.[1]);
             if (field?.role === "starts") {
-              const ppr = afterRepair ? balances?.ppr?.[1] ?? observed(shift, block.id + ":pprStarts") : null;
-              const sne = balances?.sne?.[1] ?? observed(shift, block.id + ":starts");
+              const ppr = afterRepair ? counts?.get("column:" + rule?.id + ":ppr") ?? counts?.get(block.id + ":pprStarts") ?? balances?.ppr?.[1] : null;
+              const sne = counts?.get("column:" + rule?.id + ":sne") ?? counts?.get(block.id + ":starts") ?? balances?.sne?.[1];
               if (startsOnly) cells.push(cell(n,n), cell(ppr), cell(sne));
               else cells.push(cell(n != null || (afterRepair ? ppr : sne) != null ? [number(n), number(afterRepair ? ppr : sne)] : null, n));
             } else if (spec.withPpr || (rule && field.type === "count" && !spec.perEntry)) {
-              const closing = spec.withPpr ? balances?.ppr?.[1] : end;
-              cells.push(cell(n != null || closing != null ? [number(n), number(closing)] : null, n));
+              const period = afterRepair ? "ppr" : "sne";
+              const closing = counts?.get("column:" + rule?.id + ":" + period) ?? end;
+              const numerator = n === 0 ? "—" : number(n);
+              cells.push(cell(n != null || closing != null ? [numerator, number(closing)] : null, n));
             } else {
               const shown = rule && n != null && end == null ? aircraftTemplates.formatValue(field, n) + " за запись" : rule ? end : n;
               const item = cell(shown, n);

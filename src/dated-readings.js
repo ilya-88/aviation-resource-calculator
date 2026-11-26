@@ -14,7 +14,7 @@
   }
 
   // Entries on a date are applied first. A reading taken at close of day replaces that field only.
-  function at(board, date, beforeClosingObservation = false) {
+  function at(board, date, beforeClosingObservation = false, onShift) {
     if (!valid(date)) throw new Error("Проверь дату показаний");
     const values = new Map();
     values.expiries = new Map();
@@ -71,6 +71,7 @@
         const before = values.has(key) ? values.get(key) : row.before;
         if (Number.isFinite(before)) values.set(key, Math.max(0, before - row.amount));
       }
+      if (onShift) onShift(shift, values);
     }, shift.recordedAt);
     for (const block of board.blocks || []) {
       const owner = block.kind === "airframe" ? "" : block.id + ":";
